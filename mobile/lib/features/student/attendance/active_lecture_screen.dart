@@ -1,4 +1,5 @@
 import "dart:convert";
+import "dart:async";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/location_service.dart";
@@ -19,11 +20,24 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
   bool _loading = false;
   String _message = "";
   bool _success = false;
+  final Map<int, Timer> _autoTimers = {};
+  final Set<int> _autoEnabled = {};
+
+  static const Duration _checkpointInterval = Duration(minutes: 15);
 
   @override
   void initState() {
     super.initState();
     _loadActiveLectures();
+  }
+
+  @override
+  void dispose() {
+    for (final timer in _autoTimers.values) {
+      timer.cancel();
+    }
+    _autoTimers.clear();
+    super.dispose();
   }
 
   Future<void> _loadActiveLectures() async {
@@ -44,8 +58,10 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     });
   }
 
-  Future<void> _sendCheckpoint(int lectureId) async {
-    setState(() => _loading = true);
+  Future<void> _sendCheckpoint(int lectureId, {bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     try {
       final position = await _locationService.getCurrentPosition();
       final response = await _api.submitCheckpoint(
@@ -55,21 +71,45 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         gpsAccuracyM: position.accuracy,
       );
 
-      setState(() {
-        _success = response.statusCode >= 200 && response.statusCode < 300;
-        _message = _extractMessage(
-          response.body,
-          fallback: _success ? "Checkpoint submitted" : "Checkpoint failed",
-        );
-      });
+      if (!mounted) return;
+      if (!silent) {
+        setState(() {
+          _success = response.statusCode >= 200 && response.statusCode < 300;
+          _message = _extractMessage(
+            response.body,
+            fallback: _success ? "Checkpoint submitted" : "Checkpoint failed",
+          );
+        });
+      }
     } catch (e) {
-      setState(() {
-        _success = false;
-        _message = e.toString();
-      });
+      if (!mounted) return;
+      if (!silent) {
+        setState(() {
+          _success = false;
+          _message = e.toString();
+        });
+      }
     } finally {
-      setState(() => _loading = false);
+      if (mounted && !silent) {
+        setState(() => _loading = false);
+      }
     }
+  }
+
+  void _toggleAutoCheckpoint(int lectureId) {
+    final timer = _autoTimers[lectureId];
+    if (timer != null) {
+      timer.cancel();
+      _autoTimers.remove(lectureId);
+      setState(() => _autoEnabled.remove(lectureId));
+      return;
+    }
+    _sendCheckpoint(lectureId);
+    _autoTimers[lectureId] = Timer.periodic(
+      _checkpointInterval,
+      (_) => _sendCheckpoint(lectureId, silent: true),
+    );
+    setState(() => _autoEnabled.add(lectureId));
   }
 
   String _extractMessage(String body, {required String fallback}) {
@@ -123,7 +163,8 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                               width: 42,
                               height: 42,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF20A4A0).withOpacity(0.14),
+                                color: const Color(0xFF20A4A0)
+                                    .withValues(alpha: 0.14),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: const Icon(
@@ -144,9 +185,24 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                                 ],
                               ),
                             ),
-                            FilledButton(
-                              onPressed: _loading ? null : () => _sendCheckpoint(id),
-                              child: const Text("Checkpoint"),
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                FilledButton(
+                                  onPressed:
+                                      _loading ? null : () => _sendCheckpoint(id),
+                                  child: const Text("Checkpoint"),
+                                ),
+                                const SizedBox(height: 8),
+                                OutlinedButton(
+                                  onPressed: () => _toggleAutoCheckpoint(id),
+                                  child: Text(
+                                    _autoEnabled.contains(id)
+                                        ? "Stop Auto"
+                                        : "Auto 15m",
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),

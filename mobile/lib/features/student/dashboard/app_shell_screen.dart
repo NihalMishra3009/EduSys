@@ -83,64 +83,6 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  Future<void> _openShareIt() async {
-    if (!mounted) {
-      return;
-    }
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const RailwayConcessionScreen()),
-    );
-  }
-
-  Future<void> _openQuickMenu(String role) async {
-    if (!mounted) {
-      return;
-    }
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-            child: AppCard(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.groups_2_rounded),
-                    title: const Text("Class Explorer"),
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      _openClassExplorer();
-                    },
-                  ),
-                  if (role == "STUDENT")
-                    ListTile(
-                      leading: const Icon(Icons.confirmation_number_rounded),
-                      title: const Text("Railway Concession"),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        _openShareIt();
-                      },
-                    ),
-                  ListTile(
-                    leading: const Icon(Icons.calendar_month_rounded),
-                    title: const Text("Calendar Planner"),
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      _openCalendarPlanner(role);
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final role = context.watch<AuthProvider>().role ?? "STUDENT";
@@ -150,19 +92,19 @@ class _AppShellState extends State<AppShell> {
         (theme.themeMode == ThemeMode.system &&
             Theme.of(context).brightness == Brightness.dark);
     final pages = role == "ADMIN"
-        ? const [
-            _AdminHomeTab(),
-            _NotesTab(),
-            _LearningTab(),
-            _AttendanceTab(),
-            _SettingsTab()
+        ? [
+            const _AdminHomeTab(),
+            const _NotesTab(),
+            const _LearningTab(),
+            const _AttendanceTab(),
+            const _SettingsTab()
           ]
-        : const [
-            _HomeTab(),
-            _NotesTab(),
-            _LearningTab(),
-            _AttendanceTab(),
-            _SettingsTab()
+        : [
+            _HomeTab(onOpenAttendance: () => _onTabSelected(3)),
+            const _NotesTab(),
+            const _LearningTab(),
+            const _AttendanceTab(),
+            const _SettingsTab()
           ];
 
     return Scaffold(
@@ -2051,6 +1993,21 @@ class _CalendarPlannerSheetState extends State<_CalendarPlannerSheet> {
               .map(_CalendarEntry.fromJson));
       } catch (_) {}
     }
+    final monthStart = DateTime(_focusedMonth.year, _focusedMonth.month, 1);
+    final monthEnd = DateTime(_focusedMonth.year, _focusedMonth.month + 1, 0);
+    final seedStart = monthStart.subtract(const Duration(days: 7));
+    final seedEnd = monthEnd.add(const Duration(days: 7));
+    final timetableSeed = _timetableEntriesForRange(seedStart, seedEnd);
+    if (timetableSeed.isNotEmpty) {
+      final byId = {for (final entry in _entries) entry.id: entry};
+      for (final entry in timetableSeed) {
+        byId[entry.id] = entry;
+      }
+      _entries
+        ..clear()
+        ..addAll(byId.values);
+      await _saveEntries();
+    }
     if (!mounted) {
       return;
     }
@@ -3004,10 +2961,135 @@ class _BottomTabSectionState extends State<_BottomTabSection> {
 }
 
 class _HomeTab extends StatefulWidget {
-  const _HomeTab();
+  const _HomeTab({this.onOpenAttendance});
+
+  final VoidCallback? onOpenAttendance;
 
   @override
   State<_HomeTab> createState() => _HomeTabState();
+}
+
+class _TimetableSlot {
+  const _TimetableSlot({
+    required this.startMinutes,
+    required this.endMinutes,
+    required this.title,
+  });
+
+  final int startMinutes;
+  final int endMinutes;
+  final String title;
+}
+
+const Map<String, String> _timetableSubjectDetails = {
+  "CT": "Prof. Nirosha Uppul • Room 715",
+  "DBMS": "Dr. Vaishali M. Shinde • Room 715",
+  "OS": "Dr. Aamna H. Punse • Room 715",
+  "MDM": "Dr. Archana Chaudhari • Room 715",
+  "OE": "Prof. Swarmala Mahendran • Room 715",
+  "BMD": "Dr. Sanjay Deshmukh • Room 715",
+  "DT": "Dr. Manoj Kumar Yadav / Dr. Archana Chaudhari • Room 715",
+  "NU": "Room 715",
+  "MKY": "Room 715",
+  "SD": "Room 715",
+  "AC": "Room 715",
+  "VMS": "Room 715",
+  "Mini Project": "Mini Project",
+};
+
+const String _timetableLabDetails =
+    "Practical Labs • L1: 601 • L2: 602(A) • L3: 602(B)";
+
+const Map<int, List<_TimetableSlot>> _weeklyTimetable = {
+  DateTime.monday: [
+    _TimetableSlot(startMinutes: 570, endMinutes: 630, title: "CT"),
+    _TimetableSlot(startMinutes: 630, endMinutes: 690, title: "DT / BMD / DBMS"),
+    _TimetableSlot(startMinutes: 690, endMinutes: 750, title: "NU"),
+    _TimetableSlot(startMinutes: 780, endMinutes: 840, title: "MDM"),
+    _TimetableSlot(startMinutes: 840, endMinutes: 900, title: "BMD"),
+    _TimetableSlot(startMinutes: 900, endMinutes: 960, title: "SD / AC / MDM"),
+    _TimetableSlot(startMinutes: 960, endMinutes: 1020, title: "L1 / L2 / L3"),
+  ],
+  DateTime.tuesday: [
+    _TimetableSlot(startMinutes: 570, endMinutes: 630, title: "OS"),
+    _TimetableSlot(startMinutes: 630, endMinutes: 690, title: "MKY / SD / VMS"),
+    _TimetableSlot(startMinutes: 690, endMinutes: 750, title: "OS / DT / BMD"),
+    _TimetableSlot(startMinutes: 780, endMinutes: 840, title: "AC"),
+    _TimetableSlot(startMinutes: 840, endMinutes: 900, title: "SD"),
+    _TimetableSlot(startMinutes: 900, endMinutes: 960, title: "Mini Project"),
+  ],
+  DateTime.wednesday: [
+    _TimetableSlot(startMinutes: 570, endMinutes: 630, title: "DT"),
+    _TimetableSlot(startMinutes: 630, endMinutes: 690, title: "DBMS / OS / MDM"),
+    _TimetableSlot(startMinutes: 690, endMinutes: 750, title: "L1 / L2 / L3"),
+    _TimetableSlot(startMinutes: 780, endMinutes: 840, title: "OS"),
+    _TimetableSlot(startMinutes: 840, endMinutes: 900, title: "VMS"),
+    _TimetableSlot(startMinutes: 900, endMinutes: 960, title: "BMD"),
+  ],
+  DateTime.thursday: [
+    _TimetableSlot(startMinutes: 570, endMinutes: 630, title: "OE"),
+    _TimetableSlot(
+        startMinutes: 630, endMinutes: 690, title: "Self Study / DBMS / DT"),
+    _TimetableSlot(startMinutes: 690, endMinutes: 750, title: "L1 / L2 / L3"),
+    _TimetableSlot(startMinutes: 780, endMinutes: 840, title: "MDM"),
+    _TimetableSlot(startMinutes: 840, endMinutes: 900, title: "AC"),
+    _TimetableSlot(startMinutes: 900, endMinutes: 960, title: "SD"),
+  ],
+  DateTime.friday: [
+    _TimetableSlot(startMinutes: 570, endMinutes: 630, title: "Room 715"),
+    _TimetableSlot(startMinutes: 630, endMinutes: 690, title: "DT"),
+    _TimetableSlot(startMinutes: 690, endMinutes: 750, title: "CT"),
+    _TimetableSlot(startMinutes: 780, endMinutes: 840, title: "OS"),
+    _TimetableSlot(startMinutes: 840, endMinutes: 900, title: "DBMS"),
+    _TimetableSlot(startMinutes: 900, endMinutes: 960, title: "MDM / Self Study"),
+    _TimetableSlot(startMinutes: 960, endMinutes: 1020, title: "L1 / L2 / L3"),
+  ],
+};
+
+String _timetableDetailsForTitle(String title) {
+  final trimmed = title.trim();
+  if (trimmed.isEmpty || trimmed == "—") {
+    return "";
+  }
+  if (trimmed.contains("L1") && trimmed.contains("L2") && trimmed.contains("L3")) {
+    return _timetableLabDetails;
+  }
+  final parts = trimmed.split("/").map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+  if (parts.isEmpty) {
+    return trimmed;
+  }
+  final details = parts.map((subject) => _timetableSubjectDetails[subject] ?? subject).toList();
+  return details.join(" • ");
+}
+
+List<_CalendarEntry> _timetableEntriesForRange(DateTime start, DateTime end) {
+  final entries = <_CalendarEntry>[];
+  var cursor = DateTime(start.year, start.month, start.day);
+  final last = DateTime(end.year, end.month, end.day);
+  while (!cursor.isAfter(last)) {
+    final slots = _weeklyTimetable[cursor.weekday] ?? const <_TimetableSlot>[];
+    final dayKey =
+        "${cursor.year}-${cursor.month.toString().padLeft(2, "0")}-${cursor.day.toString().padLeft(2, "0")}";
+    for (final slot in slots) {
+      if (slot.title.trim().isEmpty || slot.title.trim() == "—") {
+        continue;
+      }
+      final details = _timetableDetailsForTitle(slot.title);
+      entries.add(
+        _CalendarEntry(
+          id: "timetable-$dayKey-${slot.startMinutes}-${slot.title}",
+          dayKey: dayKey,
+          title: slot.title,
+          details: details,
+          type: "TIMETABLE",
+          startMinutes: slot.startMinutes,
+          endMinutes: slot.endMinutes,
+        ),
+      );
+    }
+    cursor = cursor.add(const Duration(days: 1));
+  }
+  return entries;
 }
 
 class _HomeTabState extends State<_HomeTab> {
@@ -3024,6 +3106,7 @@ class _HomeTabState extends State<_HomeTab> {
   Map<int, String> _studentNames = {};
   String _departmentName = "-";
   int _studentCount = 0;
+
 
   Future<void> _handleLectureStarted(Map<String, dynamic> started) async {
     if (kUseDemoDataEverywhere) {
@@ -3101,6 +3184,41 @@ class _HomeTabState extends State<_HomeTab> {
       "start_time": "2026-02-23T09:30:00Z"
     },
   ];
+
+  List<_TimetableSlot> _todayTimetableSlots() {
+    final now = TimeFormat.nowIst();
+    return _weeklyTimetable[now.weekday] ?? const <_TimetableSlot>[];
+  }
+
+  _TimetableSlot? _currentTimetableSlot() {
+    final now = TimeFormat.nowIst();
+    final minutes = (now.hour * 60) + now.minute;
+    for (final slot in _todayTimetableSlots()) {
+      if (minutes >= slot.startMinutes && minutes < slot.endMinutes) {
+        return slot;
+      }
+    }
+    return null;
+  }
+
+  List<_TimetableSlot> _upcomingTimetableSlots({int limit = 2}) {
+    final now = TimeFormat.nowIst();
+    final minutes = (now.hour * 60) + now.minute;
+    final list = _todayTimetableSlots()
+        .where((slot) => slot.startMinutes > minutes)
+        .toList()
+      ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
+    if (list.length <= limit) {
+      return list;
+    }
+    return list.take(limit).toList();
+  }
+
+  String _slotLabel(_TimetableSlot slot) {
+    final start = TimeFormat.formatMinutes12h(slot.startMinutes);
+    final end = TimeFormat.formatMinutes12h(slot.endMinutes);
+    return "${slot.title} ($start - $end)";
+  }
   static const List<Map<String, dynamic>> _demoProfessorHistory = [
     {
       "id": 896,
@@ -3440,6 +3558,11 @@ class _HomeTabState extends State<_HomeTab> {
         ),
       );
     }
+    final rangeStart =
+        DateTime(now.year, now.month, now.day).subtract(const Duration(days: 14));
+    final rangeEnd =
+        DateTime(now.year, now.month, now.day).add(const Duration(days: 112));
+    items.addAll(_timetableEntriesForRange(rangeStart, rangeEnd));
     await _CalendarSync.upsertBatch(items);
   }
 
@@ -3514,6 +3637,7 @@ class _HomeTabState extends State<_HomeTab> {
               complaints: _complaints,
               departmentName: _departmentName,
               studentCount: _studentCount,
+              onOpenAttendance: widget.onOpenAttendance,
               onLectureStarted: _handleLectureStarted,
               onLectureEnded: _handleLectureEnded,
             )
@@ -3773,6 +3897,7 @@ class _ProfessorDashboard extends StatefulWidget {
     required this.complaints,
     required this.departmentName,
     required this.studentCount,
+    this.onOpenAttendance,
     this.onLectureStarted,
     this.onLectureEnded,
   });
@@ -3788,6 +3913,7 @@ class _ProfessorDashboard extends StatefulWidget {
   final List<dynamic> complaints;
   final String departmentName;
   final int studentCount;
+  final VoidCallback? onOpenAttendance;
   final Future<void> Function(Map<String, dynamic> started)? onLectureStarted;
   final Future<void> Function(Map<String, dynamic> ended)? onLectureEnded;
 
@@ -3798,6 +3924,41 @@ class _ProfessorDashboard extends StatefulWidget {
 class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   final ApiService _api = ApiService();
   bool _endingLecture = false;
+
+  List<_TimetableSlot> _todayTimetableSlots() {
+    final now = TimeFormat.nowIst();
+    return _weeklyTimetable[now.weekday] ?? const <_TimetableSlot>[];
+  }
+
+  _TimetableSlot? _currentTimetableSlot() {
+    final now = TimeFormat.nowIst();
+    final minutes = (now.hour * 60) + now.minute;
+    for (final slot in _todayTimetableSlots()) {
+      if (minutes >= slot.startMinutes && minutes < slot.endMinutes) {
+        return slot;
+      }
+    }
+    return null;
+  }
+
+  List<_TimetableSlot> _upcomingTimetableSlots({int limit = 2}) {
+    final now = TimeFormat.nowIst();
+    final minutes = (now.hour * 60) + now.minute;
+    final list = _todayTimetableSlots()
+        .where((slot) => slot.startMinutes > minutes)
+        .toList()
+      ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
+    if (list.length <= limit) {
+      return list;
+    }
+    return list.take(limit).toList();
+  }
+
+  String _slotLabel(_TimetableSlot slot) {
+    final start = TimeFormat.formatMinutes12h(slot.startMinutes);
+    final end = TimeFormat.formatMinutes12h(slot.endMinutes);
+    return "${slot.title} ($start - $end)";
+  }
 
   Future<void> _endActiveLecture() async {
     if (_endingLecture || widget.active.isEmpty) {
@@ -3868,6 +4029,8 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
     final activeLectureId =
         _activeLectureId(widget.active.isEmpty ? null : widget.active.first);
     final presentStudents = _studentsPresentForActiveLecture(activeLectureId);
+    final currentSlot = _currentTimetableSlot();
+    final upcomingSlots = _upcomingTimetableSlots();
     final todayMeetings = _todayMeetings(widget.scheduled);
     final docEdStatus = _docEdStatus(widget.docEdAppointments);
     final complaintStatus = _complaintStatus(widget.complaints);
@@ -3886,14 +4049,16 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                 dotColor: Colors.red,
                 compact: true,
                 children: [
-                  if (widget.active.isEmpty)
+                  if (widget.active.isEmpty && currentSlot == null)
                     const Text("No active lecture")
                   else ...[
                     Text(
-                      widget.active.first is Map<String, dynamic>
-                          ? _lectureSubjectRoom(
-                              widget.active.first as Map<String, dynamic>)
-                          : _lectureLabel(widget.active.first),
+                      widget.active.isNotEmpty
+                          ? (widget.active.first is Map<String, dynamic>
+                              ? _lectureSubjectRoom(
+                                  widget.active.first as Map<String, dynamic>)
+                              : _lectureLabel(widget.active.first))
+                          : _slotLabel(currentSlot!),
                     ),
                     const SizedBox(height: 2),
                     Row(
@@ -3926,6 +4091,18 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                         ),
                         const SizedBox(width: 4),
                         TextButton(
+                          onPressed: widget.onOpenAttendance,
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: const Text("Start Fencing"),
+                        ),
+                        const SizedBox(width: 4),
+                        TextButton(
                           onPressed: _endingLecture ? null : _endActiveLecture,
                           style: TextButton.styleFrom(
                             padding: const EdgeInsets.symmetric(
@@ -3946,9 +4123,17 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                 title: "Upcoming Lecture",
                 dotColor: Colors.blue,
                 children: todayUpcoming.isEmpty
-                    ? const [Text("No upcoming lecture")]
+                    ? (upcomingSlots.isEmpty
+                        ? const [Text("No upcoming lecture")]
+                        : upcomingSlots
+                            .map((slot) => Text(_slotLabel(slot)))
+                            .toList())
                     : [
                         Text(_lectureLine(todayUpcoming.first)),
+                        if (todayUpcoming.length > 1) ...[
+                          const SizedBox(height: 4),
+                          Text(_lectureLine(todayUpcoming[1])),
+                        ],
                         const SizedBox(height: 4),
                         Align(
                           alignment: Alignment.centerRight,
@@ -8133,6 +8318,13 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   int _monthlyAbsent = 0;
   double _monthlyPercentage = 0;
   int? _selectedStudentId;
+  final LocationService _location = LocationService();
+  final List<Map<String, double>> _spacePoints = [];
+  final TextEditingController _spaceNameController = TextEditingController();
+  final TextEditingController _spaceThresholdController =
+      TextEditingController(text: "75");
+  final TextEditingController _thresholdLectureIdController =
+      TextEditingController();
   final TextEditingController _manualLectureId =
       TextEditingController(text: "1");
   static const List<Map<String, dynamic>> _exampleAttendanceRecords = [
@@ -8223,6 +8415,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
 
   @override
   void dispose() {
+    _spaceNameController.dispose();
+    _spaceThresholdController.dispose();
+    _thresholdLectureIdController.dispose();
     _manualLectureId.dispose();
     super.dispose();
   }
@@ -8713,6 +8908,95 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     return list;
   }
 
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _extractDetail(String body, String fallback) {
+    try {
+      final map = jsonDecode(body) as Map<String, dynamic>;
+      return (map["detail"] ?? fallback).toString();
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  Future<void> _recordSpacePoint() async {
+    if (_spacePoints.length >= 4) {
+      _toast("Already recorded 4 points");
+      return;
+    }
+    try {
+      final pos = await _location.getCurrentPosition();
+      if (!mounted) return;
+      setState(() {
+        _spacePoints.add(
+          {"latitude": pos.latitude, "longitude": pos.longitude},
+        );
+      });
+    } on LocationServiceException {
+      if (!mounted) return;
+      Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const PermissionDeniedScreen()));
+    }
+  }
+
+  void _clearSpacePoints() {
+    setState(() => _spacePoints.clear());
+  }
+
+  Future<void> _createSpace() async {
+    final name = _spaceNameController.text.trim();
+    if (name.isEmpty) {
+      _toast("Enter a space name");
+      return;
+    }
+    if (_spacePoints.length != 4) {
+      _toast("Record 4 points to create the space");
+      return;
+    }
+    setState(() => _loading = true);
+    final res = await _api.createClassroom(
+      name: name,
+      points: _spacePoints,
+    );
+    if (!mounted) return;
+    setState(() => _loading = false);
+    _toast(_extractDetail(res.body, res.statusCode >= 200 && res.statusCode < 300
+        ? "Space created"
+        : "Failed to create space"));
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      setState(() {
+        _spacePoints.clear();
+        _spaceNameController.clear();
+      });
+    }
+  }
+
+  Future<void> _updateLectureThreshold() async {
+    final lectureId = int.tryParse(_thresholdLectureIdController.text.trim());
+    if (lectureId == null) {
+      _toast("Enter a valid lecture ID");
+      return;
+    }
+    final percent = double.tryParse(_spaceThresholdController.text.trim());
+    if (percent == null || percent < 0 || percent > 100) {
+      _toast("Enter a threshold between 0 and 100");
+      return;
+    }
+    setState(() => _loading = true);
+    final res = await _api.updateLectureThreshold(
+      lectureId: lectureId,
+      requiredPresencePercent: percent,
+    );
+    if (!mounted) return;
+    setState(() => _loading = false);
+    _toast(_extractDetail(res.body, res.statusCode >= 200 && res.statusCode < 300
+        ? "Threshold updated"
+        : "Failed to update threshold"));
+  }
+
   Future<void> _showPresentStudentsSheet(
     BuildContext hostContext, {
     required List<_PresentStudent> students,
@@ -8893,6 +9177,84 @@ class _AttendanceTabState extends State<_AttendanceTab> {
               style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700)),
           const SizedBox(height: 12),
           if (role == "PROFESSOR") ...[
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SectionTitle("Create Space"),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _spaceNameController,
+                    decoration: const InputDecoration(
+                      labelText: "Space name",
+                      prefixIcon: Icon(Icons.meeting_room_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppButton(
+                          label: _spacePoints.length < 4
+                              ? "Record point ${_spacePoints.length + 1}"
+                              : "Points recorded",
+                          icon: Icons.my_location_rounded,
+                          onPressed:
+                              _spacePoints.length >= 4 ? null : _recordSpacePoint,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: AppButton(
+                          label: "Clear points",
+                          icon: Icons.refresh_rounded,
+                          isPrimary: false,
+                          onPressed:
+                              _spacePoints.isEmpty ? null : _clearSpacePoints,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text("Points recorded: ${_spacePoints.length}/4"),
+                  const SizedBox(height: 10),
+                  AppButton(
+                    label: "Create space",
+                    icon: Icons.add_location_alt_rounded,
+                    onPressed: _spacePoints.length == 4 ? _createSpace : null,
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  const SectionTitle("Update Attendance Threshold"),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _thresholdLectureIdController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Lecture ID",
+                      prefixIcon: Icon(Icons.numbers_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _spaceThresholdController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Required presence (%)",
+                      prefixIcon: Icon(Icons.percent_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  AppButton(
+                    label: "Update threshold",
+                    icon: Icons.tune_rounded,
+                    onPressed: _updateLectureThreshold,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
             Builder(builder: (context) {
               final classes = _classOptions();
               if (!classes.contains(_classFilter)) {

@@ -31,6 +31,9 @@ class _RailwayConcessionScreenState extends State<RailwayConcessionScreen> {
 
   Future<void> _loadCard() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) {
+      return;
+    }
     final existing = prefs.getString(_cardStorageKey);
     _statusStep = prefs.getInt(_statusStorageKey) ?? 3;
     if (existing != null && existing.isNotEmpty) {
@@ -160,6 +163,9 @@ class _RailwayConcessionScreenState extends State<RailwayConcessionScreen> {
                             return;
                           }
                           setState(() => _applying = false);
+                          if (!ctx.mounted) {
+                            return;
+                          }
                           Navigator.of(ctx).pop(true);
                         },
                 ),

@@ -87,8 +87,10 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
                         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         leading: CircleAvatar(
                           backgroundColor: isPresent
-                              ? const Color(0xFF19A560).withOpacity(0.14)
-                              : const Color(0xFFCB3A31).withOpacity(0.14),
+                              ? const Color(0xFF19A560)
+                                  .withValues(alpha: 0.14)
+                              : const Color(0xFFCB3A31)
+                                  .withValues(alpha: 0.14),
                           child: Icon(
                             isPresent ? Icons.check_circle : Icons.cancel,
                             color: isPresent ? const Color(0xFF19A560) : const Color(0xFFCB3A31),

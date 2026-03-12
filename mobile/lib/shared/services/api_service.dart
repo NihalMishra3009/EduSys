@@ -347,9 +347,14 @@ class ApiService {
     );
   }
 
-  Future<http.Response> startLecture(int classroomId) async {
+  Future<http.Response> startLecture(int classroomId,
+      {double? requiredPresencePercent}) async {
     final headers = await _headers(auth: true);
-    final body = jsonEncode({"classroom_id": classroomId});
+    final Map<String, Object?> payload = {"classroom_id": classroomId};
+    if (requiredPresencePercent != null) {
+      payload["required_presence_percent"] = requiredPresencePercent as Object;
+    }
+    final body = jsonEncode(payload);
     return _sendWithFallback(
       path: "/lecture/start",
       sender: (uri) => http.post(uri, headers: headers, body: body),
@@ -362,6 +367,20 @@ class ApiService {
     return _sendWithFallback(
       path: "/lecture/end",
       sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> updateLectureThreshold({
+    required int lectureId,
+    required double requiredPresencePercent,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "required_presence_percent": requiredPresencePercent,
+    });
+    return _sendWithFallback(
+      path: "/lecture/$lectureId/threshold",
+      sender: (uri) => http.put(uri, headers: headers, body: body),
     );
   }
 
@@ -533,6 +552,21 @@ class ApiService {
       path: "/admin/create-classroom",
       sender: (uri) =>
           http.post(uri, headers: headers, body: jsonEncode(payload)),
+    );
+  }
+
+  Future<http.Response> createClassroom({
+    required String name,
+    required List<Map<String, double>> points,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "name": name,
+      "points": points,
+    });
+    return _sendWithFallback(
+      path: "/classroom",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
     );
   }
 

@@ -1,5 +1,5 @@
 ﻿import enum
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, Float
 from app.core.database import Base
 
 
@@ -16,6 +16,7 @@ class Lecture(Base):
     professor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     start_time = Column(DateTime, nullable=True)
     end_time = Column(DateTime, nullable=True)
+    required_presence_ratio = Column(Float, nullable=False, default=0.75)
     status = Column(
         Enum(LectureStatus, name="lecture_status", native_enum=False),
         nullable=False,

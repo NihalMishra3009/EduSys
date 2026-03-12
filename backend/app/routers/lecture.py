@@ -8,10 +8,21 @@ from app.models.classroom import Classroom
 from app.models.lecture import Lecture, LectureStatus
 from app.models.attendance_record import AttendanceRecord, AttendanceStatus
 from app.models.user import User, UserRole
-from app.schemas.lecture import LectureStartRequest, LectureEndRequest, LectureOut
+from app.schemas.lecture import LectureStartRequest, LectureEndRequest, LectureOut, LectureThresholdUpdate
 from app.services.attendance_service import evaluate_lecture_attendance
 
 router = APIRouter()
+
+
+def _normalize_presence_ratio(raw: float | None) -> float | None:
+    if raw is None:
+        return None
+    if raw < 0:
+        raise HTTPException(status_code=400, detail="Attendance threshold must be >= 0")
+    ratio = raw / 100.0 if raw > 1 else raw
+    if ratio > 1:
+        raise HTTPException(status_code=400, detail="Attendance threshold cannot exceed 100%")
+    return ratio
 
 
 @router.post("/start", response_model=LectureOut)
@@ -27,10 +38,12 @@ def start_lecture(
     if not classroom:
         raise HTTPException(status_code=404, detail="Classroom not found")
 
+    ratio = _normalize_presence_ratio(payload.required_presence_percent)
     lecture = Lecture(
         classroom_id=payload.classroom_id,
         professor_id=current_user.id,
         start_time=datetime.utcnow(),
+        required_presence_ratio=ratio if ratio is not None else 0.75,
         status=LectureStatus.ACTIVE,
     )
     db.add(lecture)
@@ -68,7 +81,44 @@ def end_lecture(
     db.commit()
     db.refresh(lecture)
 
-    evaluate_lecture_attendance(db, lecture.id, lecture.start_time, lecture.end_time)
+    evaluate_lecture_attendance(
+        db,
+        lecture.id,
+        lecture.start_time,
+        lecture.end_time,
+        required_presence_ratio=lecture.required_presence_ratio,
+    )
+    return lecture
+
+
+@router.put("/{lecture_id}/threshold", response_model=LectureOut)
+def update_threshold(
+    lecture_id: int,
+    payload: LectureThresholdUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    lecture = db.get(Lecture, lecture_id)
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    if current_user.role != UserRole.PROFESSOR or lecture.professor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only owning professor can update threshold")
+
+    ratio = _normalize_presence_ratio(payload.required_presence_percent)
+    lecture.required_presence_ratio = ratio if ratio is not None else lecture.required_presence_ratio
+    db.commit()
+    db.refresh(lecture)
+
+    if lecture.status == LectureStatus.ENDED and lecture.start_time and lecture.end_time:
+        evaluate_lecture_attendance(
+            db,
+            lecture.id,
+            lecture.start_time,
+            lecture.end_time,
+            required_presence_ratio=lecture.required_presence_ratio,
+        )
+
     return lecture
 
 

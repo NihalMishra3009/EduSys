@@ -779,7 +779,7 @@ class HelloCastsAlertTile extends StatelessWidget {
               child: Switch.adaptive(
                 value: active,
                 onChanged: (_) {},
-                activeColor: const Color(0xFFFF9A3D),
+                activeThumbColor: const Color(0xFFFF9A3D),
               ),
             ),
           ],

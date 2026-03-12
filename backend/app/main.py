@@ -8,6 +8,7 @@ from app.core.database import Base, SessionLocal, engine
 from app.core.security import hash_password
 from app import models as _models  # Register metadata for all tables.
 from app.models.user import User, UserRole
+from app.models.classroom import Classroom
 from app.routers import admin, attendance, audit, auth, classroom, complaint, department, geo, lecture, notification, resources, users
 
 app = FastAPI(title="EduSys API", version="1.0.0")
@@ -145,6 +146,72 @@ def seed_default_users() -> None:
                     )
                 )
         db.commit()
+        if db.query(Classroom).count() == 0:
+            db.add_all(
+                [
+                    Classroom(
+                        name="AI Lab 601",
+                        latitude_min=18.52010,
+                        latitude_max=18.52060,
+                        longitude_min=73.85660,
+                        longitude_max=73.85710,
+                        point1_lat=18.52010,
+                        point1_lon=73.85660,
+                        point2_lat=18.52010,
+                        point2_lon=73.85710,
+                        point3_lat=18.52060,
+                        point3_lon=73.85710,
+                        point4_lat=18.52060,
+                        point4_lon=73.85660,
+                    ),
+                    Classroom(
+                        name="DS Lab 602A",
+                        latitude_min=18.52070,
+                        latitude_max=18.52110,
+                        longitude_min=73.85630,
+                        longitude_max=73.85680,
+                        point1_lat=18.52070,
+                        point1_lon=73.85630,
+                        point2_lat=18.52070,
+                        point2_lon=73.85680,
+                        point3_lat=18.52110,
+                        point3_lon=73.85680,
+                        point4_lat=18.52110,
+                        point4_lon=73.85630,
+                    ),
+                    Classroom(
+                        name="Classroom 715",
+                        latitude_min=18.51960,
+                        latitude_max=18.51995,
+                        longitude_min=73.85720,
+                        longitude_max=73.85760,
+                        point1_lat=18.51960,
+                        point1_lon=73.85720,
+                        point2_lat=18.51960,
+                        point2_lon=73.85760,
+                        point3_lat=18.51995,
+                        point3_lon=73.85760,
+                        point4_lat=18.51995,
+                        point4_lon=73.85720,
+                    ),
+                    Classroom(
+                        name="Mini Project Room",
+                        latitude_min=18.52120,
+                        latitude_max=18.52155,
+                        longitude_min=73.85690,
+                        longitude_max=73.85725,
+                        point1_lat=18.52120,
+                        point1_lon=73.85690,
+                        point2_lat=18.52120,
+                        point2_lon=73.85725,
+                        point3_lat=18.52155,
+                        point3_lon=73.85725,
+                        point4_lat=18.52155,
+                        point4_lon=73.85690,
+                    ),
+                ]
+            )
+            db.commit()
     finally:
         db.close()
 

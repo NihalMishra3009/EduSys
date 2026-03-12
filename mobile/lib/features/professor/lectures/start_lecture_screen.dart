@@ -14,6 +14,7 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
   final _api = ApiService();
   final _classroomController = TextEditingController();
   final _lectureIdController = TextEditingController();
+  final _thresholdController = TextEditingController(text: "75");
 
   bool _loading = false;
   String _message = "";
@@ -23,6 +24,7 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
   void dispose() {
     _classroomController.dispose();
     _lectureIdController.dispose();
+    _thresholdController.dispose();
     super.dispose();
   }
 
@@ -37,7 +39,11 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
     }
 
     setState(() => _loading = true);
-    final response = await _api.startLecture(classroomId);
+    final threshold = double.tryParse(_thresholdController.text.trim());
+    final response = await _api.startLecture(
+      classroomId,
+      requiredPresencePercent: threshold,
+    );
     setState(() {
       _loading = false;
       _success = response.statusCode >= 200 && response.statusCode < 300;
@@ -110,6 +116,15 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
                     decoration: const InputDecoration(
                       labelText: "Classroom ID",
                       prefixIcon: Icon(Icons.meeting_room_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _thresholdController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Presence Threshold (%)",
+                      prefixIcon: Icon(Icons.percent_rounded),
                     ),
                   ),
                   const SizedBox(height: 12),

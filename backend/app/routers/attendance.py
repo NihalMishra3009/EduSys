@@ -10,7 +10,7 @@ from app.models.classroom import Classroom
 from app.models.lecture import Lecture, LectureStatus
 from app.models.user import User, UserRole
 from app.schemas.attendance import CheckpointRequest, CheckpointOut, AttendanceRecordOut
-from app.utils.geo import is_inside_rectangle
+from app.utils.geo import is_inside_polygon, is_inside_rectangle
 
 router = APIRouter()
 
@@ -33,16 +33,43 @@ def create_checkpoint(
         raise HTTPException(status_code=404, detail="Classroom not found")
 
     try:
-        inside = is_inside_rectangle(
-            latitude=payload.latitude,
-            longitude=payload.longitude,
-            latitude_min=classroom.latitude_min,
-            latitude_max=classroom.latitude_max,
-            longitude_min=classroom.longitude_min,
-            longitude_max=classroom.longitude_max,
-            gps_accuracy_m=payload.gps_accuracy_m,
-            tolerance_m=8.0,
-        )
+        points = None
+        if (
+            classroom.point1_lat is not None
+            and classroom.point1_lon is not None
+            and classroom.point2_lat is not None
+            and classroom.point2_lon is not None
+            and classroom.point3_lat is not None
+            and classroom.point3_lon is not None
+            and classroom.point4_lat is not None
+            and classroom.point4_lon is not None
+        ):
+            points = [
+                (classroom.point1_lat, classroom.point1_lon),
+                (classroom.point2_lat, classroom.point2_lon),
+                (classroom.point3_lat, classroom.point3_lon),
+                (classroom.point4_lat, classroom.point4_lon),
+            ]
+
+        if points:
+            inside = is_inside_polygon(
+                latitude=payload.latitude,
+                longitude=payload.longitude,
+                points=points,
+                gps_accuracy_m=payload.gps_accuracy_m,
+                tolerance_m=8.0,
+            )
+        else:
+            inside = is_inside_rectangle(
+                latitude=payload.latitude,
+                longitude=payload.longitude,
+                latitude_min=classroom.latitude_min,
+                latitude_max=classroom.latitude_max,
+                longitude_min=classroom.longitude_min,
+                longitude_max=classroom.longitude_max,
+                gps_accuracy_m=payload.gps_accuracy_m,
+                tolerance_m=8.0,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not inside:
