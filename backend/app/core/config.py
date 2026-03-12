@@ -1,0 +1,26 @@
+﻿from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    database_url: str = Field(alias="DATABASE_URL")
+    secret_key: str = Field(alias="SECRET_KEY")
+    algorithm: str = Field(default="HS256", alias="ALGORITHM")
+    access_token_expire_minutes: int = Field(default=1440, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    smtp_host: str | None = Field(default=None, alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    smtp_username: str | None = Field(default=None, alias="SMTP_USERNAME")
+    smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
+    smtp_sender_email: str | None = Field(default=None, alias="SMTP_SENDER_EMAIL")
+    smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
+    dev_show_otp_in_response: bool = Field(default=False, alias="DEV_SHOW_OTP_IN_RESPONSE")
+
+    model_config = SettingsConfigDict(
+        env_file=(".env", ".env.example"),
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+
+settings = Settings()
+

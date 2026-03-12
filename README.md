@@ -1,181 +1,106 @@
-# EduSys Mobile Attendance App
+# EduSys Mobile Attendance
 
-Flutter mobile app + FastAPI backend + PostgreSQL for:
-- JWT login
-- Device binding
-- SIM binding
-- Rectangular GPS geofence attendance
-- Lecture start/end and 75% presence evaluation
-
-## Scope
-
-Included:
-- Attendance
-- Geo validation (rectangle)
-- Device/SIM security
-
-Not included:
-- LMS
-- Google Meet / Zoom
-- File uploads
-- Face/biometric/QR attendance
-- Continuous tracking
-- iOS/Web frontend
+EduSys is a role-based attendance system built with Flutter (Android), FastAPI, and PostgreSQL.
 
 ## Tech Stack
-
-- Mobile: Flutter, Dart, Provider, `http`, `flutter_secure_storage`, `geolocator`, `device_info_plus`, `telephony`
+- Mobile: Flutter, Provider, `http`, `flutter_secure_storage`, `geolocator`, `device_info_plus`, `telephony`
 - Backend: FastAPI, SQLAlchemy, Alembic, PostgreSQL, JWT (`python-jose`)
-- Infra: Docker, Docker Compose
+- Infra: Docker Compose (`api`, `postgres`)
+
+## Roles
+- `ADMIN`
+- `PROFESSOR`
+- `STUDENT`
+
+## Core Features
+- JWT auth with secure token storage
+- Device + SIM binding
+- Registration OTP (email-based)
+- Google sign-in
+- Rectangular geofencing (bounds normalization + GPS tolerance handling)
+- Lecture start/end
+- Attendance checkpoints + 75% attendance evaluation
+- Admin logs and overrides
 
 ## Project Structure
-
 ```text
 edusys/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py
-│   │   ├── core/
-│   │   ├── models/
-│   │   ├── routers/
-│   │   ├── schemas/
-│   │   ├── services/
-│   │   └── utils/
 │   ├── alembic/
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── alembic.ini
-│   └── .env.example
+│   └── requirements.txt
 ├── mobile/
 │   ├── lib/
-│   ├── android/
 │   └── pubspec.yaml
 ├── docker-compose.yml
 └── README.md
 ```
 
-## Prerequisites (Windows)
+## Backend Setup
+1. Create `backend/.env` (required for SMTP OTP):
+```env
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@postgres:5432/edusys
+SECRET_KEY=change_me_to_a_long_random_secret
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
 
-- Docker Desktop running
-- Android phone with USB debugging enabled
-- Android SDK installed
-- Flutter SDK available in PATH
-
-If Flutter is not in PATH:
-
-```powershell
-$env:Path = "C:\Users\nihal\tools\flutter\bin;$env:Path"
-flutter --version
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+SMTP_PASSWORD=your_16_char_gmail_app_password
+SMTP_SENDER_EMAIL=your_email@gmail.com
+SMTP_USE_TLS=true
+DEV_SHOW_OTP_IN_RESPONSE=false
 ```
-
-## Quick Start (Recommended)
-
-### 1. Start backend
-
-From project root:
-
+2. Start services:
 ```powershell
 Copy-Item backend/.env.example backend/.env -ErrorAction SilentlyContinue
-docker-compose up -d --build
+docker compose up -d --build
 ```
-
-Check backend:
-
+3. Verify API:
 ```powershell
-Invoke-WebRequest http://localhost:8000/health
+Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing
 ```
 
-API docs:
-- `http://localhost:8000/docs`
-
-### 2. Prepare Flutter app
-
+## Mobile Run (Physical Android)
 ```powershell
 cd mobile
-flutter create .
 flutter pub get
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb reverse tcp:8000 tcp:8000
+flutter run -d <DEVICE_ID> --dart-define=API_BASE_URL=http://127.0.0.1:8000 --dart-define=GOOGLE_WEB_CLIENT_ID=<WEB_CLIENT_ID>
 ```
 
-### 3. Confirm phone is connected
-
+## Mobile Run (Android Emulator)
 ```powershell
-adb devices -l
-flutter devices
+powershell -ExecutionPolicy Bypass -File .\scripts\run-mobile-emulator.ps1 -AvdName Pixel_6a -GoogleWebClientId <WEB_CLIENT_ID>
 ```
 
-### 4. Find your laptop IP (same Wi-Fi as phone)
+## OTP Workflow
+1. User registers
+2. Backend sends OTP email via Gmail SMTP
+3. User verifies OTP on OTP screen
+4. User can use `Resend OTP` (cooldown enabled)
 
-```powershell
-ipconfig
-```
+## Geofencing Workflow (Rectangle)
+1. Student sends checkpoint (`lat`, `lon`, optional `gps_accuracy_m`)
+2. Backend normalizes classroom bounds
+3. Backend validates coordinate ranges
+4. Backend checks inside rectangle with GPS jitter tolerance
+5. Outside rectangle checkpoints are rejected
 
-Use active adapter IPv4, example: `192.168.31.206`
-
-### 5. Run app on connected phone
-
-```powershell
-cd mobile
-flutter run -d 62cd2ac2 --dart-define=API_BASE_URL=http://192.168.31.206:8000
-```
-
-If your device ID changes, replace `62cd2ac2` with your current one from `flutter devices`.
+## Key API Endpoints
+- Auth: `/auth/register`, `/auth/verify-otp`, `/auth/resend-otp`, `/auth/login`, `/auth/google-login`
+- Lecture: `/lecture/start`, `/lecture/end`, `/lecture/active`, `/lecture/history`
+- Attendance: `/attendance/checkpoint`, `/attendance/history`, `/attendance/my-records`
+- Admin: `/admin/create-user`, `/admin/reset-device`, `/admin/reset-sim`, `/admin/create-classroom`, `/admin/update-boundary/{classroom_id}`, `/admin/logs`
 
 ## Build Release APK
-
 ```powershell
 cd mobile
-flutter build apk --release --dart-define=API_BASE_URL=http://192.168.31.206:8000
+flutter build apk --release --dart-define=API_BASE_URL=http://127.0.0.1:8000 --dart-define=GOOGLE_WEB_CLIENT_ID=<WEB_CLIENT_ID>
 ```
 
-APK output:
+Output:
 - `mobile/build/app/outputs/flutter-apk/app-release.apk`
-
-## Required Android Permissions
-
-Defined in `mobile/android/app/src/main/AndroidManifest.xml`:
-- `INTERNET`
-- `ACCESS_FINE_LOCATION`
-- `READ_PHONE_STATE`
-
-## Main Backend Endpoints
-
-Auth:
-- `POST /auth/register`
-- `POST /auth/login`
-- `GET /auth/me`
-- `POST /auth/reset-binding/{user_id}` (ADMIN)
-
-Classroom:
-- `POST /classroom` (ADMIN)
-
-Lecture:
-- `POST /lecture/start` (PROFESSOR)
-- `GET /lecture/active`
-- `POST /lecture/end` (PROFESSOR owner)
-
-Attendance:
-- `POST /attendance/checkpoint` (STUDENT, inside rectangle only)
-- `GET /attendance/history`
-
-## Attendance Rule
-
-At lecture end:
-- Lecture duration = `end_time - start_time`
-- Threshold = `75%` of lecture duration
-- Presence duration = `last_checkpoint - first_checkpoint`
-- If presence duration >= threshold: `PRESENT`, else `ABSENT`
-
-## Troubleshooting
-
-- Backend not reachable on phone:
-  - Ensure phone and laptop are on same Wi-Fi
-  - Allow Windows Firewall inbound port `8000`
-  - Verify API URL uses laptop IPv4, not `localhost`
-
-- `flutter` not found:
-  - Add Flutter `bin` to PATH for current terminal session
-
-- Device not detected:
-  - Reconnect USB
-  - Accept USB debugging prompt on phone
-  - Run `adb kill-server` then `adb start-server`

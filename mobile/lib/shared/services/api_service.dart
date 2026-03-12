@@ -1,0 +1,903 @@
+import "dart:convert";
+import "dart:io";
+import "dart:async";
+
+import "package:edusys_mobile/app_entry.dart";
+import "package:edusys_mobile/config/api_config.dart";
+import "package:edusys_mobile/core/utils/app_navigator.dart";
+import "package:edusys_mobile/core/utils/session_guard.dart";
+import "package:flutter/material.dart";
+import "package:flutter_secure_storage/flutter_secure_storage.dart";
+import "package:http/http.dart" as http;
+
+class ApiService {
+  ApiService({FlutterSecureStorage? storage})
+      : _storage = storage ?? const FlutterSecureStorage();
+
+  final FlutterSecureStorage _storage;
+  static const String _baseUrlKey = "api_base_url";
+  static const String _tokenKey = "jwt";
+  static const String _roleKey = "user_role";
+  static const String _nameKey = "user_name";
+  static const String _emailKey = "user_email";
+  static const String _hasAccountKey = "has_local_account";
+  static const String _lastLoginEmailKey = "last_login_email";
+  static const String _lastLoginAtKey = "last_login_at";
+  static const String _cachePrefix = "cache_";
+  static const Duration _timeout = Duration(seconds: 12);
+
+  Future<String?> getToken() => _storage.read(key: _tokenKey);
+  Future<String?> getSavedRole() => _storage.read(key: _roleKey);
+  Future<String?> getSavedName() => _storage.read(key: _nameKey);
+  Future<String?> getSavedEmail() => _storage.read(key: _emailKey);
+
+  Future<void> saveToken(String token) =>
+      _storage.write(key: _tokenKey, value: token);
+
+  Future<void> saveUserContext({
+    required String role,
+    required String name,
+    required String email,
+  }) async {
+    await _storage.write(key: _roleKey, value: role);
+    await _storage.write(key: _nameKey, value: name);
+    await _storage.write(key: _emailKey, value: email);
+  }
+
+  Future<void> clearToken() => _storage.delete(key: _tokenKey);
+
+  Future<bool> hasKnownAccount() async {
+    final value = await _storage.read(key: _hasAccountKey);
+    return value == "1";
+  }
+
+  Future<void> markKnownAccount() =>
+      _storage.write(key: _hasAccountKey, value: "1");
+
+  Future<void> clearKnownAccount() => _storage.delete(key: _hasAccountKey);
+
+  Future<void> clearUserContext() async {
+    await _storage.delete(key: _roleKey);
+    await _storage.delete(key: _nameKey);
+    await _storage.delete(key: _emailKey);
+  }
+
+  Future<void> saveLastLoginHistory({
+    required String email,
+  }) async {
+    await _storage.write(
+        key: _lastLoginEmailKey, value: email.trim().toLowerCase());
+    await _storage.write(
+        key: _lastLoginAtKey, value: DateTime.now().toIso8601String());
+  }
+
+  Future<String?> getLastLoginEmail() => _storage.read(key: _lastLoginEmailKey);
+  Future<String?> getLastLoginAt() => _storage.read(key: _lastLoginAtKey);
+
+  Future<void> saveCache(String key, Object data) async {
+    await _storage.write(key: "$_cachePrefix$key", value: jsonEncode(data));
+  }
+
+  Future<dynamic> readCache(String key) async {
+    final raw = await _storage.read(key: "$_cachePrefix$key");
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    try {
+      return jsonDecode(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String> getBaseUrl() async {
+    final saved = await _storage.read(key: _baseUrlKey);
+    if (saved != null && saved.trim().isNotEmpty) {
+      return saved.trim();
+    }
+    return ApiConfig.baseUrl;
+  }
+
+  Future<void> setBaseUrl(String value) async {
+    var normalized = value.trim();
+    if (normalized.endsWith("/")) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    await _storage.write(key: _baseUrlKey, value: normalized);
+  }
+
+  Future<Map<String, String>> _headers({bool auth = false}) async {
+    final headers = <String, String>{"Content-Type": "application/json"};
+    if (auth) {
+      final token = await getToken();
+      if (token != null) {
+        headers["Authorization"] = "Bearer $token";
+      }
+    }
+    return headers;
+  }
+
+  Uri _uri(String baseUrl, String path) => Uri.parse("$baseUrl$path");
+
+  Future<http.Response> _sendWithFallback({
+    required String path,
+    required Future<http.Response> Function(Uri uri) sender,
+  }) async {
+    final primaryBase = await getBaseUrl();
+    try {
+      final response = await sender(_uri(primaryBase, path)).timeout(_timeout);
+      return _handleResponse(response);
+    } on TimeoutException {
+      final fallbackBase = ApiConfig.baseUrl;
+      if (fallbackBase != primaryBase) {
+        try {
+          final response =
+              await sender(_uri(fallbackBase, path)).timeout(_timeout);
+          await setBaseUrl(fallbackBase);
+          return _handleResponse(response);
+        } on TimeoutException {
+          return http.Response(
+              jsonEncode({"detail": "Request timed out. Please retry."}), 504);
+        } on SocketException {
+          return http.Response(
+              jsonEncode(
+                  {"detail": "No internet connection or backend unreachable."}),
+              503);
+        } on http.ClientException {
+          return http.Response(
+              jsonEncode({"detail": "Backend unreachable."}), 503);
+        }
+      }
+      return http.Response(
+          jsonEncode({"detail": "Request timed out. Please retry."}), 504);
+    } on SocketException {
+      final fallbackBase = ApiConfig.baseUrl;
+      if (fallbackBase == primaryBase) {
+        return http.Response(
+            jsonEncode(
+                {"detail": "No internet connection or backend unreachable."}),
+            503);
+      }
+      try {
+        final response =
+            await sender(_uri(fallbackBase, path)).timeout(_timeout);
+        await setBaseUrl(fallbackBase);
+        return _handleResponse(response);
+      } on TimeoutException {
+        return http.Response(
+            jsonEncode({"detail": "Request timed out. Please retry."}), 504);
+      } on SocketException {
+        return http.Response(
+            jsonEncode(
+                {"detail": "No internet connection or backend unreachable."}),
+            503);
+      } on http.ClientException {
+        return http.Response(
+            jsonEncode({"detail": "Backend unreachable."}), 503);
+      }
+    } on http.ClientException {
+      return http.Response(jsonEncode({"detail": "Backend unreachable."}), 503);
+    }
+  }
+
+  Future<bool> canReachBackend() async {
+    final response = await healthCheck();
+    return response.statusCode >= 200 && response.statusCode < 300;
+  }
+
+  http.Response _handleResponse(http.Response response) {
+    if (response.statusCode == 401) {
+      _handleUnauthorized();
+    }
+    return response;
+  }
+
+  Future<void> _handleUnauthorized() async {
+    await clearToken();
+    await clearUserContext();
+    if (!SessionGuard.beginRedirect()) {
+      return;
+    }
+    final nav = AppNavigator.key.currentState;
+    final ctx = AppNavigator.key.currentContext;
+    nav?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AppEntry()),
+      (route) => false,
+    );
+    if (ctx != null) {
+      Future.delayed(const Duration(milliseconds: 250), () {
+        if (AppNavigator.key.currentContext != null) {
+          ScaffoldMessenger.of(AppNavigator.key.currentContext!).showSnackBar(
+            const SnackBar(
+                content: Text("Session expired. Please login again.")),
+          );
+        }
+      });
+    }
+    Future.delayed(const Duration(seconds: 2), SessionGuard.endRedirect);
+  }
+
+  Future<http.Response> register({
+    required String name,
+    required String email,
+    required String password,
+    required String role,
+    required String deviceId,
+    required String simSerial,
+  }) async {
+    final headers = await _headers();
+    final body = jsonEncode({
+      "name": name,
+      "email": email,
+      "password": password,
+      "role": role,
+      "device_id": deviceId,
+      "sim_serial": simSerial,
+    });
+    return _sendWithFallback(
+      path: "/auth/register",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> verifyOtp({
+    required String email,
+    required String otpCode,
+  }) async {
+    final headers = await _headers();
+    final body = jsonEncode({
+      "email": email,
+      "otp_code": otpCode,
+    });
+    return _sendWithFallback(
+      path: "/auth/verify-otp",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> resendOtp({required String email}) async {
+    final headers = await _headers();
+    final body = jsonEncode({"email": email});
+    return _sendWithFallback(
+      path: "/auth/resend-otp",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> login({
+    required String email,
+    required String password,
+    required String deviceId,
+    required String simSerial,
+    required String role,
+  }) async {
+    final headers = await _headers();
+    final body = jsonEncode({
+      "email": email,
+      "password": password,
+      "device_id": deviceId,
+      "sim_serial": simSerial,
+      "role": role,
+    });
+    return _sendWithFallback(
+      path: "/auth/login",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> googleLogin({
+    String? idToken,
+    String? accessToken,
+    required String deviceId,
+    required String simSerial,
+    required String role,
+  }) async {
+    final headers = await _headers();
+    final body = jsonEncode({
+      "id_token": idToken,
+      "access_token": accessToken,
+      "device_id": deviceId,
+      "sim_serial": simSerial,
+      "role": role,
+    });
+    return _sendWithFallback(
+      path: "/auth/google-login",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> me() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/auth/me",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> updateProfileName(String name) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"name": name});
+    return _sendWithFallback(
+      path: "/auth/profile",
+      sender: (uri) => http.patch(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> changePassword({
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "old_password": oldPassword,
+      "new_password": newPassword,
+    });
+    return _sendWithFallback(
+      path: "/auth/change-password",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> deleteAccount({required String password}) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"password": password});
+    return _sendWithFallback(
+      path: "/auth/delete-account",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> startLecture(int classroomId) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"classroom_id": classroomId});
+    return _sendWithFallback(
+      path: "/lecture/start",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> endLecture(int lectureId) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"lecture_id": lectureId});
+    return _sendWithFallback(
+      path: "/lecture/end",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listActiveLectures() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/lecture/active",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> submitCheckpoint({
+    required int lectureId,
+    required double latitude,
+    required double longitude,
+    double? gpsAccuracyM,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "lecture_id": lectureId,
+      "latitude": latitude,
+      "longitude": longitude,
+      "gps_accuracy_m": gpsAccuracyM,
+    });
+    return _sendWithFallback(
+      path: "/attendance/checkpoint",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> attendanceHistory() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/attendance/history",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> attendanceMonthlySummary(
+      {int? year, int? month}) async {
+    final headers = await _headers(auth: true);
+    final now = DateTime.now();
+    final y = year ?? now.year;
+    final m = month ?? now.month;
+    return _sendWithFallback(
+      path: "/attendance/monthly-summary?year=$y&month=$m",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> healthCheck() async {
+    return _sendWithFallback(
+      path: "/health",
+      sender: (uri) => http.get(uri),
+    );
+  }
+
+  Future<http.Response> myAttendanceRecords() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/attendance/my-records",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> lectureHistory() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/lecture/history",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> lectureStudentSummary() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/lecture/student-summary",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> lectureStudentSubjectAttendance({
+    required int lectureId,
+    required int studentId,
+  }) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path:
+          "/lecture/student-subject-attendance?lecture_id=$lectureId&student_id=$studentId",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> lectureAttendanceDetails(int lectureId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/lecture/$lectureId/attendance-details",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> usersStudents() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/users/students",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> adminAllAttendance() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/admin/all-attendance",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> adminLogs() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/admin/logs",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> adminCreateUser(Map<String, dynamic> payload) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/admin/create-user",
+      sender: (uri) =>
+          http.post(uri, headers: headers, body: jsonEncode(payload)),
+    );
+  }
+
+  Future<http.Response> adminResetDevice({
+    required int userId,
+    required String deviceId,
+  }) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/admin/reset-device",
+      sender: (uri) => http.post(
+        uri,
+        headers: headers,
+        body: jsonEncode({"user_id": userId, "device_id": deviceId}),
+      ),
+    );
+  }
+
+  Future<http.Response> adminResetSim({
+    required int userId,
+    required String simSerial,
+  }) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/admin/reset-sim",
+      sender: (uri) => http.post(
+        uri,
+        headers: headers,
+        body: jsonEncode({"user_id": userId, "sim_serial": simSerial}),
+      ),
+    );
+  }
+
+  Future<http.Response> adminCreateClassroom(
+      Map<String, dynamic> payload) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/admin/create-classroom",
+      sender: (uri) =>
+          http.post(uri, headers: headers, body: jsonEncode(payload)),
+    );
+  }
+
+  Future<http.Response> adminUpdateBoundary({
+    required int classroomId,
+    required double latitudeMin,
+    required double latitudeMax,
+    required double longitudeMin,
+    required double longitudeMax,
+  }) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/admin/update-boundary/$classroomId",
+      sender: (uri) => http.put(
+        uri,
+        headers: headers,
+        body: jsonEncode({
+          "latitude_min": latitudeMin,
+          "latitude_max": latitudeMax,
+          "longitude_min": longitudeMin,
+          "longitude_max": longitudeMax,
+        }),
+      ),
+    );
+  }
+
+  Future<http.Response> adminOverrideAttendance({
+    required int lectureId,
+    required int studentId,
+    required String status,
+    required int presenceDuration,
+  }) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/admin/override-attendance",
+      sender: (uri) => http.put(
+        uri,
+        headers: headers,
+        body: jsonEncode({
+          "lecture_id": lectureId,
+          "student_id": studentId,
+          "status": status,
+          "presence_duration": presenceDuration,
+        }),
+      ),
+    );
+  }
+
+  Future<http.Response> myNotifications() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/notifications/my",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> myDepartment() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/departments/my",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> createComplaint({
+    required String subject,
+    required String description,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"subject": subject, "description": description});
+    return _sendWithFallback(
+      path: "/complaints",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> myComplaints() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/complaints/my",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> createNote({
+    required String title,
+    required String url,
+    String? description,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "title": title,
+      "description": description,
+      "url": url,
+    });
+    return _sendWithFallback(
+      path: "/resources/notes",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listNotes() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/notes",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> createAssignment({
+    required String subject,
+    required String title,
+    required String templateText,
+    String? templateUrl,
+    String? dueAt,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "subject": subject,
+      "title": title,
+      "template_text": templateText,
+      "template_url": templateUrl,
+      "due_at": dueAt,
+    });
+    return _sendWithFallback(
+      path: "/resources/assignments",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listAssignments({String? subject}) async {
+    final headers = await _headers(auth: true);
+    final query = (subject == null || subject.trim().isEmpty)
+        ? ""
+        : "?subject=${Uri.encodeComponent(subject.trim())}";
+    return _sendWithFallback(
+      path: "/resources/assignments$query",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> submitAssignment({
+    required int assignmentId,
+    required String answerText,
+    String? attachmentUrl,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "answer_text": answerText,
+      "attachment_url": attachmentUrl,
+    });
+    return _sendWithFallback(
+      path: "/resources/assignments/$assignmentId/submit",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listAssignmentSubmissions({int? assignmentId}) async {
+    final headers = await _headers(auth: true);
+    final query = assignmentId == null ? "" : "?assignment_id=$assignmentId";
+    return _sendWithFallback(
+      path: "/resources/submissions$query",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> gradeAssignmentSubmission({
+    required int submissionId,
+    int? marks,
+    String? feedback,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "marks": marks,
+      "feedback": feedback,
+    });
+    return _sendWithFallback(
+      path: "/resources/submissions/$submissionId/grade",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> uploadAttachment({
+    required String filePath,
+    String purpose = "attachment",
+  }) async {
+    final baseUrl = await getBaseUrl();
+    final uri = Uri.parse(
+        "$baseUrl/resources/upload-attachment?purpose=${Uri.encodeComponent(purpose)}");
+    try {
+      final request = http.MultipartRequest("POST", uri);
+      final token = await getToken();
+      if (token != null && token.isNotEmpty) {
+        request.headers["Authorization"] = "Bearer $token";
+      }
+      request.files.add(await http.MultipartFile.fromPath("file", filePath));
+      final streamed = await request.send().timeout(_timeout);
+      final response = await http.Response.fromStream(streamed);
+      return _handleResponse(response);
+    } on TimeoutException {
+      return http.Response(
+          jsonEncode({"detail": "Upload timed out. Please retry."}), 504);
+    } on SocketException {
+      return http.Response(
+          jsonEncode(
+              {"detail": "No internet connection or backend unreachable."}),
+          503);
+    } on http.ClientException {
+      return http.Response(jsonEncode({"detail": "Backend unreachable."}), 503);
+    }
+  }
+
+  Future<http.Response> createRoom({
+    required String title,
+    required String meetingUrl,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "title": title,
+      "meeting_url": meetingUrl,
+    });
+    return _sendWithFallback(
+      path: "/resources/rooms",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listRooms() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/rooms",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> sampleLectures() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/sample-lectures",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> scheduleLecture({
+    required String title,
+    required String scheduledAt,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"title": title, "scheduled_at": scheduledAt});
+    return _sendWithFallback(
+      path: "/resources/schedule",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listScheduledLectures() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/schedule",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> studentCount() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/student-count",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> geofenceStatus() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/geofence-status",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> geofenceToggle(bool enabled) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"enabled": enabled});
+    return _sendWithFallback(
+      path: "/resources/geofence-toggle",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> studentsList() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/students",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> nearbyStudents() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/nearby-students",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> manualAttendance({
+    required int studentId,
+    required int lectureId,
+    required String status,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "student_id": studentId,
+      "lecture_id": lectureId,
+      "status": status,
+    });
+    return _sendWithFallback(
+      path: "/resources/manual-attendance",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> manualAttendanceList() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/manual-attendance",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> createShareItAppointment({
+    required String documentType,
+    required String studentName,
+    required String studentEmail,
+    required String appointmentAt,
+    String? venue,
+    String? notes,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "document_type": documentType,
+      "student_name": studentName,
+      "student_email": studentEmail,
+      "appointment_at": appointmentAt,
+      "venue": venue,
+      "notes": notes,
+    });
+    return _sendWithFallback(
+      path: "/resources/share-it/appointments",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listShareItAppointments() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/share-it/appointments",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> markShareItCollected(int appointmentId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/resources/share-it/appointments/$appointmentId/collect",
+      sender: (uri) => http.patch(uri, headers: headers),
+    );
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "830476406950",
+    "project_id": "edusys-1927d",
+    "storage_bucket": "edusys-1927d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:830476406950:android:247e47d94cf31762b02467",
+        "android_client_info": {
+          "package_name": "com.edusys.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "830476406950-he3ap6n8c967g5imnoogpiijg1341gcl.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.edusys.mobile",
+            "certificate_hash": "a35ed5c92b81e186d25d0363cc0a41dae5bb1147"
+          }
+        },
+        {
+          "client_id": "830476406950-lg0e9c1l8d8gr1du83lp3l5gffvvl1g2.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAF3uR6xf0dHwKaTVjNlM9LPHEPZ58O9zY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "830476406950-lg0e9c1l8d8gr1du83lp3l5gffvvl1g2.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

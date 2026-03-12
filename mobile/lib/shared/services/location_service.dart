@@ -1,0 +1,32 @@
+import "package:geolocator/geolocator.dart";
+
+enum LocationErrorType { gpsDisabled, denied, deniedForever }
+
+class LocationServiceException implements Exception {
+  LocationServiceException(this.type);
+  final LocationErrorType type;
+}
+
+class LocationService {
+  Future<Position> getCurrentPosition() async {
+    final enabled = await Geolocator.isLocationServiceEnabled();
+    if (!enabled) {
+      throw LocationServiceException(LocationErrorType.gpsDisabled);
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied) {
+      throw LocationServiceException(LocationErrorType.denied);
+    }
+    if (permission == LocationPermission.deniedForever) {
+      throw LocationServiceException(LocationErrorType.deniedForever);
+    }
+
+    return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    );
+  }
+}
