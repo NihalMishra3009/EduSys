@@ -8,7 +8,7 @@ class LocationServiceException implements Exception {
 }
 
 class LocationService {
-  Future<Position> getCurrentPosition() async {
+  Future<void> _ensurePermission() async {
     final enabled = await Geolocator.isLocationServiceEnabled();
     if (!enabled) {
       throw LocationServiceException(LocationErrorType.gpsDisabled);
@@ -24,7 +24,15 @@ class LocationService {
     if (permission == LocationPermission.deniedForever) {
       throw LocationServiceException(LocationErrorType.deniedForever);
     }
+  }
 
+  Future<Position?> getLastKnownPosition() async {
+    await _ensurePermission();
+    return Geolocator.getLastKnownPosition();
+  }
+
+  Future<Position> getCurrentPosition() async {
+    await _ensurePermission();
     return Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
     );

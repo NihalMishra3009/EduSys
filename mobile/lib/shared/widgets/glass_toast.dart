@@ -58,7 +58,7 @@ class _ToastEntryState extends State<_ToastEntry>
       duration: const Duration(milliseconds: 180),
       reverseDuration: const Duration(milliseconds: 140),
     );
-    _slide = Tween(begin: const Offset(0, -0.35), end: Offset.zero)
+    _slide = Tween(begin: const Offset(0, 0.35), end: Offset.zero)
         .chain(CurveTween(curve: Curves.easeOutCubic))
         .animate(_controller);
     _fade = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
@@ -81,7 +81,7 @@ class _ToastEntryState extends State<_ToastEntry>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
-    final safeTop = MediaQuery.of(context).padding.top;
+    final safeBottom = MediaQuery.of(context).padding.bottom;
 
     final borderColor = dark
         ? Colors.white.withValues(alpha: 0.06)
@@ -91,7 +91,7 @@ class _ToastEntryState extends State<_ToastEntry>
     final base = dark ? AppColors.darkSurface : AppColors.lightSurface;
 
     return Positioned(
-      top: safeTop + 10,
+      bottom: safeBottom + 90,
       left: 16,
       right: 16,
       child: SlideTransition(
@@ -99,7 +99,7 @@ class _ToastEntryState extends State<_ToastEntry>
         child: FadeTransition(
           opacity: _fade,
           child: Align(
-            alignment: Alignment.topCenter,
+            alignment: Alignment.bottomCenter,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 320),
               child: ClipRRect(

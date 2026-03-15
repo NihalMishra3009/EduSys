@@ -559,13 +559,23 @@ class ApiService {
 
   Future<http.Response> createClassroom({
     required String name,
-    required List<Map<String, double>> points,
+    List<Map<String, double>>? points,
+    double? latitudeMin,
+    double? latitudeMax,
+    double? longitudeMin,
+    double? longitudeMax,
   }) async {
     final headers = await _headers(auth: true);
-    final body = jsonEncode({
-      "name": name,
-      "points": points,
-    });
+    final bodyMap = <String, dynamic>{"name": name};
+    if (points != null) {
+      bodyMap["points"] = points;
+    } else {
+      bodyMap["latitude_min"] = latitudeMin;
+      bodyMap["latitude_max"] = latitudeMax;
+      bodyMap["longitude_min"] = longitudeMin;
+      bodyMap["longitude_max"] = longitudeMax;
+    }
+    final body = jsonEncode(bodyMap);
     return _sendWithFallback(
       path: "/classroom",
       sender: (uri) => http.post(uri, headers: headers, body: body),

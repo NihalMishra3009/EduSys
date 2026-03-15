@@ -1,4 +1,5 @@
 import "dart:convert";
+import "dart:async";
 import "dart:math" as math;
 import "dart:ui";
 import "dart:io";
@@ -30,8 +31,38 @@ import "package:shared_preferences/shared_preferences.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart";
 import "package:file_picker/file_picker.dart";
 
-const bool kUseDemoDataEverywhere = true;
+const bool kUseDemoDataEverywhere = false;
 const double kDockScrollBottomInset = 96;
+
+const List<Map<String, dynamic>> _demoProfessorClasses = [
+  {"id": 1, "name": "AI Lab 601"},
+  {"id": 2, "name": "DS Lab 602A"},
+  {"id": 3, "name": "Classroom 715"},
+  {"id": 4, "name": "Mini Project Room"},
+];
+
+const Map<int, List<Map<String, dynamic>>> _demoClassStudents = {
+  1: [
+    {"id": 201, "name": "Aarav Patil"},
+    {"id": 202, "name": "Diya Shinde"},
+    {"id": 203, "name": "Rohan Kale"},
+  ],
+  2: [
+    {"id": 204, "name": "Meera Joshi"},
+    {"id": 205, "name": "Kabir Nair"},
+    {"id": 206, "name": "Sara Khan"},
+  ],
+  3: [
+    {"id": 207, "name": "Tanvi Deshpande"},
+    {"id": 208, "name": "Ishaan Gupta"},
+    {"id": 209, "name": "Riya Sen"},
+  ],
+  4: [
+    {"id": 210, "name": "Neel Vora"},
+    {"id": 211, "name": "Sana Sheikh"},
+    {"id": 212, "name": "Om Kulkarni"},
+  ],
+};
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -3073,16 +3104,27 @@ class _HomeTabState extends State<_HomeTab> {
   Map<int, String> _studentNames = {};
   String _departmentName = "-";
   int _studentCount = 0;
+  Timer? _clockTimer;
+  DateTime _now = DateTime.now();
+  Timer? _demoSyncTimer;
+  int? _demoActiveLectureId;
+  Timer? _activeSyncTimer;
 
 
   Future<void> _handleLectureStarted(Map<String, dynamic> started) async {
     if (kUseDemoDataEverywhere) {
       final title = (started["title"] ?? "Lecture").toString();
+      final selectedStudents =
+          (started["selected_students"] as List<dynamic>?)
+                  ?.whereType<Map<String, dynamic>>()
+                  .toList() ??
+              [];
       final classroomId =
           (started["classroom_id"] as num?)?.toInt() ??
               int.tryParse(started["room_no"]?.toString() ?? "") ??
               0;
       final nowUtc = DateTime.now().toUtc().toIso8601String();
+      final prefs = await SharedPreferences.getInstance();
 
       setState(() {
         final nextScheduled = List<dynamic>.from(_scheduled);
@@ -3107,7 +3149,29 @@ class _HomeTabState extends State<_HomeTab> {
         });
         _active = nextActive;
         _scheduled = nextScheduled;
+        if (selectedStudents.isNotEmpty) {
+          var idx = 0;
+          _nearbyStudents = selectedStudents.map((row) {
+            final id = (row["id"] as num?)?.toInt() ?? 0;
+            final inside = idx % 2 == 0;
+            idx += 1;
+            return {
+              "student_id": id,
+              "student_name": (row["name"] ?? "Student #$id").toString(),
+              "lecture_id": nextActive.first["id"],
+              "inside_geofence": inside,
+            };
+          }).toList();
+        }
       });
+      final activePayload = {
+        "id": _active.first["id"],
+        "title": title,
+        "classroom_id": classroomId,
+        "status": "ACTIVE",
+        "start_time": nowUtc,
+      };
+      await prefs.setString("demo_active_lecture", jsonEncode(activePayload));
       return;
     }
     await _load();
@@ -3122,6 +3186,7 @@ class _HomeTabState extends State<_HomeTab> {
         "status": "ENDED",
         "end_time": (ended["end_time"] ?? nowUtc).toString(),
       };
+      final prefs = await SharedPreferences.getInstance();
       setState(() {
         final nextActive = List<dynamic>.from(_active);
         if (endedId != null) {
@@ -3138,19 +3203,13 @@ class _HomeTabState extends State<_HomeTab> {
         _active = nextActive;
         _history = [endedRow, ..._history];
       });
+      await prefs.remove("demo_active_lecture");
       return;
     }
     await _load();
   }
 
-  static const List<Map<String, dynamic>> _demoActiveLectures = [
-    {
-      "id": 901,
-      "classroom_id": 12,
-      "status": "ACTIVE",
-      "start_time": "2026-02-23T09:30:00Z"
-    },
-  ];
+  static const List<Map<String, dynamic>> _demoActiveLectures = [];
 
   List<_TimetableSlot> _todayTimetableSlots() {
     final now = TimeFormat.nowIst();
@@ -3260,7 +3319,269 @@ class _HomeTabState extends State<_HomeTab> {
   @override
   void initState() {
     super.initState();
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _now = DateTime.now());
+    });
+    _demoSyncTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      if (!mounted || !kUseDemoDataEverywhere) {
+        return;
+      }
+      final role = context.read<AuthProvider>().role ?? "STUDENT";
+      if (role != "STUDENT") {
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString("demo_active_lecture");
+      if (raw == null || raw.isEmpty) {
+        if (_demoActiveLectureId != null) {
+          setState(() {
+            _active = [];
+            _demoActiveLectureId = null;
+          });
+        }
+        return;
+      }
+      try {
+        final payload = jsonDecode(raw) as Map<String, dynamic>;
+        final id = (payload["id"] as num?)?.toInt();
+        if (id != null && id != _demoActiveLectureId) {
+          setState(() {
+            _active = [payload];
+            _demoActiveLectureId = id;
+          });
+        }
+      } catch (_) {
+        // Ignore malformed cache.
+      }
+    });
+    _activeSyncTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (!mounted || kUseDemoDataEverywhere) {
+        return;
+      }
+      final role = context.read<AuthProvider>().role ?? "STUDENT";
+      if (role != "STUDENT") {
+        return;
+      }
+      await _syncActiveLecturesFromApi();
+    });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _clockTimer?.cancel();
+    _demoSyncTimer?.cancel();
+    _activeSyncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _syncActiveLecturesFromApi() async {
+    try {
+      final res = await _api.listActiveLectures();
+      if (!mounted || res.statusCode < 200 || res.statusCode >= 300) {
+        return;
+      }
+      final rows = jsonDecode(res.body) as List<dynamic>;
+      setState(() => _active = rows);
+    } catch (_) {
+      // Ignore transient failures.
+    }
+  }
+
+  String _activeLectureDurationLabel(dynamic lecture) {
+    if (lecture is! Map<String, dynamic>) {
+      return "--:--";
+    }
+    final startRaw = lecture["start_time"]?.toString();
+    final start = TimeFormat.parseToIst(startRaw) ??
+        DateTime.tryParse(startRaw ?? "");
+    if (start == null) {
+      return "--:--";
+    }
+    final diff = _now.difference(start).abs();
+    final hours = diff.inHours;
+    final minutes = diff.inMinutes.remainder(60).toString().padLeft(2, "0");
+    final seconds = diff.inSeconds.remainder(60).toString().padLeft(2, "0");
+    return hours > 0 ? "${hours}h ${minutes}m" : "$minutes:$seconds";
+  }
+
+  Future<void> _showQuickStartLectureSheet() async {
+    final prefs = await SharedPreferences.getInstance();
+    final rawSpaces = prefs.getString("professor_created_spaces");
+    final createdSpaces = rawSpaces == null || rawSpaces.isEmpty
+        ? <Map<String, dynamic>>[]
+        : (jsonDecode(rawSpaces) as List<dynamic>)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+    final selectedClasses = <int>{};
+    final selectedStudents = <int>{};
+    int? selectedSpaceId;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setSheetState) {
+          List<Map<String, dynamic>> visibleStudents() {
+            if (selectedClasses.isEmpty) {
+              return const [];
+            }
+            final rows = <Map<String, dynamic>>[];
+            for (final classId in selectedClasses) {
+              final list = _demoClassStudents[classId] ?? const [];
+              rows.addAll(list);
+            }
+            return rows;
+          }
+
+          void toggleClass(int id, bool selected) {
+            setSheetState(() {
+              if (selected) {
+                selectedClasses.add(id);
+              } else {
+                selectedClasses.remove(id);
+                final list = _demoClassStudents[id] ?? const [];
+                for (final s in list) {
+                  selectedStudents.remove(s["id"] as int);
+                }
+              }
+            });
+          }
+
+          void toggleStudent(int id, bool selected) {
+            setSheetState(() {
+              if (selected) {
+                selectedStudents.add(id);
+              } else {
+                selectedStudents.remove(id);
+              }
+            });
+          }
+
+          Future<void> startLecture() async {
+            if (createdSpaces.isNotEmpty && selectedSpaceId == null) {
+              GlassToast.show(context, "Select a space",
+                  icon: Icons.info_outline);
+              return;
+            }
+            if (selectedClasses.isEmpty) {
+              GlassToast.show(context, "Select at least one class",
+                  icon: Icons.info_outline);
+              return;
+            }
+            if (selectedStudents.isEmpty) {
+              GlassToast.show(context, "Select at least one student",
+                  icon: Icons.info_outline);
+              return;
+            }
+            final firstClass = _demoProfessorClasses
+                .firstWhere((c) => selectedClasses.contains(c["id"] as int));
+            final classroomId = firstClass["id"] as int;
+            final title = "Lecture - ${firstClass["name"]}";
+            final nowUtc = DateTime.now().toUtc().toIso8601String();
+            if (kUseDemoDataEverywhere) {
+              final lectureId = DateTime.now().millisecondsSinceEpoch % 100000;
+              setState(() {
+                _active = [
+                  {
+                    "id": lectureId,
+                    "title": title,
+                    "classroom_id": classroomId,
+                    "status": "ACTIVE",
+                    "start_time": nowUtc,
+                  },
+                ];
+                _nearbyStudents = selectedStudents.map((id) {
+                  final name = _demoClassStudents.values
+                          .expand((e) => e)
+                          .firstWhere((s) => s["id"] == id)["name"]
+                          .toString();
+                  return {
+                    "student_id": id,
+                    "student_name": name,
+                    "lecture_id": lectureId,
+                  };
+                }).toList();
+              });
+            } else {
+              await _handleLectureStarted({
+                "title": title,
+                "classroom_id": classroomId,
+              });
+            }
+            if (context.mounted) {
+              Navigator.of(context).pop();
+            }
+          }
+
+          final students = visibleStudents();
+          return SafeArea(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SectionTitle("Start Lecture"),
+                    const SizedBox(height: 8),
+                    const Text("Select classes"),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _demoProfessorClasses.map((c) {
+                        final id = c["id"] as int;
+                        return FilterChip(
+                          label: Text(c["name"].toString()),
+                          selected: selectedClasses.contains(id),
+                          onSelected: (value) => toggleClass(id, value),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text("Select students"),
+                    const SizedBox(height: 6),
+                    if (students.isEmpty)
+                      const Text("Select a class to load students.")
+                    else
+                      ...students.map((s) {
+                        final id = s["id"] as int;
+                        final name = s["name"].toString();
+                        return CheckboxListTile(
+                          dense: true,
+                          value: selectedStudents.contains(id),
+                          onChanged: (value) =>
+                              toggleStudent(id, value ?? false),
+                          title: Text(name),
+                        );
+                      }),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: AppButton(
+                            label: "Start lecture",
+                            icon: Icons.play_circle_fill_rounded,
+                            onPressed: startLecture,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        });
+      },
+    );
   }
 
   Future<void> _load() async {
@@ -3270,10 +3591,23 @@ class _HomeTabState extends State<_HomeTab> {
       if (!mounted) {
         return;
       }
+      Map<String, dynamic>? demoActive;
+      if (role == "STUDENT") {
+        final prefs = await SharedPreferences.getInstance();
+        final raw = prefs.getString("demo_active_lecture");
+        if (raw != null && raw.isNotEmpty) {
+          try {
+            demoActive = jsonDecode(raw) as Map<String, dynamic>;
+            _demoActiveLectureId = (demoActive["id"] as num?)?.toInt();
+          } catch (_) {
+            demoActive = null;
+          }
+        }
+      }
       setState(() {
         _loading = false;
         _offline = false;
-        _active = _demoActiveLectures;
+        _active = demoActive == null ? _demoActiveLectures : [demoActive];
         _scheduled = _demoScheduled;
         _history =
             role == "PROFESSOR" ? _demoProfessorHistory : _demoStudentHistory;
@@ -3891,6 +4225,25 @@ class _ProfessorDashboard extends StatefulWidget {
 class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   final ApiService _api = ApiService();
   bool _endingLecture = false;
+  Timer? _clockTimer;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _clockTimer?.cancel();
+    super.dispose();
+  }
 
   List<_TimetableSlot> _todayTimetableSlots() {
     final now = TimeFormat.nowIst();
@@ -3927,6 +4280,261 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
     return "${slot.title} ($start - $end)";
   }
 
+  String _activeLectureDurationLabel(dynamic lecture) {
+    if (lecture is! Map<String, dynamic>) {
+      return "--:--";
+    }
+    final startRaw = lecture["start_time"]?.toString();
+    final start = TimeFormat.parseToIst(startRaw) ??
+        DateTime.tryParse(startRaw ?? "");
+    if (start == null) {
+      return "--:--";
+    }
+    final diff = _now.difference(start).abs();
+    final hours = diff.inHours;
+    final minutes = diff.inMinutes.remainder(60).toString().padLeft(2, "0");
+    final seconds = diff.inSeconds.remainder(60).toString().padLeft(2, "0");
+    return hours > 0 ? "${hours}h ${minutes}m" : "$minutes:$seconds";
+  }
+
+  Future<void> _showQuickStartLectureSheet() async {
+    final prefs = await SharedPreferences.getInstance();
+    final rawSpaces = prefs.getString("professor_created_spaces");
+    final createdSpaces = rawSpaces == null || rawSpaces.isEmpty
+        ? <Map<String, dynamic>>[]
+        : (jsonDecode(rawSpaces) as List<dynamic>)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+    final selectedClasses = <int>{};
+    final selectedStudents = <int>{};
+    int? selectedSpaceId;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setSheetState) {
+          List<Map<String, dynamic>> visibleStudents() {
+            if (selectedClasses.isEmpty) {
+              return const [];
+            }
+            final rows = <Map<String, dynamic>>[];
+            for (final classId in selectedClasses) {
+              final list = _demoClassStudents[classId] ?? const [];
+              rows.addAll(list);
+            }
+            return rows;
+          }
+
+          void toggleClass(int id, bool selected) {
+            setSheetState(() {
+              if (selected) {
+                selectedClasses.add(id);
+              } else {
+                selectedClasses.remove(id);
+                final list = _demoClassStudents[id] ?? const [];
+                for (final s in list) {
+                  selectedStudents.remove(s["id"] as int);
+                }
+              }
+            });
+          }
+
+          void toggleStudent(int id, bool selected) {
+            setSheetState(() {
+              if (selected) {
+                selectedStudents.add(id);
+              } else {
+                selectedStudents.remove(id);
+              }
+            });
+          }
+
+          Future<void> startLecture() async {
+            if (createdSpaces.isNotEmpty && selectedSpaceId == null) {
+              GlassToast.show(context, "Select a space",
+                  icon: Icons.info_outline);
+              return;
+            }
+            if (selectedClasses.isEmpty) {
+              GlassToast.show(context, "Select at least one class",
+                  icon: Icons.info_outline);
+              return;
+            }
+            if (selectedStudents.isEmpty) {
+              GlassToast.show(context, "Select at least one student",
+                  icon: Icons.info_outline);
+              return;
+            }
+            String extractDetail(String body, String fallback) {
+              try {
+                final map = jsonDecode(body) as Map<String, dynamic>;
+                return (map["detail"] ?? fallback).toString();
+              } catch (_) {
+                return fallback;
+              }
+            }
+            final firstClass = _demoProfessorClasses
+                .firstWhere((c) => selectedClasses.contains(c["id"] as int));
+            final classroomId = selectedSpaceId ?? (firstClass["id"] as int);
+            final title = "Lecture - ${firstClass["name"]}";
+            final selected = _demoClassStudents.values
+                .expand((e) => e)
+                .where((s) => selectedStudents.contains(s["id"] as int))
+                .toList();
+
+            Map<String, dynamic> payload = {
+              "title": title,
+              "classroom_id": classroomId,
+              "selected_students": selected,
+            };
+            final res = await _api.startLecture(classroomId);
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                payload = jsonDecode(res.body) as Map<String, dynamic>;
+              } catch (_) {}
+            } else {
+              GlassToast.show(
+                context,
+                extractDetail(res.body, "Unable to start lecture."),
+                  icon: Icons.error_outline);
+              return;
+            }
+            if (widget.onLectureStarted != null) {
+              await widget.onLectureStarted!(payload);
+            }
+            if (context.mounted) {
+              Navigator.of(context).pop();
+            }
+          }
+
+          final students = visibleStudents();
+          final allClassesSelected =
+              selectedClasses.length == _demoProfessorClasses.length;
+          final allStudentsSelected =
+              students.isNotEmpty && selectedStudents.length == students.length;
+          return SafeArea(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SectionTitle("Start Lecture"),
+                    const SizedBox(height: 8),
+                    const Text("Select space"),
+                    const SizedBox(height: 6),
+                    if (createdSpaces.isEmpty)
+                      const Text("No spaces created yet.")
+                    else
+                      ...createdSpaces.map((space) {
+                        final id = (space["id"] as num?)?.toInt();
+                        final name =
+                            (space["name"] ?? "Space #$id").toString();
+                        return RadioListTile<int>(
+                          dense: true,
+                          value: id ?? -1,
+                          groupValue: selectedSpaceId,
+                          onChanged: id == null
+                              ? null
+                              : (value) => setSheetState(
+                                  () => selectedSpaceId = value,
+                                ),
+                          title: Text(name),
+                        );
+                      }),
+                    const SizedBox(height: 12),
+                    const Text("Select classes"),
+                    const SizedBox(height: 6),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      value: allClassesSelected,
+                      onChanged: (value) => setSheetState(() {
+                        if (value == true) {
+                          selectedClasses
+                            ..clear()
+                            ..addAll(
+                              _demoProfessorClasses
+                                  .map((c) => c["id"] as int),
+                            );
+                        } else {
+                          selectedClasses.clear();
+                        }
+                      }),
+                      title: const Text("Select all classes"),
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _demoProfessorClasses.map((c) {
+                        final id = c["id"] as int;
+                        return FilterChip(
+                          label: Text(c["name"].toString()),
+                          selected: selectedClasses.contains(id),
+                          onSelected: (value) => toggleClass(id, value),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text("Select students"),
+                    const SizedBox(height: 6),
+                    if (students.isEmpty)
+                      const Text("Select a class to load students.")
+                    else ...[
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: allStudentsSelected,
+                        onChanged: (value) => setSheetState(() {
+                          if (value == true) {
+                            selectedStudents
+                              ..clear()
+                              ..addAll(students.map((s) => s["id"] as int));
+                          } else {
+                            selectedStudents.clear();
+                          }
+                        }),
+                        title: const Text("Select all students"),
+                      ),
+                      ...students.map((s) {
+                        final id = s["id"] as int;
+                        final name = s["name"].toString();
+                        return CheckboxListTile(
+                          dense: true,
+                          value: selectedStudents.contains(id),
+                          onChanged: (value) =>
+                              toggleStudent(id, value ?? false),
+                          title: Text(name),
+                        );
+                      }),
+                    ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: AppButton(
+                            label: "Start lecture",
+                            icon: Icons.play_circle_fill_rounded,
+                            onPressed: startLecture,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
   Future<void> _endActiveLecture() async {
     if (_endingLecture || widget.active.isEmpty) {
       return;
@@ -3945,11 +4553,20 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
 
     setState(() => _endingLecture = true);
     var ok = false;
+    String? errorDetail;
     if (kUseDemoDataEverywhere) {
       ok = true;
     } else {
       final res = await _api.endLecture(lectureId!);
       ok = res.statusCode >= 200 && res.statusCode < 300;
+      if (!ok) {
+        try {
+          final map = jsonDecode(res.body) as Map<String, dynamic>;
+          errorDetail = map["detail"]?.toString();
+        } catch (_) {
+          errorDetail = null;
+        }
+      }
     }
 
     if (!mounted) {
@@ -3971,7 +4588,11 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
       }
       GlassToast.show(context, "Lecture ended.", icon: Icons.check_circle_outline);
     } else {
-      GlassToast.show(context, "Unable to end lecture.", icon: Icons.error_outline);
+      GlassToast.show(
+        context,
+        errorDetail ?? "Unable to end lecture.",
+        icon: Icons.error_outline,
+      );
     }
     if (mounted) {
       setState(() => _endingLecture = false);
@@ -4010,9 +4631,18 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                 dotColor: Colors.red,
                 compact: true,
                 children: [
-                  if (widget.active.isEmpty && currentSlot == null)
-                    const Text("No active lecture")
-                  else ...[
+                  if (widget.active.isEmpty) ...[
+                    const Text("No active lecture"),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: AppButton(
+                        label: "Start Lecture",
+                        icon: Icons.play_circle_fill_rounded,
+                        onPressed: _showQuickStartLectureSheet,
+                      ),
+                    ),
+                  ] else ...[
                     Text(
                       widget.active.isNotEmpty
                           ? (widget.active.first is Map<String, dynamic>
@@ -4020,6 +4650,12 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                                   widget.active.first as Map<String, dynamic>)
                               : _lectureLabel(widget.active.first))
                           : _slotLabel(currentSlot!),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "Duration: ${_activeLectureDurationLabel(widget.active.first)}"
+                      "${currentSlot == null ? "" : " / ${currentSlot.endMinutes - currentSlot.startMinutes}m"}",
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 2),
                     Row(
@@ -4049,18 +4685,6 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                             visualDensity: VisualDensity.compact,
                           ),
                           child: const Text("View"),
-                        ),
-                        const SizedBox(width: 4),
-                        TextButton(
-                          onPressed: widget.onOpenAttendance,
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          child: const Text("Start Fencing"),
                         ),
                         const SizedBox(width: 4),
                         TextButton(
@@ -4765,6 +5389,10 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
         continue;
       }
       seen.add(studentId);
+      final inside = row["inside_geofence"];
+      if (inside is bool && inside == false) {
+        continue;
+      }
       final name = (row["student_name"] ??
               widget.studentNames[studentId] ??
               "Student #$studentId")
@@ -8284,6 +8912,8 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   int? _selectedStudentId;
   final LocationService _location = LocationService();
   final List<Map<String, double>> _spacePoints = [];
+  bool _recordingSpacePoint = false;
+  List<Map<String, dynamic>> _createdSpaces = [];
   final TextEditingController _spaceNameController = TextEditingController();
   final TextEditingController _spaceThresholdController =
       TextEditingController(text: "75");
@@ -8389,7 +9019,30 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   @override
   void initState() {
     super.initState();
+    _loadCreatedSpaces();
     _load();
+  }
+
+  Future<void> _loadCreatedSpaces() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString("professor_created_spaces");
+    if (raw == null || raw.isEmpty) {
+      return;
+    }
+    try {
+      final list = (jsonDecode(raw) as List<dynamic>)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      if (!mounted) return;
+      setState(() => _createdSpaces = list);
+    } catch (_) {
+      // Ignore malformed cache.
+    }
+  }
+
+  Future<void> _persistCreatedSpaces() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString("professor_created_spaces", jsonEncode(_createdSpaces));
   }
 
   Future<void> _load() async {
@@ -8609,6 +9262,104 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       _monthlyAbsent = nextMonthlyAbsent;
       _monthlyPercentage = nextMonthlyPercentage;
     });
+  }
+
+  Future<void> _openCreateSpaceDialog() async {
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setDialogState) {
+          Future<void> recordPoint() async {
+            await _recordSpacePoint();
+            if (mounted) {
+              setDialogState(() {});
+            }
+          }
+
+          void clearPoints() {
+            _clearSpacePoints();
+            if (mounted) {
+              setDialogState(() {});
+            }
+          }
+
+          return AlertDialog(
+            title: const Text("Create Space"),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: _spaceNameController,
+                    decoration: const InputDecoration(
+                      labelText: "Space name",
+                      prefixIcon: Icon(Icons.meeting_room_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppButton(
+                          label: _recordingSpacePoint
+                              ? "Recording..."
+                              : "Record point ${_spacePoints.length + 1}",
+                          icon: Icons.my_location_rounded,
+                          onPressed: _recordingSpacePoint ? null : recordPoint,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: AppButton(
+                          label: "Clear points",
+                          icon: Icons.refresh_rounded,
+                          isPrimary: false,
+                          onPressed: _spacePoints.isEmpty ? null : clearPoints,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text("Points recorded: ${_spacePoints.length}"),
+                  if (_spacePoints.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: _spacePoints.asMap().entries.map((entry) {
+                        final idx = entry.key + 1;
+                        final lat = entry.value["latitude"];
+                        final lon = entry.value["longitude"];
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            "Point $idx: ${lat?.toStringAsFixed(6)}, ${lon?.toStringAsFixed(6)}",
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  AppButton(
+                    label: "Create space",
+                    icon: Icons.add_location_alt_rounded,
+                    onPressed: _spacePoints.isNotEmpty ? _createSpace : null,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text("Close"),
+              ),
+            ],
+          );
+        });
+      },
+    );
   }
 
   Map<int, _StudentAttendanceSummary> _parseStudentSummary(List<dynamic> rows) {
@@ -8886,22 +9637,46 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   }
 
   Future<void> _recordSpacePoint() async {
-    if (_spacePoints.length >= 4) {
-      _toast("Already recorded 4 points");
+    if (_recordingSpacePoint) {
       return;
     }
+    setState(() => _recordingSpacePoint = true);
     try {
+      final last = await _location.getLastKnownPosition();
+      int? addedIndex;
+      if (!mounted) return;
+      if (last != null) {
+        setState(() {
+          _spacePoints.add(
+            {"latitude": last.latitude, "longitude": last.longitude},
+          );
+          addedIndex = _spacePoints.length - 1;
+        });
+      }
+
       final pos = await _location.getCurrentPosition();
       if (!mounted) return;
       setState(() {
-        _spacePoints.add(
-          {"latitude": pos.latitude, "longitude": pos.longitude},
-        );
+        final index = addedIndex;
+        if (index != null && index >= 0 && index < _spacePoints.length) {
+          _spacePoints[index] = {
+            "latitude": pos.latitude,
+            "longitude": pos.longitude,
+          };
+        } else {
+          _spacePoints.add(
+            {"latitude": pos.latitude, "longitude": pos.longitude},
+          );
+        }
       });
     } on LocationServiceException {
       if (!mounted) return;
       Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const PermissionDeniedScreen()));
+    } finally {
+      if (mounted) {
+        setState(() => _recordingSpacePoint = false);
+      }
     }
   }
 
@@ -8915,25 +9690,55 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       _toast("Enter a space name");
       return;
     }
-    if (_spacePoints.length != 4) {
-      _toast("Record 4 points to create the space");
+    if (_spacePoints.isEmpty) {
+      _toast("Record at least one point to create the space");
       return;
     }
+    final hasRectangle = _spacePoints.length == 4;
+    final lats = _spacePoints
+        .map((p) => p["latitude"])
+        .whereType<double>()
+        .toList();
+    final lons = _spacePoints
+        .map((p) => p["longitude"])
+        .whereType<double>()
+        .toList();
+    if (lats.isEmpty || lons.isEmpty) {
+      _toast("Invalid points recorded");
+      return;
+    }
+    final latitudeMin = lats.reduce(math.min);
+    final latitudeMax = lats.reduce(math.max);
+    final longitudeMin = lons.reduce(math.min);
+    final longitudeMax = lons.reduce(math.max);
     setState(() => _loading = true);
     final res = await _api.createClassroom(
       name: name,
-      points: _spacePoints,
+      points: hasRectangle ? _spacePoints : null,
+      latitudeMin: hasRectangle ? null : latitudeMin,
+      latitudeMax: hasRectangle ? null : latitudeMax,
+      longitudeMin: hasRectangle ? null : longitudeMin,
+      longitudeMax: hasRectangle ? null : longitudeMax,
     );
     if (!mounted) return;
     setState(() => _loading = false);
-    _toast(_extractDetail(res.body, res.statusCode >= 200 && res.statusCode < 300
-        ? "Space created"
-        : "Failed to create space"));
+    final isOk = res.statusCode >= 200 && res.statusCode < 300;
+    _toast(_extractDetail(res.body, isOk ? "Space created" : "Failed to create space"));
     if (res.statusCode >= 200 && res.statusCode < 300) {
       setState(() {
         _spacePoints.clear();
         _spaceNameController.clear();
+        try {
+          final payload = jsonDecode(res.body) as Map<String, dynamic>;
+          _createdSpaces = [
+            payload,
+            ..._createdSpaces,
+          ];
+        } catch (_) {
+          // Ignore parse errors.
+        }
       });
+      await _persistCreatedSpaces();
     }
   }
 
@@ -9144,48 +9949,33 @@ class _AttendanceTabState extends State<_AttendanceTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SectionTitle("Create Space"),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _spaceNameController,
-                    decoration: const InputDecoration(
-                      labelText: "Space name",
-                      prefixIcon: Icon(Icons.meeting_room_rounded),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
                   Row(
                     children: [
-                      Expanded(
-                        child: AppButton(
-                          label: _spacePoints.length < 4
-                              ? "Record point ${_spacePoints.length + 1}"
-                              : "Points recorded",
-                          icon: Icons.my_location_rounded,
-                          onPressed:
-                              _spacePoints.length >= 4 ? null : _recordSpacePoint,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: AppButton(
-                          label: "Clear points",
-                          icon: Icons.refresh_rounded,
-                          isPrimary: false,
-                          onPressed:
-                              _spacePoints.isEmpty ? null : _clearSpacePoints,
-                        ),
+                      const Expanded(child: SectionTitle("Create Space")),
+                      IconButton(
+                        onPressed: _openCreateSpaceDialog,
+                        icon: const Icon(Icons.add_circle_rounded),
+                        tooltip: "Create space",
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text("Points recorded: ${_spacePoints.length}/4"),
-                  const SizedBox(height: 10),
-                  AppButton(
-                    label: "Create space",
-                    icon: Icons.add_location_alt_rounded,
-                    onPressed: _spacePoints.length == 4 ? _createSpace : null,
-                  ),
+                  const SizedBox(height: 4),
+                  const Text("Tap + to add a new space and record points."),
+                  const SizedBox(height: 6),
+                  Text("Points recorded: ${_spacePoints.length}"),
+                  if (_createdSpaces.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    const SectionTitle("Created Spaces"),
+                    const SizedBox(height: 6),
+                    ..._createdSpaces.take(6).map((space) {
+                      final id = space["id"]?.toString() ?? "-";
+                      final name = space["name"]?.toString() ?? "Unnamed space";
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text("- $name (ID: $id)"),
+                      );
+                    }),
+                  ],
                   const SizedBox(height: 12),
                   const Divider(),
                   const SizedBox(height: 8),
