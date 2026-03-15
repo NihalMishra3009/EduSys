@@ -20,9 +20,9 @@ class AppCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(14),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: dark ? 16 : 22, sigmaY: dark ? 16 : 22),
+        filter: ImageFilter.blur(sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
         child: Material(
           type: MaterialType.transparency,
           child: Container(
@@ -31,11 +31,11 @@ class AppCard extends StatelessWidget {
                 ? SkeuoDecor.liquidGlass(
                     tint: dark ? AppColors.darkSurface : AppColors.lightSurface,
                     dark: dark,
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(14),
                   )
                 : BoxDecoration(
                     gradient: gradient,
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(14),
                   ),
             child: child,
           ),

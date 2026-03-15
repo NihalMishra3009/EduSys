@@ -3,6 +3,7 @@ import "dart:math";
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/shared/widgets/app_button.dart";
 import "package:edusys_mobile/shared/widgets/app_card.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 import "package:shared_preferences/shared_preferences.dart";
@@ -181,8 +182,10 @@ class _RailwayConcessionScreenState extends State<RailwayConcessionScreen> {
     destinationCtrl.dispose();
 
     if (applied == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("New railway concession application submitted.")),
+      GlassToast.show(
+        context,
+        "New railway concession application submitted.",
+        icon: Icons.check_circle_outline,
       );
     }
   }

@@ -211,19 +211,20 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             detail=f"Selected role does not match account role ({user.role.value})",
         )
 
-    if normalized_email in DEFAULT_LOGIN_EMAILS:
-        user.device_id = payload.device_id
-        user.sim_serial = payload.sim_serial
-    elif user.device_id != payload.device_id or user.sim_serial != payload.sim_serial:
-        write_audit_log(
-            db,
-            actor_user_id=user.id,
-            action="AUTH_LOGIN_BINDING_MISMATCH",
-            target_type="user",
-            target_id=user.id,
-            details={"device_id": payload.device_id, "sim_serial": payload.sim_serial},
-        )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device or SIM mismatch")
+    if settings.device_binding_enabled:
+        if normalized_email in DEFAULT_LOGIN_EMAILS:
+            user.device_id = payload.device_id
+            user.sim_serial = payload.sim_serial
+        elif user.device_id != payload.device_id or user.sim_serial != payload.sim_serial:
+            write_audit_log(
+                db,
+                actor_user_id=user.id,
+                action="AUTH_LOGIN_BINDING_MISMATCH",
+                target_type="user",
+                target_id=user.id,
+                details={"device_id": payload.device_id, "sim_serial": payload.sim_serial},
+            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device or SIM mismatch")
 
     token = create_access_token(str(user.id))
     user.last_login_at = datetime.utcnow()
@@ -265,8 +266,9 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
     if user:
         if user.is_blocked:
             raise HTTPException(status_code=403, detail="User is blocked")
-        if user.device_id != payload.device_id or user.sim_serial != payload.sim_serial:
-            raise HTTPException(status_code=403, detail="Device or SIM mismatch")
+        if settings.device_binding_enabled:
+            if user.device_id != payload.device_id or user.sim_serial != payload.sim_serial:
+                raise HTTPException(status_code=403, detail="Device or SIM mismatch")
         if not user.is_email_verified:
             user.is_email_verified = True
     else:

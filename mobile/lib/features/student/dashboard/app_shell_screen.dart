@@ -20,6 +20,7 @@ import "package:edusys_mobile/shared/services/location_service.dart";
 import "package:edusys_mobile/shared/widgets/app_button.dart";
 import "package:edusys_mobile/shared/widgets/app_card.dart";
 import "package:edusys_mobile/shared/widgets/empty_state_widget.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:edusys_mobile/shared/widgets/loading_skeleton.dart";
 import "package:edusys_mobile/shared/widgets/section_title.dart";
 import "package:edusys_mobile/shared/widgets/status_badge.dart";
@@ -87,10 +88,8 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     final role = context.watch<AuthProvider>().role ?? "STUDENT";
     final hasSidebar = role == "STUDENT" || role == "PROFESSOR";
-    final theme = context.watch<ThemeProvider>();
-    final isDark = theme.themeMode == ThemeMode.dark ||
-        (theme.themeMode == ThemeMode.system &&
-            Theme.of(context).brightness == Brightness.dark);
+    final theme = context.read<ThemeProvider>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final pages = role == "ADMIN"
         ? [
             const _AdminHomeTab(),
@@ -161,9 +160,9 @@ class _AppShellState extends State<AppShell> {
                               ),
                             ),
                             Positioned(
-                              right: 0,
-                              child: Row(
-                                children: [
+                          right: 0,
+                          child: Row(
+                            children: [
                                   Material(
                                     color: Colors.transparent,
                                     child: InkWell(
@@ -200,21 +199,12 @@ class _AppShellState extends State<AppShell> {
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(22),
                                 onTap: () {
-                                  if (_index == 4) {
-                                    theme.setMode(
-                                        isDark ? AppThemeMode.light : AppThemeMode.dark);
-                                    return;
-                                  }
                                   _onTabSelected(4);
                                 },
                                 child: CircleAvatar(
                                   radius: 22,
                                   child: Icon(
-                                    _index == 4
-                                        ? (isDark
-                                            ? Icons.light_mode_rounded
-                                            : Icons.dark_mode_rounded)
-                                        : Icons.person_rounded,
+                                    Icons.person_rounded,
                                   ),
                                 ),
                               ),
@@ -303,12 +293,9 @@ class _StudentMenuDrawer extends StatelessWidget {
     final auth = context.watch<AuthProvider>();
     final name = (auth.name ?? "Student").toString();
     final role = (auth.role ?? "STUDENT").toString();
-    final theme = context.watch<ThemeProvider>();
-    final isDark = theme.themeMode == ThemeMode.dark ||
-        (theme.themeMode == ThemeMode.system &&
-            Theme.of(context).brightness == Brightness.dark);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
-    final bg = isDark ? const Color(0xFF121722) : const Color(0xFFF3F6FB);
+    final bg = isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurfaceSoft;
     final fg = scheme.onSurface;
     return Drawer(
       width: 300,
@@ -361,16 +348,7 @@ class _StudentMenuDrawer extends StatelessWidget {
                       ],
                     ),
                   ),
-                  IconButton(
-                    tooltip: isDark ? "Light mode" : "Dark mode",
-                    onPressed: () {
-                      theme.setMode(isDark ? AppThemeMode.light : AppThemeMode.dark);
-                    },
-                    icon: Icon(
-                      isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-                      color: fg,
-                    ),
-                  ),
+                  const SizedBox(width: 40),
                 ],
               ),
               const SizedBox(height: 18),
@@ -379,6 +357,15 @@ class _StudentMenuDrawer extends StatelessWidget {
                 title: "Home",
                 active: true,
                 onTap: () => Navigator.of(context).pop(),
+              ),
+              _DrawerItem(
+                title: "Settings",
+                onTap: () {
+                  Navigator.of(context).pop();
+                  final shell =
+                      context.findAncestorStateOfType<_AppShellState>();
+                  shell?._onTabSelected(4);
+                },
               ),
               _DrawerItem(
                 title: "Hello Casts",
@@ -739,10 +726,10 @@ class _StudentDocumentationScreenState extends State<_StudentDocumentationScreen
             label: "Submit All Documents",
             icon: Icons.cloud_upload_rounded,
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Sample: Documents submitted successfully."),
-                ),
+              GlassToast.show(
+                context,
+                "Sample: Documents submitted successfully.",
+                icon: Icons.check_circle_outline,
               );
             },
           ),
@@ -953,18 +940,20 @@ class _ShareItScreenState extends State<_ShareItScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Created $success appointment(s).")),
+      GlassToast.show(
+        context,
+        "Created $success appointment(s).",
+        icon: Icons.check_circle_outline,
       );
       return;
     }
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
+    GlassToast.show(
       context,
-    ).showSnackBar(
-      const SnackBar(content: Text("Unable to create appointments. Please retry.")),
+      "Unable to create appointments. Please retry.",
+      icon: Icons.error_outline,
     );
   }
 
@@ -1068,9 +1057,11 @@ class _ShareItScreenState extends State<_ShareItScreen> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
+    GlassToast.show(
       context,
-    ).showSnackBar(SnackBar(content: Text(_detail(res.body))));
+      _detail(res.body),
+      icon: Icons.error_outline,
+    );
   }
 
   @override
@@ -2793,45 +2784,21 @@ class _BottomTabSectionState extends State<_BottomTabSection> {
           borderRadius: BorderRadius.circular(22),
           child: BackdropFilter(
             filter: ImageFilter.blur(
-                sigmaX: dark ? 10 : 16, sigmaY: dark ? 10 : 16),
+                sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
             child: Container(
               height: 76,
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Color.alphaBlend(
-                      scheme.primary.withValues(alpha: dark ? 0.18 : 0.12),
-                      scheme.surface,
-                    ).withValues(alpha: dark ? 0.92 : 0.96),
-                    Color.alphaBlend(
-                      scheme.primary.withValues(alpha: dark ? 0.08 : 0.05),
-                      scheme.surface,
-                    ).withValues(alpha: dark ? 0.84 : 0.90),
-                  ],
-                ),
+                color: scheme.surface,
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(
-                  color: scheme.primary.withValues(alpha: dark ? 0.48 : 0.32),
+                  color: Colors.black.withValues(alpha: dark ? 0.20 : 0.08),
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: scheme.primary.withValues(alpha: dark ? 0.32 : 0.20),
-                    blurRadius: 24,
-                    spreadRadius: 0,
-                    offset: const Offset(0, 4),
-                  ),
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: dark ? 0.34 : 0.12),
-                    blurRadius: 22,
-                    offset: const Offset(0, 12),
-                  ),
-                  BoxShadow(
-                    color: Colors.white.withValues(alpha: dark ? 0.06 : 0.28),
-                    blurRadius: 12,
-                    offset: const Offset(0, -2),
+                    color: Colors.black.withValues(alpha: dark ? 0.22 : 0.08),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
                   ),
                 ],
               ),
@@ -3972,9 +3939,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unable to end lecture.")),
-      );
+      GlassToast.show(context, "Unable to end lecture.", icon: Icons.error_outline);
       return;
     }
 
@@ -4004,13 +3969,9 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Lecture ended.")),
-      );
+      GlassToast.show(context, "Lecture ended.", icon: Icons.check_circle_outline);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unable to end lecture.")),
-      );
+      GlassToast.show(context, "Unable to end lecture.", icon: Icons.error_outline);
     }
     if (mounted) {
       setState(() => _endingLecture = false);
@@ -4520,15 +4481,19 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                       icon: Icons.play_arrow_rounded,
                       onPressed: () async {
                         if (selectedClasses.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Select at least one class.")),
+                          GlassToast.show(
+                            context,
+                            "Select at least one class.",
+                            icon: Icons.error_outline,
                           );
                           return;
                         }
                         final roomNo = int.tryParse(roomText.trim());
                         if (roomNo == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Enter valid room number.")),
+                          GlassToast.show(
+                            context,
+                            "Enter valid room number.",
+                            icon: Icons.error_outline,
                           );
                           return;
                         }
@@ -4564,8 +4529,10 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                           Navigator.of(context).pop(true);
                           return;
                         }
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Unable to start selected lectures.")),
+                        GlassToast.show(
+                          context,
+                          "Unable to start selected lectures.",
+                          icon: Icons.error_outline,
                         );
                       },
                     ),
@@ -4604,8 +4571,10 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
         }
         final startedCount =
             (startedPayloadResult!["started_count"] as num?)?.toInt() ?? 1;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("$startedCount lecture(s) started.")),
+        GlassToast.show(
+          context,
+          "$startedCount lecture(s) started.",
+          icon: Icons.check_circle_outline,
         );
       });
     }
@@ -5712,10 +5681,10 @@ class _NotesTabState extends State<_NotesTab> {
       return (payload["url"] ?? payload["relative_url"])?.toString();
     }
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content:
-                Text(_extractDetailLocal(res.body, fallback: "Upload failed"))),
+      GlassToast.show(
+        context,
+        _extractDetailLocal(res.body, fallback: "Upload failed"),
+        icon: Icons.error_outline,
       );
     }
     return null;
@@ -6963,8 +6932,10 @@ class _LearningTabState extends State<_LearningTab> {
               title: title),
           isHost: true);
     } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unable to create room right now.")),
+      GlassToast.show(
+        context,
+        "Unable to create room right now.",
+        icon: Icons.error_outline,
       );
     }
   }
@@ -7697,18 +7668,14 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       return;
     }
     setState(() => _audioMuted = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Host muted all participants.")),
-    );
+    GlassToast.show(context, "Host muted all participants.", icon: Icons.info_outline);
   }
 
   Future<void> _applyRemoteRemove() async {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Removed by host.")),
-    );
+    GlassToast.show(context, "Removed by host.", icon: Icons.info_outline);
     await Future.delayed(const Duration(milliseconds: 350));
     if (mounted) {
       Navigator.of(context).maybePop();
@@ -7889,9 +7856,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
         "action": "mute_all",
       }),
     );
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Mute all sent.")),
-    );
+    GlassToast.show(context, "Mute all sent.", icon: Icons.info_outline);
   }
 
   Future<void> _hostRemoveParticipant(String peerId) async {
@@ -8187,8 +8152,7 @@ class _LecturesTabState extends State<_LecturesTab> {
   }
 
   void _show(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    GlassToast.show(context, message, icon: Icons.info_outline);
   }
 
   @override
@@ -8909,8 +8873,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   }
 
   void _toast(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    GlassToast.show(context, message, icon: Icons.info_outline);
   }
 
   String _extractDetail(String body, String fallback) {
@@ -9719,6 +9682,8 @@ class _SettingsTabState extends State<_SettingsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.read<ThemeProvider>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListView(
       padding:
           const EdgeInsets.fromLTRB(16, 10, 16, 20 + kDockScrollBottomInset),
@@ -9730,6 +9695,36 @@ class _SettingsTabState extends State<_SettingsTab> {
             const Text("Profile",
                 style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700)),
           ],
+        ),
+        const SizedBox(height: 12),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _IconSectionTitle(
+                icon: Icons.palette_rounded,
+                title: "Appearance",
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      isDark ? "Dark Mode" : "Light Mode",
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Switch.adaptive(
+                    value: isDark,
+                    onChanged: (_) {
+                      theme.setMode(
+                          isDark ? AppThemeMode.light : AppThemeMode.dark);
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 12),
         AppCard(

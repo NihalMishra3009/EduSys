@@ -2,6 +2,7 @@ import "dart:async";
 
 import "package:edusys_mobile/app_entry.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 
@@ -59,9 +60,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
     final auth = context.read<AuthProvider>();
     final otp = _otpController.text.trim();
     if (otp.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Enter a valid 6-digit OTP")),
-      );
+      GlassToast.show(context, "Enter a valid 6-digit OTP", icon: Icons.error_outline);
       return;
     }
 
@@ -76,9 +75,7 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
       );
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(auth.error ?? "OTP verification failed")),
-    );
+    GlassToast.show(context, auth.error ?? "OTP verification failed", icon: Icons.error_outline);
   }
 
   Future<void> _resendOtp() async {
@@ -93,14 +90,10 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
     if (ok) {
       _otpController.clear();
       _startCooldown();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("OTP sent again to your email")),
-      );
+      GlassToast.show(context, "OTP sent again to your email", icon: Icons.mark_email_read_outlined);
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(auth.error ?? "Failed to resend OTP")),
-    );
+    GlassToast.show(context, auth.error ?? "Failed to resend OTP", icon: Icons.error_outline);
   }
 
   @override

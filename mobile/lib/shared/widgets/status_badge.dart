@@ -1,5 +1,4 @@
 import "package:edusys_mobile/core/constants/app_colors.dart";
-import "package:edusys_mobile/core/theme/skeuomorphic.dart";
 import "package:flutter/material.dart";
 
 class StatusBadge extends StatelessWidget {
@@ -22,13 +21,10 @@ class StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final base = color.withValues(alpha: dark ? 0.28 : 0.18);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: SkeuoDecor.surface(
-        base: base,
-        dark: dark,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(

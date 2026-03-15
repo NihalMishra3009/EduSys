@@ -34,6 +34,8 @@ class EduSysApp extends StatelessWidget {
           theme: AppTheme.lightTheme(),
           darkTheme: AppTheme.darkTheme(),
           themeMode: themeProvider.themeMode,
+          themeAnimationDuration: const Duration(milliseconds: 200),
+          themeAnimationCurve: Curves.easeInOut,
           builder: (context, child) {
             final media = MediaQuery.of(context);
             final clampedTextScaler = media.textScaler

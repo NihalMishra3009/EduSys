@@ -6,6 +6,7 @@ import "package:edusys_mobile/app_entry.dart";
 import "package:edusys_mobile/config/api_config.dart";
 import "package:edusys_mobile/core/utils/app_navigator.dart";
 import "package:edusys_mobile/core/utils/session_guard.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:http/http.dart" as http;
@@ -207,9 +208,10 @@ class ApiService {
     if (ctx != null) {
       Future.delayed(const Duration(milliseconds: 250), () {
         if (AppNavigator.key.currentContext != null) {
-          ScaffoldMessenger.of(AppNavigator.key.currentContext!).showSnackBar(
-            const SnackBar(
-                content: Text("Session expired. Please login again.")),
+          GlassToast.show(
+            AppNavigator.key.currentContext!,
+            "Session expired. Please login again.",
+            icon: Icons.error_outline,
           );
         }
       });

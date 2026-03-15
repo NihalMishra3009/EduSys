@@ -1,6 +1,7 @@
 import "dart:convert";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 
 class ComplaintScreen extends StatefulWidget {
@@ -70,7 +71,7 @@ class _ComplaintScreenState extends State<ComplaintScreen> {
   }
 
   void _snack(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    GlassToast.show(context, text, icon: Icons.info_outline);
   }
 
   @override

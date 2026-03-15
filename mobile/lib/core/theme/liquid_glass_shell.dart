@@ -14,18 +14,23 @@ class LiquidGlassShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final start = dark ? AppColors.darkBackground : const Color(0xFFF2F8FF);
-    final end = dark ? const Color(0xFF0F1C2F) : const Color(0xFFE2EDF9);
-    final mid = dark ? const Color(0xFF12263F) : const Color(0xFFEAF4FF);
+    final start = dark ? AppColors.darkBackground : AppColors.lightBackground;
+    final end = dark ? AppColors.darkBackgroundEnd : AppColors.lightSurfaceSoft;
+    final mid = dark ? AppColors.darkBackgroundMid : AppColors.lightBackground;
 
-    return DecoratedBox(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeInOut,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [start, mid, end],
-          stops: const [0.0, 0.52, 1.0],
-        ),
+        color: dark ? AppColors.darkBackground : null,
+        gradient: dark
+            ? null
+            : LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [start, mid, end],
+                stops: const [0.0, 0.52, 1.0],
+              ),
       ),
       child: Stack(
         fit: StackFit.expand,
@@ -33,33 +38,37 @@ class LiquidGlassShell extends StatelessWidget {
           _Blob(
             alignment: const Alignment(-1.0, -0.92),
             size: 320,
-            color: AppColors.lightPrimary.withValues(alpha: dark ? 0.20 : 0.26),
+            color: (dark ? AppColors.darkPrimary : AppColors.lightPrimary)
+                .withValues(alpha: dark ? 0.10 : 0.10),
           ),
           _Blob(
             alignment: const Alignment(1.04, -0.34),
             size: 270,
-            color: const Color(0xFF52C9B0).withValues(alpha: dark ? 0.14 : 0.22),
+            color: (dark ? AppColors.darkPrimaryAlt : AppColors.lightSecondary)
+                .withValues(alpha: dark ? 0.08 : 0.08),
           ),
           _Blob(
             alignment: const Alignment(-0.78, 0.96),
             size: 350,
-            color: const Color(0xFF66B2FF).withValues(alpha: dark ? 0.13 : 0.21),
+            color: (dark ? AppColors.darkPrimary : AppColors.lightPrimary)
+                .withValues(alpha: dark ? 0.08 : 0.07),
           ),
           _Blob(
             alignment: const Alignment(0.92, 0.86),
             size: 240,
-            color: const Color(0xFF9CC7F2).withValues(alpha: dark ? 0.12 : 0.20),
+            color: (dark ? AppColors.darkPrimaryAlt : AppColors.lightSecondary)
+                .withValues(alpha: dark ? 0.06 : 0.06),
           ),
           BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: dark ? 5.0 : 6.5, sigmaY: dark ? 5.0 : 6.5),
+            filter: ImageFilter.blur(sigmaX: dark ? 2.0 : 2.4, sigmaY: dark ? 2.0 : 2.4),
             child: Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    Colors.white.withValues(alpha: dark ? 0.02 : 0.10),
-                    Colors.white.withValues(alpha: dark ? 0.00 : 0.04),
+                    Colors.white.withValues(alpha: dark ? 0.02 : 0.12),
+                    Colors.white.withValues(alpha: dark ? 0.00 : 0.06),
                   ],
                 ),
               ),

@@ -1,5 +1,6 @@
 import "package:edusys_mobile/app_entry.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 
@@ -53,8 +54,10 @@ class ProfileScreen extends StatelessWidget {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(ok ? "Profile updated" : (auth.error ?? "Update failed"))),
+    GlassToast.show(
+      context,
+      ok ? "Profile updated" : (auth.error ?? "Update failed"),
+      icon: ok ? Icons.check_circle_outline : Icons.error_outline,
     );
   }
 
@@ -126,8 +129,10 @@ class ProfileScreen extends StatelessWidget {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(ok ? "Password updated" : (auth.error ?? "Password update failed"))),
+    GlassToast.show(
+      context,
+      ok ? "Password updated" : (auth.error ?? "Password update failed"),
+      icon: ok ? Icons.check_circle_outline : Icons.error_outline,
     );
   }
 

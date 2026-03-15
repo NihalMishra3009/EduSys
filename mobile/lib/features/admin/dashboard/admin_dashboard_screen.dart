@@ -2,6 +2,7 @@ import "dart:convert";
 
 import "package:edusys_mobile/core/utils/time_format.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -77,7 +78,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   void _toast(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    GlassToast.show(context, text, icon: Icons.info_outline);
   }
 
   Future<void> _createUser() async {

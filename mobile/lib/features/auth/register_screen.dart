@@ -1,5 +1,6 @@
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/features/auth/otp_verify_screen.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 
@@ -54,9 +55,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(auth.error ?? "Registration failed")),
-    );
+    GlassToast.show(context, auth.error ?? "Registration failed", icon: Icons.error_outline);
   }
 
   @override

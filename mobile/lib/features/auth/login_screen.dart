@@ -2,6 +2,7 @@ import "package:edusys_mobile/app_entry.dart";
 import "package:edusys_mobile/core/constants/app_colors.dart";
 import "package:edusys_mobile/core/theme/skeuomorphic.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "dart:ui";
 import "package:provider/provider.dart";
@@ -67,9 +68,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(auth.error ?? "Login failed")),
-    );
+    GlassToast.show(context, auth.error ?? "Login failed", icon: Icons.error_outline);
   }
 
   String? _validateCollegeEmail(String? value) {
@@ -107,7 +106,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(24),
                 child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: dark ? 16 : 22, sigmaY: dark ? 16 : 22),
+                  filter: ImageFilter.blur(sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
                   child: Container(
                     padding: const EdgeInsets.all(22),
                     decoration: SkeuoDecor.liquidGlass(
@@ -120,7 +119,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const Icon(Icons.school_rounded, size: 54, color: Color(0xFF0E7490)),
+                          const Icon(Icons.school_rounded, size: 54, color: AppColors.lightPrimary),
                           const SizedBox(height: 10),
                           const Text(
                             "EduSys",
@@ -131,7 +130,10 @@ class _LoginScreenState extends State<LoginScreen> {
                           const Text(
                             "Secure online login",
                             textAlign: TextAlign.center,
-                            style: TextStyle(fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.lightTextSecondary,
+                            ),
                           ),
                           const SizedBox(height: 18),
                           _InputField(
@@ -159,14 +161,18 @@ class _LoginScreenState extends State<LoginScreen> {
                               prefixIcon: Icon(Icons.badge_outlined, color: theme.colorScheme.primary),
                               hintText: "Select role",
                               filled: true,
-                              fillColor: (dark ? AppColors.darkSurfaceElevated : Colors.white).withValues(alpha: dark ? 0.52 : 0.68),
+                              fillColor: dark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(14),
                                 borderSide: BorderSide.none,
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide(color: Colors.white.withValues(alpha: dark ? 0.14 : 0.42)),
+                                borderSide: BorderSide(
+                                  color: dark
+                                      ? AppColors.darkBorder.withValues(alpha: 0.68)
+                                      : AppColors.lightBorder,
+                                ),
                               ),
                             ),
                             items: const [
@@ -252,14 +258,16 @@ class _InputField extends StatelessWidget {
         suffixIcon: suffix,
         hintText: hint,
         filled: true,
-        fillColor: (dark ? AppColors.darkSurfaceElevated : Colors.white).withValues(alpha: dark ? 0.52 : 0.68),
+        fillColor: dark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: Colors.white.withValues(alpha: dark ? 0.14 : 0.42)),
+          borderSide: BorderSide(
+            color: dark ? AppColors.darkBorder.withValues(alpha: 0.68) : AppColors.lightBorder,
+          ),
         ),
       ),
     );

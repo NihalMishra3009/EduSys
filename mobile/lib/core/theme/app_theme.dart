@@ -17,7 +17,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      fontFamily: "Poppins",
+      fontFamily: "Roboto",
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: CupertinoPageTransitionsBuilder(),
@@ -25,6 +25,8 @@ class AppTheme {
         },
       ),
       scaffoldBackgroundColor: Colors.transparent,
+      canvasColor: AppColors.lightSurface,
+      disabledColor: AppColors.lightTextDisabled,
       textTheme: const TextTheme(
         titleLarge: TextStyle(
           color: AppColors.lightTextPrimary,
@@ -33,44 +35,49 @@ class AppTheme {
         ),
         bodyMedium: TextStyle(color: AppColors.lightTextPrimary),
         bodyLarge: TextStyle(color: AppColors.lightTextPrimary),
+        bodySmall: TextStyle(color: AppColors.lightTextSecondary),
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppColors.lightBackground,
         elevation: 0,
         centerTitle: false,
         surfaceTintColor: Colors.transparent,
+        foregroundColor: AppColors.lightTextPrimary,
       ),
       cardTheme: CardThemeData(
-        color: AppColors.lightSurface.withValues(alpha: 0.70),
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        color: AppColors.lightSurface,
+        elevation: 2,
+        shadowColor: Colors.black.withValues(alpha: 0.08),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: AppColors.lightSurface.withValues(alpha: 0.90),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: AppColors.lightSurface,
+        elevation: 4,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.lightSurface.withValues(alpha: 0.74),
+        fillColor: AppColors.lightSurface,
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide(
-            color: AppColors.lightBorder.withValues(alpha: 0.65),
+            color: AppColors.lightBorder,
           ),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           borderSide:
               const BorderSide(color: AppColors.lightPrimary, width: 1.35),
         ),
+        hintStyle: const TextStyle(color: AppColors.lightTextSecondary),
       ),
       chipTheme: ChipThemeData(
-        side: BorderSide(color: AppColors.lightBorder.withValues(alpha: 0.78)),
+        side: BorderSide(color: AppColors.lightBorder),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         selectedColor: AppColors.lightPrimary.withValues(alpha: 0.16),
-        backgroundColor: AppColors.lightSurface.withValues(alpha: 0.68),
+        backgroundColor: AppColors.lightSurface,
         labelStyle: const TextStyle(
           color: AppColors.lightTextPrimary,
           fontWeight: FontWeight.w600,
@@ -80,10 +87,9 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           foregroundColor: Colors.white,
           backgroundColor: AppColors.lightPrimary,
-          elevation: 0,
-          shadowColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+          elevation: 3,
+          shadowColor: Colors.black.withValues(alpha: 0.10),
+          shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         ),
       ),
@@ -91,14 +97,43 @@ class AppTheme {
         style: FilledButton.styleFrom(
           foregroundColor: Colors.white,
           backgroundColor: AppColors.lightPrimary,
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          side: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
+          elevation: 3,
+          shadowColor: Colors.black.withValues(alpha: 0.10),
+          shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         ),
       ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: AppColors.lightPrimary,
+        foregroundColor: Colors.white,
+        elevation: 4,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
+      dividerTheme: const DividerThemeData(color: AppColors.lightBorder, thickness: 1),
+      listTileTheme: const ListTileThemeData(
+        iconColor: AppColors.lightPrimary,
+        textColor: AppColors.lightTextPrimary,
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: AppColors.lightSurface,
+        elevation: 2,
+        indicatorColor: AppColors.lightPrimary.withValues(alpha: 0.12),
+        labelTextStyle: WidgetStateProperty.all(
+          const TextStyle(fontWeight: FontWeight.w600, color: AppColors.lightTextPrimary),
+        ),
+        iconTheme: WidgetStateProperty.all(
+          const IconThemeData(color: AppColors.lightPrimary),
+        ),
+      ),
+      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+        backgroundColor: AppColors.lightSurface,
+        selectedItemColor: AppColors.lightPrimary,
+        unselectedItemColor: AppColors.lightTextSecondary,
+        showUnselectedLabels: true,
+        elevation: 2,
+      ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: AppColors.lightSurface.withValues(alpha: 0.84),
+        backgroundColor: AppColors.lightSurface,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
@@ -121,7 +156,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      fontFamily: "Poppins",
+      fontFamily: "Roboto",
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: CupertinoPageTransitionsBuilder(),
@@ -137,6 +172,7 @@ class AppTheme {
         ),
         bodyMedium: TextStyle(color: AppColors.darkTextPrimary),
         bodyLarge: TextStyle(color: AppColors.darkTextPrimary),
+        bodySmall: TextStyle(color: AppColors.darkTextMuted),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
@@ -145,36 +181,38 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
       ),
       cardTheme: CardThemeData(
-        color: AppColors.darkSurface.withValues(alpha: 0.70),
-        elevation: 0,
+        color: AppColors.darkSurface,
+        elevation: 8,
+        shadowColor: Colors.black.withValues(alpha: 0.35),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: AppColors.darkBorder.withValues(alpha: 0.74)),
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: AppColors.darkBorder),
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: AppColors.darkSurface.withValues(alpha: 0.90),
+        backgroundColor: AppColors.darkSurface,
+        elevation: 10,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.darkSurfaceElevated.withValues(alpha: 0.58),
+        fillColor: AppColors.darkSurfaceElevated,
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: AppColors.darkBorder.withValues(alpha: 0.74)),
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: AppColors.darkBorder),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           borderSide: const BorderSide(color: AppColors.darkPrimary, width: 1.35),
         ),
       ),
       chipTheme: ChipThemeData(
-        side: BorderSide(color: AppColors.darkBorder.withValues(alpha: 0.85)),
+        side: BorderSide(color: AppColors.darkBorder),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         selectedColor: AppColors.darkPrimary.withValues(alpha: 0.24),
-        backgroundColor: AppColors.darkSurfaceElevated.withValues(alpha: 0.60),
+        backgroundColor: AppColors.darkSurfaceElevated,
         labelStyle: const TextStyle(
           color: AppColors.darkTextPrimary,
           fontWeight: FontWeight.w600,
@@ -184,10 +222,9 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           foregroundColor: Colors.white,
           backgroundColor: AppColors.darkPrimary,
-          elevation: 0,
-          shadowColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+          elevation: 6,
+          shadowColor: Colors.black.withValues(alpha: 0.35),
+          shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         ),
       ),
@@ -195,14 +232,43 @@ class AppTheme {
         style: FilledButton.styleFrom(
           foregroundColor: Colors.white,
           backgroundColor: AppColors.darkPrimary,
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+          elevation: 6,
+          shadowColor: Colors.black.withValues(alpha: 0.35),
+          shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         ),
       ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: AppColors.darkPrimary,
+        foregroundColor: Colors.white,
+        elevation: 8,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+      ),
+      dividerTheme: const DividerThemeData(color: AppColors.darkBorder, thickness: 1),
+      listTileTheme: const ListTileThemeData(
+        iconColor: AppColors.darkTextMuted,
+        textColor: AppColors.darkTextPrimary,
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: AppColors.darkSurfaceElevated,
+        elevation: 4,
+        indicatorColor: AppColors.darkPrimary.withValues(alpha: 0.18),
+        labelTextStyle: WidgetStateProperty.all(
+          const TextStyle(fontWeight: FontWeight.w600, color: AppColors.darkTextSecondary),
+        ),
+        iconTheme: WidgetStateProperty.all(
+          const IconThemeData(color: AppColors.darkTextMuted),
+        ),
+      ),
+      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+        backgroundColor: AppColors.darkSurfaceElevated,
+        selectedItemColor: AppColors.darkPrimary,
+        unselectedItemColor: AppColors.darkTextMuted,
+        showUnselectedLabels: true,
+        elevation: 6,
+      ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: AppColors.darkSurface.withValues(alpha: 0.82),
+        backgroundColor: AppColors.darkSurface,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
