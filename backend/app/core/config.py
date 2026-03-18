@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     device_binding_enabled: bool = Field(default=False, alias="DEVICE_BINDING_ENABLED")
 
     model_config = SettingsConfigDict(
-        env_file=(".env", ".env.example"),
+        # Only load a real local .env file. Production should rely on injected
+        # environment variables and must not silently fall back to example values.
+        env_file=(".env",),
         case_sensitive=False,
         extra="ignore",
     )

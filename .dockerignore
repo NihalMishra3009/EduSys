@@ -1,0 +1,10 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+backend/.env
+mobile/build/
+mobile/.dart_tool/
