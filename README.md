@@ -1,106 +1,135 @@
-# EduSys Mobile Attendance
+# EduSys
 
-EduSys is a role-based attendance system built with Flutter (Android), FastAPI, and PostgreSQL.
+EduSys is a role-based attendance system built with Flutter for Android and FastAPI for the backend.
 
-## Tech Stack
-- Mobile: Flutter, Provider, `http`, `flutter_secure_storage`, `geolocator`, `device_info_plus`, `telephony`
-- Backend: FastAPI, SQLAlchemy, Alembic, PostgreSQL, JWT (`python-jose`)
-- Infra: Docker Compose (`api`, `postgres`)
+## Stack
 
-## Roles
-- `ADMIN`
-- `PROFESSOR`
-- `STUDENT`
+- Mobile: Flutter, Provider, HTTP, Secure Storage, Geolocator, Google Sign-In
+- Backend: FastAPI, SQLAlchemy, Alembic, PostgreSQL, JWT
+- Deployment: Railway for the backend, GitHub Releases for the APK
 
-## Core Features
-- JWT auth with secure token storage
-- Device + SIM binding
-- Registration OTP (email-based)
-- Google sign-in
-- Rectangular geofencing (bounds normalization + GPS tolerance handling)
-- Lecture start/end
-- Attendance checkpoints + 75% attendance evaluation
-- Admin logs and overrides
+## Local Development
 
-## Project Structure
-```text
-edusys/
-├── backend/
-│   ├── app/
-│   ├── alembic/
-│   ├── Dockerfile
-│   └── requirements.txt
-├── mobile/
-│   ├── lib/
-│   └── pubspec.yaml
-├── docker-compose.yml
-└── README.md
-```
+### Backend
 
-## Backend Setup
-1. Create `backend/.env` (required for SMTP OTP):
-```env
-DATABASE_URL=postgresql+psycopg2://postgres:postgres@postgres:5432/edusys
-SECRET_KEY=change_me_to_a_long_random_secret
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
+1. Copy `backend/.env.example` to `backend/.env`.
+2. Update the values for your local database and email provider.
+3. Start the stack:
 
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=your_email@gmail.com
-SMTP_PASSWORD=your_16_char_gmail_app_password
-SMTP_SENDER_EMAIL=your_email@gmail.com
-SMTP_USE_TLS=true
-DEV_SHOW_OTP_IN_RESPONSE=false
-```
-2. Start services:
 ```powershell
-Copy-Item backend/.env.example backend/.env -ErrorAction SilentlyContinue
 docker compose up -d --build
 ```
-3. Verify API:
+
+4. Verify the API:
+
 ```powershell
 Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing
 ```
 
-## Mobile Run (Physical Android)
+### Mobile
+
 ```powershell
 cd mobile
 flutter pub get
-$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-& $adb reverse tcp:8000 tcp:8000
-flutter run -d <DEVICE_ID> --dart-define=API_BASE_URL=http://127.0.0.1:8000 --dart-define=GOOGLE_WEB_CLIENT_ID=<WEB_CLIENT_ID>
+flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000 --dart-define=GOOGLE_WEB_CLIENT_ID=<WEB_CLIENT_ID>
 ```
 
-## Mobile Run (Android Emulator)
+## Railway Backend Deployment
+
+This repo is now set up so Railway can deploy the backend directly from the repository root:
+
+- The root `Dockerfile` builds the backend from `backend/`.
+- The backend Docker command now listens on Railway's `PORT` environment variable in `backend/Dockerfile`.
+- The health endpoint is already available at `/health`.
+
+### Railway setup
+
+1. Create a new Railway project.
+2. Add a PostgreSQL service.
+3. Add a GitHub repo service pointing to this repository.
+4. In the backend service, set these variables:
+
+```env
+DATABASE_URL=<Railway PostgreSQL connection string>
+SECRET_KEY=<long random secret>
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=<your email>
+SMTP_PASSWORD=<your app password>
+SMTP_SENDER_EMAIL=<your email>
+SMTP_USE_TLS=true
+DEV_SHOW_OTP_IN_RESPONSE=false
+DEVICE_BINDING_ENABLED=true
+```
+
+5. In Railway service settings, set the healthcheck path to `/health`.
+6. Deploy the service.
+
+After deploy, your backend URL will look similar to:
+
+```text
+https://your-backend-name.up.railway.app
+```
+
+## Android Release Signing
+
+Local release builds still work without a real keystore, but production releases can now use a proper upload key.
+
+Files added for signing:
+
+- `mobile/android/key.properties.example`
+- `mobile/android/app/build.gradle.kts`
+
+To configure a local signed release:
+
+1. Create `mobile/android/upload-keystore.jks`
+2. Copy `mobile/android/key.properties.example` to `mobile/android/key.properties`
+3. Fill in your real keystore values
+
+## GitHub APK Release Workflow
+
+This repo now includes `.github/workflows/release-apk.yml`, which:
+
+- builds a signed Android APK
+- creates or updates a GitHub Release
+- uploads a stable asset named `EduSys.apk`
+
+### Required GitHub repository secrets
+
+Add these in GitHub at `Settings -> Secrets and variables -> Actions`:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+- `PROD_API_BASE_URL`
+- `GOOGLE_WEB_CLIENT_ID` (optional if Google login is not used in production)
+
+### How to publish
+
+Push a version tag:
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run-mobile-emulator.ps1 -AvdName Pixel_6a -GoogleWebClientId <WEB_CLIENT_ID>
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-## OTP Workflow
-1. User registers
-2. Backend sends OTP email via Gmail SMTP
-3. User verifies OTP on OTP screen
-4. User can use `Resend OTP` (cooldown enabled)
+The workflow will build the APK and publish it to the GitHub Release for that tag.
 
-## Geofencing Workflow (Rectangle)
-1. Student sends checkpoint (`lat`, `lon`, optional `gps_accuracy_m`)
-2. Backend normalizes classroom bounds
-3. Backend validates coordinate ranges
-4. Backend checks inside rectangle with GPS jitter tolerance
-5. Outside rectangle checkpoints are rejected
+## Direct APK Download Link
 
-## Key API Endpoints
-- Auth: `/auth/register`, `/auth/verify-otp`, `/auth/resend-otp`, `/auth/login`, `/auth/google-login`
-- Lecture: `/lecture/start`, `/lecture/end`, `/lecture/active`, `/lecture/history`
-- Attendance: `/attendance/checkpoint`, `/attendance/history`, `/attendance/my-records`
-- Admin: `/admin/create-user`, `/admin/reset-device`, `/admin/reset-sim`, `/admin/create-classroom`, `/admin/update-boundary/{classroom_id}`, `/admin/logs`
+Because every release uploads the APK with the same asset name, you can share a stable direct-download URL:
 
-## Build Release APK
-```powershell
-cd mobile
-flutter build apk --release --dart-define=API_BASE_URL=http://127.0.0.1:8000 --dart-define=GOOGLE_WEB_CLIENT_ID=<WEB_CLIENT_ID>
+```text
+https://github.com/<owner>/<repo>/releases/latest/download/EduSys.apk
 ```
 
-Output:
-- `mobile/build/app/outputs/flutter-apk/app-release.apk`
+Replace `<owner>` and `<repo>` with your GitHub account and repository name.
+
+## Notes
+
+- Production Android builds now block cleartext traffic by default, while debug and profile builds still allow local HTTP development.
+- The mobile production API URL should be passed during release builds with `--dart-define=API_BASE_URL=...`.
+- Railway and GitHub still need to be configured in their dashboards; this repo now contains the code and workflow support for that setup.

@@ -1,4 +1,4 @@
-from math import atan2, cos, radians
+from math import cos, radians
 
 
 def validate_coordinates(latitude: float, longitude: float) -> None:
@@ -37,15 +37,16 @@ def _point_in_polygon(latitude: float, longitude: float, points: list[tuple[floa
 
 
 def normalize_polygon_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    if len(points) != 4:
-        raise ValueError("Exactly 4 points are required for classroom geofence")
+    if len(points) < 3:
+        raise ValueError("At least 3 points are required for classroom geofence")
     normalized: list[tuple[float, float]] = []
     for lat, lon in points:
         validate_coordinates(lat, lon)
         normalized.append((lat, lon))
-    center_lat = sum(lat for lat, _ in normalized) / len(normalized)
-    center_lon = sum(lon for _, lon in normalized) / len(normalized)
-    normalized.sort(key=lambda p: atan2(p[0] - center_lat, p[1] - center_lon))
+    if len(normalized) >= 2 and normalized[0] == normalized[-1]:
+        normalized = normalized[:-1]
+    if len(normalized) < 3:
+        raise ValueError("At least 3 unique points are required for classroom geofence")
     return normalized
 
 

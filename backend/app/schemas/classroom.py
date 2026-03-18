@@ -31,6 +31,7 @@ class ClassroomOut(BaseModel):
     latitude_max: float
     longitude_min: float
     longitude_max: float
+    polygon_points: list[GeoPoint] | None = None
     point1_lat: float | None = None
     point1_lon: float | None = None
     point2_lat: float | None = None

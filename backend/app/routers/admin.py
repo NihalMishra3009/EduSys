@@ -147,18 +147,19 @@ def create_classroom(
         latitude_max = payload.latitude_max
         longitude_min = payload.longitude_min
         longitude_max = payload.longitude_max
-        point_fields = {}
+        point_fields = {"polygon_points": None}
     else:
         latitude_min, latitude_max, longitude_min, longitude_max = bounds_from_points(points)
         point_fields = {
-            "point1_lat": points[0][0],
-            "point1_lon": points[0][1],
-            "point2_lat": points[1][0],
-            "point2_lon": points[1][1],
-            "point3_lat": points[2][0],
-            "point3_lon": points[2][1],
-            "point4_lat": points[3][0],
-            "point4_lon": points[3][1],
+            "polygon_points": [{"latitude": lat, "longitude": lon} for lat, lon in points],
+            "point1_lat": points[0][0] if len(points) > 0 else None,
+            "point1_lon": points[0][1] if len(points) > 0 else None,
+            "point2_lat": points[1][0] if len(points) > 1 else None,
+            "point2_lon": points[1][1] if len(points) > 1 else None,
+            "point3_lat": points[2][0] if len(points) > 2 else None,
+            "point3_lon": points[2][1] if len(points) > 2 else None,
+            "point4_lat": points[3][0] if len(points) > 3 else None,
+            "point4_lon": points[3][1] if len(points) > 3 else None,
         }
 
     classroom = Classroom(
@@ -212,6 +213,7 @@ def update_boundary(
         longitude_min = payload.longitude_min
         longitude_max = payload.longitude_max
         point_fields = {
+            "polygon_points": None,
             "point1_lat": None,
             "point1_lon": None,
             "point2_lat": None,
@@ -224,14 +226,15 @@ def update_boundary(
     else:
         latitude_min, latitude_max, longitude_min, longitude_max = bounds_from_points(points)
         point_fields = {
-            "point1_lat": points[0][0],
-            "point1_lon": points[0][1],
-            "point2_lat": points[1][0],
-            "point2_lon": points[1][1],
-            "point3_lat": points[2][0],
-            "point3_lon": points[2][1],
-            "point4_lat": points[3][0],
-            "point4_lon": points[3][1],
+            "polygon_points": [{"latitude": lat, "longitude": lon} for lat, lon in points],
+            "point1_lat": points[0][0] if len(points) > 0 else None,
+            "point1_lon": points[0][1] if len(points) > 0 else None,
+            "point2_lat": points[1][0] if len(points) > 1 else None,
+            "point2_lon": points[1][1] if len(points) > 1 else None,
+            "point3_lat": points[2][0] if len(points) > 2 else None,
+            "point3_lon": points[2][1] if len(points) > 2 else None,
+            "point4_lat": points[3][0] if len(points) > 3 else None,
+            "point4_lon": points[3][1] if len(points) > 3 else None,
         }
 
     classroom = db.get(Classroom, classroom_id)

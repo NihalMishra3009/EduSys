@@ -12,9 +12,6 @@ class GlassToast {
     IconData? icon,
   }) {
     final overlay = Overlay.of(context, rootOverlay: true);
-    if (overlay == null) {
-      return;
-    }
 
     final entry = OverlayEntry(
       builder: (ctx) => _ToastEntry(

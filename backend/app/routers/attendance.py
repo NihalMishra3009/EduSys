@@ -34,7 +34,15 @@ def create_checkpoint(
 
     try:
         points = None
-        if (
+        if classroom.polygon_points:
+            points = []
+            for point in classroom.polygon_points:
+                if isinstance(point, dict):
+                    points.append((point.get("latitude"), point.get("longitude")))
+                elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                    points.append((point[0], point[1]))
+            points = [(lat, lon) for lat, lon in points if lat is not None and lon is not None]
+        elif (
             classroom.point1_lat is not None
             and classroom.point1_lon is not None
             and classroom.point2_lat is not None
@@ -72,8 +80,37 @@ def create_checkpoint(
             )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    record = (
+        db.query(AttendanceRecord)
+        .filter(AttendanceRecord.lecture_id == payload.lecture_id, AttendanceRecord.student_id == current_user.id)
+        .first()
+    )
     if not inside:
+        if record is None:
+            db.add(
+                AttendanceRecord(
+                    lecture_id=payload.lecture_id,
+                    student_id=current_user.id,
+                    presence_duration=0,
+                    status=AttendanceStatus.ABSENT,
+                )
+            )
+        elif record.status != AttendanceStatus.ABSENT:
+            record.status = AttendanceStatus.ABSENT
+        db.commit()
         raise HTTPException(status_code=400, detail="Outside classroom geofence")
+
+    if record is None:
+        db.add(
+            AttendanceRecord(
+                lecture_id=payload.lecture_id,
+                student_id=current_user.id,
+                presence_duration=0,
+                status=AttendanceStatus.PRESENT,
+            )
+        )
+    elif record.status != AttendanceStatus.PRESENT:
+        record.status = AttendanceStatus.PRESENT
 
     checkpoint = AttendanceCheckpoint(
         lecture_id=payload.lecture_id,

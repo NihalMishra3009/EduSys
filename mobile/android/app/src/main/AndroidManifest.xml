@@ -9,7 +9,7 @@
     <application
         android:label="EduSys"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="@bool/allow_cleartext_traffic">
         <activity
             android:name=".MainActivity"
             android:exported="true"

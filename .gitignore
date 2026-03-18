@@ -4,3 +4,5 @@ __pycache__/
 backend/.env
 .dart_tool/
 build/
+mobile/android/key.properties
+mobile/android/upload-keystore.jks

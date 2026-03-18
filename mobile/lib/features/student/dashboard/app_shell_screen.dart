@@ -3462,7 +3462,7 @@ class _HomeTabState extends State<_HomeTab> {
           }
 
           Future<void> startLecture() async {
-            if (createdSpaces.isNotEmpty && selectedSpaceId == null) {
+            if (createdSpaces.isNotEmpty) {
               GlassToast.show(context, "Select a space",
                   icon: Icons.info_outline);
               return;
@@ -9690,11 +9690,11 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       _toast("Enter a space name");
       return;
     }
-    if (_spacePoints.isEmpty) {
-      _toast("Record at least one point to create the space");
+    if (_spacePoints.length < 3) {
+      _toast("Record at least 3 points to create the space");
       return;
     }
-    final hasRectangle = _spacePoints.length == 4;
+    final hasPolygon = _spacePoints.length >= 3;
     final lats = _spacePoints
         .map((p) => p["latitude"])
         .whereType<double>()
@@ -9714,11 +9714,11 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     setState(() => _loading = true);
     final res = await _api.createClassroom(
       name: name,
-      points: hasRectangle ? _spacePoints : null,
-      latitudeMin: hasRectangle ? null : latitudeMin,
-      latitudeMax: hasRectangle ? null : latitudeMax,
-      longitudeMin: hasRectangle ? null : longitudeMin,
-      longitudeMax: hasRectangle ? null : longitudeMax,
+      points: hasPolygon ? _spacePoints : null,
+      latitudeMin: hasPolygon ? null : latitudeMin,
+      latitudeMax: hasPolygon ? null : latitudeMax,
+      longitudeMin: hasPolygon ? null : longitudeMin,
+      longitudeMax: hasPolygon ? null : longitudeMax,
     );
     if (!mounted) return;
     setState(() => _loading = false);
