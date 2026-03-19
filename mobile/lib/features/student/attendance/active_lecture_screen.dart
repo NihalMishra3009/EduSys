@@ -116,13 +116,12 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       setState(() => _loading = true);
     }
     try {
-      // GEO: single-point check on button click, wait for good accuracy.
-      Position? position;
-      const maxAccuracyM = 10.0;
-      const attempts = 3;
-      for (var attempt = 0; attempt < attempts; attempt++) {
-        position = await _locationService.getFreshPosition();
-        if (position.isMocked) {
+      // GEO: take a few samples and use the best accuracy reading.
+      const samples = 3;
+      final readings = <Position>[];
+      for (var i = 0; i < samples; i++) {
+        final sample = await _locationService.getFreshPosition();
+        if (sample.isMocked) {
           if (!mounted) return;
           if (!silent) {
             setState(() {
@@ -132,14 +131,12 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
           }
           return;
         }
-        if (position.accuracy <= maxAccuracyM) {
-          break;
-        }
-        if (attempt < attempts - 1) {
-          await Future.delayed(const Duration(seconds: 1));
+        readings.add(sample);
+        if (i < samples - 1) {
+          await Future.delayed(const Duration(milliseconds: 1500));
         }
       }
-      if (position == null) {
+      if (readings.isEmpty) {
         if (!mounted) return;
         if (!silent) {
           setState(() {
@@ -149,18 +146,11 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      final current = position;
-      if (current.accuracy > maxAccuracyM) {
-        if (!mounted) return;
-        if (!silent) {
-          setState(() {
-            _success = false;
-            _message =
-                "Waiting for better GPS accuracy.\nAccuracy: ${current.accuracy.toStringAsFixed(1)}m";
-          });
-        }
-        return;
-      }
+      readings.sort((a, b) => a.accuracy.compareTo(b.accuracy));
+      final current = readings.first;
+      final accuracyWarning = current.accuracy > 50
+          ? "GPS accuracy low (${current.accuracy.toStringAsFixed(1)}m). Move to open sky."
+          : null;
       if (_lastCheckpointPosition != null && _lastCheckpointAt != null) {
         final dt = DateTime.now().difference(_lastCheckpointAt!).inSeconds;
         if (dt > 0) {
@@ -203,7 +193,12 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
           final acc = current.accuracy.toStringAsFixed(1);
           setState(() {
             _success = false;
-            _message = "Outside classroom geofence\nLat: $lat, Lng: $lon\nAccuracy: ${acc}m";
+            _message = [
+              "Outside classroom geofence",
+              "Lat: $lat, Lng: $lon",
+              "Accuracy: ${acc}m",
+              if (accuracyWarning != null) accuracyWarning,
+            ].join("\n");
           });
         }
         return;
@@ -227,7 +222,12 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
           _message = _extractMessage(
             response.body,
             fallback: _success
-                ? "Checkpoint submitted\nLat: $lat, Lng: $lon\nAccuracy: ${acc}m"
+                ? [
+                    "Checkpoint submitted",
+                    "Lat: $lat, Lng: $lon",
+                    "Accuracy: ${acc}m",
+                    if (accuracyWarning != null) accuracyWarning,
+                  ].join("\n")
                 : "Checkpoint failed",
           );
         });

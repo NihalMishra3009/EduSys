@@ -38,6 +38,63 @@ def _point_in_polygon(latitude: float, longitude: float, points: list[tuple[floa
     return inside
 
 
+def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6_371_000.0
+    d_lat = radians(lat2 - lat1)
+    d_lon = radians(lon2 - lon1)
+    a = math.sin(d_lat / 2) ** 2 + math.cos(radians(lat1)) * math.cos(radians(lat2)) * math.sin(d_lon / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _bearing_rad(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    y = math.sin(radians(lon2 - lon1)) * math.cos(radians(lat2))
+    x = math.cos(radians(lat1)) * math.sin(radians(lat2)) - math.sin(radians(lat1)) * math.cos(radians(lat2)) * math.cos(
+        radians(lon2 - lon1)
+    )
+    return math.atan2(y, x)
+
+
+def _distance_to_segment_meters(
+    latitude: float,
+    longitude: float,
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+) -> float:
+    r = 6_371_000.0
+    d13 = _haversine_meters(lat1, lon1, latitude, longitude) / r
+    d12 = _haversine_meters(lat1, lon1, lat2, lon2) / r
+    if d12 == 0:
+        return _haversine_meters(latitude, longitude, lat1, lon1)
+    theta13 = _bearing_rad(lat1, lon1, latitude, longitude)
+    theta12 = _bearing_rad(lat1, lon1, lat2, lon2)
+    d_xt = math.asin(math.sin(d13) * math.sin(theta13 - theta12))
+    d_at = math.acos(max(-1.0, min(1.0, math.cos(d13) / math.cos(d_xt))))
+    if d_at < 0 or d_at > d12:
+        return min(
+            _haversine_meters(latitude, longitude, lat1, lon1),
+            _haversine_meters(latitude, longitude, lat2, lon2),
+        )
+    return abs(d_xt) * r
+
+
+def _signed_distance_to_polygon_meters(
+    latitude: float,
+    longitude: float,
+    polygon: list[tuple[float, float]],
+) -> float:
+    min_dist = float("inf")
+    for i, j in zip(range(len(polygon)), range(-1, len(polygon) - 1)):
+        lat1, lon1 = polygon[j]
+        lat2, lon2 = polygon[i]
+        dist = _distance_to_segment_meters(latitude, longitude, lat1, lon1, lat2, lon2)
+        min_dist = min(min_dist, dist)
+    if min_dist <= 0.5:
+        return -0.0
+    return -min_dist if _point_in_polygon(latitude, longitude, polygon) else min_dist
+
+
 def _polygon_area(points: list[tuple[float, float]]) -> float:
     area = 0.0
     for i in range(len(points) - 1):
@@ -192,24 +249,24 @@ def is_inside_polygon(
     validate_coordinates(latitude, longitude)
     polygon = normalize_polygon_points(points)
 
-    buffer_m = max(0.0, tolerance_m) + max(0.0, gps_accuracy_m or 0.0)
-    if buffer_m <= 0:
-        return _point_in_polygon(latitude, longitude, polygon)
+    fixed_buffer_m = 5.0
+    dynamic_buffer_m = max(0.0, (gps_accuracy_m or 0.0) * 0.5)
+    dynamic_buffer_m = min(dynamic_buffer_m, 20.0)
+    total_buffer_m = fixed_buffer_m + dynamic_buffer_m + max(0.0, tolerance_m)
 
-    lat_pad = _meters_to_lat_degrees(buffer_m)
-    lon_pad = _meters_to_lon_degrees(buffer_m, at_latitude=latitude)
-    offsets = [
-        (0.0, 0.0),
-        (lat_pad, 0.0),
-        (-lat_pad, 0.0),
-        (0.0, lon_pad),
-        (0.0, -lon_pad),
-        (lat_pad, lon_pad),
-        (lat_pad, -lon_pad),
-        (-lat_pad, lon_pad),
-        (-lat_pad, -lon_pad),
-    ]
-    return any(_point_in_polygon(latitude + dlat, longitude + dlon, polygon) for dlat, dlon in offsets)
+    lat_pad = _meters_to_lat_degrees(total_buffer_m)
+    lon_pad = _meters_to_lon_degrees(total_buffer_m, at_latitude=latitude)
+    min_lat, max_lat, min_lon, max_lon = bounds_from_points(polygon)
+    if (
+        latitude < min_lat - lat_pad
+        or latitude > max_lat + lat_pad
+        or longitude < min_lon - lon_pad
+        or longitude > max_lon + lon_pad
+    ):
+        return False
+
+    signed_dist = _signed_distance_to_polygon_meters(latitude, longitude, polygon)
+    return signed_dist <= total_buffer_m
 
 
 def is_inside_rectangle(
