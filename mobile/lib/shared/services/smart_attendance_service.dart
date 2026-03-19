@@ -457,9 +457,6 @@ class SmartAttendanceService {
     required int lectureId,
     required int roomId,
   }) async {
-    if (!Platform.isAndroid) {
-      return;
-    }
     final channel = const MethodChannel(_bleChannelName);
     final payload = jsonEncode({
       "classroomId": roomId,
@@ -475,9 +472,6 @@ class SmartAttendanceService {
   }
 
   Future<void> _stopBleAdvertising() async {
-    if (!Platform.isAndroid) {
-      return;
-    }
     final channel = const MethodChannel(_bleChannelName);
     await channel.invokeMethod("stopAdvertising");
   }
