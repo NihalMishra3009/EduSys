@@ -51,16 +51,15 @@ class _ToastEntryState extends State<_ToastEntry>
   @override
   void initState() {
     super.initState();
-    final lowEnd = PerfConfig.lowEnd(context);
     _controller = AnimationController(
       vsync: this,
-      duration: lowEnd ? const Duration(milliseconds: 80) : const Duration(milliseconds: 180),
-      reverseDuration: lowEnd ? const Duration(milliseconds: 60) : const Duration(milliseconds: 140),
+      duration: const Duration(milliseconds: 180),
+      reverseDuration: const Duration(milliseconds: 140),
     );
     _slide = Tween(begin: const Offset(0, 0.35), end: Offset.zero)
         .chain(CurveTween(curve: Curves.easeOutCubic))
         .animate(_controller);
-    _fade = CurvedAnimation(parent: _controller, curve: lowEnd ? Curves.easeOut : Curves.easeOut);
+    _fade = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
 
     _controller.forward();
     Timer(widget.duration, () {
@@ -68,6 +67,16 @@ class _ToastEntryState extends State<_ToastEntry>
         _controller.reverse();
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final lowEnd = PerfConfig.lowEnd(context);
+    _controller.duration =
+        lowEnd ? const Duration(milliseconds: 80) : const Duration(milliseconds: 180);
+    _controller.reverseDuration =
+        lowEnd ? const Duration(milliseconds: 60) : const Duration(milliseconds: 140);
   }
 
   @override
