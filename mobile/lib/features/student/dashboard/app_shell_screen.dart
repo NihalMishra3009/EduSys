@@ -3545,13 +3545,28 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   Future<void> _showQuickStartLectureSheet() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rawSpaces = prefs.getString("professor_created_spaces");
-    final createdSpaces = rawSpaces == null || rawSpaces.isEmpty
-        ? <Map<String, dynamic>>[]
-        : (jsonDecode(rawSpaces) as List<dynamic>)
-            .whereType<Map<String, dynamic>>()
-            .toList();
+    final createdSpaces = <Map<String, dynamic>>[];
+    try {
+      final res = await _api.listClassrooms();
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as List<dynamic>;
+        createdSpaces.addAll(decoded.whereType<Map<String, dynamic>>());
+      }
+    } catch (_) {
+      // Ignore fetch failures here.
+    }
+    if (createdSpaces.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      final rawSpaces = prefs.getString("professor_created_spaces");
+      if (rawSpaces != null && rawSpaces.isNotEmpty) {
+        try {
+          createdSpaces.addAll(
+            (jsonDecode(rawSpaces) as List<dynamic>)
+                .whereType<Map<String, dynamic>>(),
+          );
+        } catch (_) {}
+      }
+    }
     final selectedClasses = <int>{};
     final selectedStudents = <int>{};
     int? selectedSpaceId;
@@ -3598,7 +3613,7 @@ class _HomeTabState extends State<_HomeTab> {
           }
 
           Future<void> startLecture() async {
-            if (createdSpaces.isNotEmpty) {
+            if (createdSpaces.isNotEmpty && selectedSpaceId == null) {
               GlassToast.show(context, "Select a space",
                   icon: Icons.info_outline);
               return;
@@ -3615,7 +3630,7 @@ class _HomeTabState extends State<_HomeTab> {
             }
             final firstClass = _demoProfessorClasses
                 .firstWhere((c) => selectedClasses.contains(c["id"] as int));
-            final classroomId = firstClass["id"] as int;
+            final classroomId = selectedSpaceId ?? (firstClass["id"] as int);
             final title = "Lecture - ${firstClass["name"]}";
             final nowUtc = DateTime.now().toUtc().toIso8601String();
             if (kUseDemoDataEverywhere) {
@@ -3667,6 +3682,28 @@ class _HomeTabState extends State<_HomeTab> {
                   children: [
                     const SectionTitle("Start Lecture"),
                     const SizedBox(height: 8),
+                    const Text("Select space"),
+                    const SizedBox(height: 6),
+                    if (createdSpaces.isEmpty)
+                      const Text("No spaces created yet.")
+                    else
+                      ...createdSpaces.map((space) {
+                        final id = (space["id"] as num?)?.toInt();
+                        final name =
+                            (space["name"] ?? "Space #$id").toString();
+                        return RadioListTile<int>(
+                          dense: true,
+                          value: id ?? -1,
+                          groupValue: selectedSpaceId,
+                          onChanged: id == null
+                              ? null
+                              : (value) => setSheetState(
+                                  () => selectedSpaceId = value,
+                                ),
+                          title: Text(name),
+                        );
+                      }),
+                    const SizedBox(height: 12),
                     const Text("Select classes"),
                     const SizedBox(height: 6),
                     Wrap(
@@ -4434,13 +4471,28 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   }
 
   Future<void> _showQuickStartLectureSheet() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rawSpaces = prefs.getString("professor_created_spaces");
-    final createdSpaces = rawSpaces == null || rawSpaces.isEmpty
-        ? <Map<String, dynamic>>[]
-        : (jsonDecode(rawSpaces) as List<dynamic>)
-            .whereType<Map<String, dynamic>>()
-            .toList();
+    final createdSpaces = <Map<String, dynamic>>[];
+    try {
+      final res = await _api.listClassrooms();
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as List<dynamic>;
+        createdSpaces.addAll(decoded.whereType<Map<String, dynamic>>());
+      }
+    } catch (_) {
+      // Ignore fetch failures here.
+    }
+    if (createdSpaces.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      final rawSpaces = prefs.getString("professor_created_spaces");
+      if (rawSpaces != null && rawSpaces.isNotEmpty) {
+        try {
+          createdSpaces.addAll(
+            (jsonDecode(rawSpaces) as List<dynamic>)
+                .whereType<Map<String, dynamic>>(),
+          );
+        } catch (_) {}
+      }
+    }
     final selectedClasses = <int>{};
     final selectedStudents = <int>{};
     int? selectedSpaceId;

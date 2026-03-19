@@ -45,9 +45,38 @@ def normalize_polygon_points(points: list[tuple[float, float]]) -> list[tuple[fl
         normalized.append((lat, lon))
     if len(normalized) >= 2 and normalized[0] == normalized[-1]:
         normalized = normalized[:-1]
-    if len(normalized) < 3:
+    # Drop duplicate points before building hull.
+    unique = list(dict.fromkeys(normalized))
+    if len(unique) < 3:
         raise ValueError("At least 3 unique points are required for classroom geofence")
-    return normalized
+    return convex_hull(unique)
+
+
+def _cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    # Monotonic chain on (lon, lat) for stable hull that encloses all points.
+    pts = sorted({(lon, lat) for lat, lon in points})
+    if len(pts) < 3:
+        raise ValueError("At least 3 unique points are required for classroom geofence")
+
+    lower: list[tuple[float, float]] = []
+    for p in pts:
+        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+
+    upper: list[tuple[float, float]] = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+
+    hull = lower[:-1] + upper[:-1]
+    # Convert back to (lat, lon)
+    return [(lat, lon) for lon, lat in hull]
 
 
 def bounds_from_points(points: list[tuple[float, float]]) -> tuple[float, float, float, float]:
