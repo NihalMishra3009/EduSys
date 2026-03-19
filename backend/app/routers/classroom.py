@@ -11,6 +11,17 @@ from app.utils.geo import bounds_from_points, normalize_polygon_points
 router = APIRouter()
 
 
+@router.get("", response_model=list[ClassroomOut])
+def list_classrooms(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in (UserRole.ADMIN, UserRole.PROFESSOR, UserRole.STUDENT):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    return db.query(Classroom).order_by(Classroom.id.desc()).all()
+
+
 @router.post("", response_model=ClassroomOut)
 def create_classroom(
     payload: ClassroomCreate,
@@ -84,9 +95,6 @@ def get_classroom(
     classroom = db.get(Classroom, classroom_id)
     if not classroom:
         raise HTTPException(status_code=404, detail="Classroom not found")
-
-    if current_user.role == UserRole.PROFESSOR and classroom.professor_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only owning professor can view this classroom")
 
     return classroom
 

@@ -582,6 +582,14 @@ class ApiService {
     );
   }
 
+  Future<http.Response> listClassrooms() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/classroom",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
   Future<http.Response> adminUpdateBoundary({
     required int classroomId,
     required double latitudeMin,

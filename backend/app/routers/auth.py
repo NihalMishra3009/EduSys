@@ -165,6 +165,7 @@ def resend_otp(payload: ResendOtpRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    binding_enabled = False  # Temporarily disabled per deployment request.
     normalized_email = payload.email.lower()
     if not _is_college_email(normalized_email):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Use your college email ID to login")
@@ -211,7 +212,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             detail=f"Selected role does not match account role ({user.role.value})",
         )
 
-    if settings.device_binding_enabled:
+    if binding_enabled and settings.device_binding_enabled:
         if normalized_email in DEFAULT_LOGIN_EMAILS:
             user.device_id = payload.device_id
             user.sim_serial = payload.sim_serial
@@ -252,6 +253,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/google-login", response_model=TokenResponse)
 def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
+    binding_enabled = False  # Temporarily disabled per deployment request.
     google_data = None
     if payload.id_token:
         google_data = verify_google_id_token(payload.id_token)
@@ -266,7 +268,7 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
     if user:
         if user.is_blocked:
             raise HTTPException(status_code=403, detail="User is blocked")
-        if settings.device_binding_enabled:
+        if binding_enabled and settings.device_binding_enabled:
             if user.device_id != payload.device_id or user.sim_serial != payload.sim_serial:
                 raise HTTPException(status_code=403, detail="Device or SIM mismatch")
         if not user.is_email_verified:

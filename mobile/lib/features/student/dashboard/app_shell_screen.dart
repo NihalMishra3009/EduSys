@@ -9160,6 +9160,19 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   }
 
   Future<void> _loadCreatedSpaces() async {
+    try {
+      final res = await _api.listClassrooms();
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as List<dynamic>;
+        final list = decoded.whereType<Map<String, dynamic>>().toList();
+        if (!mounted) return;
+        setState(() => _createdSpaces = list);
+        return;
+      }
+    } catch (_) {
+      // Fall through to cached data.
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString("professor_created_spaces");
     if (raw == null || raw.isEmpty) {
