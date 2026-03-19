@@ -218,13 +218,17 @@ class GeoUtils {
     final dy = b[1] - a[1];
     final lenSq = dx * dx + dy * dy;
     if (lenSq == 0) {
-      return math.hypot(p[0] - a[0], p[1] - a[1]);
+      final dx0 = p[0] - a[0];
+      final dy0 = p[1] - a[1];
+      return math.sqrt((dx0 * dx0) + (dy0 * dy0));
     }
     var t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq;
     t = t.clamp(0.0, 1.0);
     final projX = a[0] + t * dx;
     final projY = a[1] + t * dy;
-    return math.hypot(p[0] - projX, p[1] - projY);
+    final dx1 = p[0] - projX;
+    final dy1 = p[1] - projY;
+    return math.sqrt((dx1 * dx1) + (dy1 * dy1));
   }
 
   static double _signedDistanceProjected(List<double> point, List<List<double>> vertices) {
