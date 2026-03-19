@@ -69,8 +69,8 @@ def create_checkpoint(
                 latitude=payload.latitude,
                 longitude=payload.longitude,
                 points=points,
-                gps_accuracy_m=payload.gps_accuracy_m,
-                tolerance_m=12.0,
+                gps_accuracy_m=0.0,
+                tolerance_m=0.0,
             )
         else:
             if classroom.latitude_min is None or classroom.latitude_max is None:
@@ -82,8 +82,8 @@ def create_checkpoint(
                 latitude_max=classroom.latitude_max,
                 longitude_min=classroom.longitude_min,
                 longitude_max=classroom.longitude_max,
-                gps_accuracy_m=payload.gps_accuracy_m,
-                tolerance_m=12.0,
+                gps_accuracy_m=0.0,
+                tolerance_m=0.0,
             )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

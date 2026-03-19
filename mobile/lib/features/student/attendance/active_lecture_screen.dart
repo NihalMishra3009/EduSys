@@ -25,6 +25,8 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
   final Map<int, Timer> _autoTimers = {};
   final Set<int> _autoEnabled = {};
   final Map<int, Map<String, dynamic>> _classroomCache = {};
+  Position? _lastCheckpointPosition;
+  DateTime? _lastCheckpointAt;
 
   static const Duration _checkpointInterval = Duration(minutes: 15);
 
@@ -76,7 +78,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
   }
 
   bool _isInsideClassroom(Map<String, dynamic> classroom, Position position) {
-    const toleranceM = 12.0;
+    const toleranceM = 0.0;
     final polygon = classroom["polygon_points"] as List<dynamic>?;
     if (polygon != null && polygon.isNotEmpty) {
       return GeoUtils.checkPointInsidePolygon(
@@ -114,8 +116,40 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       setState(() => _loading = true);
     }
     try {
-      // GEO: collect multiple samples and use majority vote.
-      final samples = await _locationService.getStableSamples();
+      // GEO: single-point check on button click.
+      final position = await _locationService.getFreshPosition();
+      if (position.isMocked) {
+        if (!mounted) return;
+        if (!silent) {
+          setState(() {
+            _success = false;
+            _message = "Mock location detected.";
+          });
+        }
+        return;
+      }
+      if (_lastCheckpointPosition != null && _lastCheckpointAt != null) {
+        final dt = DateTime.now().difference(_lastCheckpointAt!).inSeconds;
+        if (dt > 0) {
+          final distance = Geolocator.distanceBetween(
+            _lastCheckpointPosition!.latitude,
+            _lastCheckpointPosition!.longitude,
+            position.latitude,
+            position.longitude,
+          );
+          final speed = distance / dt;
+          if (speed > 30.0) {
+            if (!mounted) return;
+            if (!silent) {
+              setState(() {
+                _success = false;
+                _message = "Unrealistic movement detected. Retry.";
+              });
+            }
+            return;
+          }
+        }
+      }
       final classroom = await _getClassroom(classroomId);
       if (classroom == null) {
         if (!mounted) return;
@@ -127,13 +161,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      var insideCount = 0;
-      for (final sample in samples) {
-        if (_isInsideClassroom(classroom, sample)) {
-          insideCount += 1;
-        }
-      }
-      final inside = insideCount >= (samples.length / 2).ceil();
+      final inside = _isInsideClassroom(classroom, position);
       if (!inside) {
         if (!mounted) return;
         if (!silent) {
@@ -144,7 +172,8 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      final position = samples.last;
+      _lastCheckpointPosition = position;
+      _lastCheckpointAt = DateTime.now();
       final response = await _api.submitCheckpoint(
         lectureId: lectureId,
         latitude: position.latitude,
