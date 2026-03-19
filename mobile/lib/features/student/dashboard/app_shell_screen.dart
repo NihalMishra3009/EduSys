@@ -19,6 +19,7 @@ import "package:edusys_mobile/features/student/attendance/active_lecture_screen.
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/device_binding_service.dart";
 import "package:edusys_mobile/shared/services/location_service.dart";
+import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
 import "package:edusys_mobile/shared/widgets/app_button.dart";
 import "package:edusys_mobile/shared/widgets/app_card.dart";
 import "package:edusys_mobile/shared/widgets/empty_state_widget.dart";
@@ -3228,6 +3229,7 @@ List<_CalendarEntry> _timetableEntriesForRange(DateTime start, DateTime end) {
 
 class _HomeTabState extends State<_HomeTab> {
   final ApiService _api = ApiService();
+  final SmartAttendanceService _smartAttendance = SmartAttendanceService();
   bool _loading = false;
   bool _offline = false;
   List<dynamic> _active = [];
@@ -3658,6 +3660,24 @@ class _HomeTabState extends State<_HomeTab> {
                 }).toList();
               });
             } else {
+              final res = await _api.startLecture(classroomId);
+              if (res.statusCode >= 200 && res.statusCode < 300) {
+                try {
+                  final payload = jsonDecode(res.body) as Map<String, dynamic>;
+                  final lectureId = (payload["id"] as num).toInt();
+                  final durationMs =
+                      ((payload["scheduled_duration_ms"] as num?)?.toInt() ?? 60) *
+                          60 *
+                          1000;
+                  await _smartAttendance.startProfessorSession(
+                    lectureId: lectureId,
+                    roomId: classroomId,
+                    scheduledDurationMs: durationMs,
+                    minAttendancePercent: 75,
+                    scheduledStart: payload["scheduled_start"] as int?,
+                  );
+                } catch (_) {}
+              }
               await _handleLectureStarted({
                 "title": title,
                 "classroom_id": classroomId,
@@ -8866,6 +8886,7 @@ class _MeetingStateChip extends StatelessWidget {
 
 class _LecturesTabState extends State<_LecturesTab> {
   final ApiService _api = ApiService();
+  final SmartAttendanceService _smartAttendance = SmartAttendanceService();
   final LocationService _location = LocationService();
   final TextEditingController _classroomController = TextEditingController();
   final TextEditingController _lectureIdController = TextEditingController();
@@ -8930,6 +8951,23 @@ class _LecturesTabState extends State<_LecturesTab> {
     if (id == null) return;
     final res = await _api.startLecture(id);
     _show(_detail(res.body, "Lecture start request sent"));
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      try {
+        final payload = jsonDecode(res.body) as Map<String, dynamic>;
+        final lectureId = (payload["id"] as num).toInt();
+        final durationMs =
+            ((payload["scheduled_duration_ms"] as num?)?.toInt() ?? 60) *
+                60 *
+                1000;
+        await _smartAttendance.startProfessorSession(
+          lectureId: lectureId,
+          roomId: id,
+          scheduledDurationMs: durationMs,
+          minAttendancePercent: 75,
+          scheduledStart: payload["scheduled_start"] as int?,
+        );
+      } catch (_) {}
+    }
     await _load();
   }
 
@@ -8938,6 +8976,9 @@ class _LecturesTabState extends State<_LecturesTab> {
     if (id == null) return;
     final res = await _api.endLecture(id);
     _show(_detail(res.body, "Lecture end request sent"));
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      await _smartAttendance.endProfessorSession(lectureId: id);
+    }
     await _load();
   }
 
