@@ -564,6 +564,7 @@ class ApiService {
   Future<http.Response> createClassroom({
     required String name,
     List<Map<String, dynamic>>? points,
+    Map<String, dynamic>? reference,
     double? latitudeMin,
     double? latitudeMax,
     double? longitudeMin,
@@ -573,6 +574,9 @@ class ApiService {
     final bodyMap = <String, dynamic>{"name": name};
     if (points != null) {
       bodyMap["points"] = points;
+      if (reference != null) {
+        bodyMap["reference"] = reference;
+      }
     } else {
       bodyMap["latitude_min"] = latitudeMin;
       bodyMap["latitude_max"] = latitudeMax;

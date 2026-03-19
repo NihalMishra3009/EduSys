@@ -271,6 +271,27 @@ def polygon_area_m2(points: list[tuple[float, float]]) -> float:
     return abs(area) * 0.5
 
 
+def inscribed_radius_m(points: list[tuple[float, float]]) -> float:
+    _, vertices = _build_projected_polygon(points)
+    origin_lat, origin_lon = _centroid(points)
+    centroid_xy = _project_to_meters(origin_lat, origin_lon, origin_lat, origin_lon)
+    return abs(_signed_distance_projected(centroid_xy, vertices))
+
+
+def build_polygon_meta(points: list[tuple[float, float]], reference: dict | None = None) -> dict:
+    origin_lat, origin_lon = _centroid(points)
+    bbox = bounds_from_points(points)
+    meta = {
+        "projection_origin": {"lat": origin_lat, "lng": origin_lon},
+        "bounding_box": {"min_lat": bbox[0], "max_lat": bbox[1], "min_lng": bbox[2], "max_lng": bbox[3]},
+        "area_m2": round(polygon_area_m2(points), 2),
+        "inscribed_radius_m": round(inscribed_radius_m(points), 2),
+    }
+    if reference:
+        meta["reference"] = reference
+    return meta
+
+
 def compute_attendance_decision(
     *,
     latitude: float,
@@ -373,6 +394,125 @@ def is_inside_polygon(
         effective_accuracy_m=effective_accuracy,
     )
     return bool(decision.get("present"))
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def build_position_cloud(raw_samples: list[dict], origin_lat: float, origin_lon: float) -> dict:
+    projected = []
+    for s in raw_samples:
+        lat = float(s["lat"])
+        lon = float(s["lng"])
+        acc = float(s.get("accuracy", 1.0))
+        x, y = _project_to_meters(lat, lon, origin_lat, origin_lon)
+        projected.append({"x": x, "y": y, "accuracy": acc})
+    med_lat = _median([float(s["lat"]) for s in raw_samples])
+    med_lon = _median([float(s["lng"]) for s in raw_samples])
+    med_x, med_y = _project_to_meters(med_lat, med_lon, origin_lat, origin_lon)
+    with_dist = []
+    for p in projected:
+        dist = math.hypot(p["x"] - med_x, p["y"] - med_y)
+        with_dist.append({**p, "dist": dist})
+    med_dist = _median([p["dist"] for p in with_dist])
+    filtered = [p for p in with_dist if p["dist"] <= max(med_dist * 2.5, 5.0)]
+    if len(filtered) < 3:
+        filtered = with_dist
+    total_w = sum(1.0 / max(p["accuracy"], 1.0) for p in filtered)
+    cx = sum(p["x"] / max(p["accuracy"], 1.0) for p in filtered) / total_w
+    cy = sum(p["y"] / max(p["accuracy"], 1.0) for p in filtered) / total_w
+    dists = sorted([math.hypot(p["x"] - cx, p["y"] - cy) for p in filtered])
+    spread = dists[int(len(dists) * 0.9)]
+    return {"centroid": (cx, cy), "spread_m": spread, "points": filtered}
+
+
+def polygon_containment_score(points: list[dict], vertices: list[tuple[float, float]]) -> float:
+    if not points:
+        return 0.0
+    inside = 0
+    for p in points:
+        if _winding_number((p["x"], p["y"]), vertices) != 0:
+            inside += 1
+    return inside / len(points)
+
+
+def reference_distance(student_cloud: dict, reference: dict, origin_lat: float, origin_lon: float, inscribed_radius_m: float) -> dict:
+    ref_center = reference.get("center") or {}
+    ref_lat = float(ref_center.get("lat"))
+    ref_lon = float(ref_center.get("lng"))
+    ref_x, ref_y = _project_to_meters(ref_lat, ref_lon, origin_lat, origin_lon)
+    cx, cy = student_cloud["centroid"]
+    dist = math.hypot(cx - ref_x, cy - ref_y)
+    ref_spread = float(reference.get("spread_m", 0.0))
+    raw_radius = ref_spread + student_cloud["spread_m"] + 3.0
+    acceptance = min(raw_radius, inscribed_radius_m * 0.8) if inscribed_radius_m > 0 else raw_radius
+    return {
+        "dist_to_ref": dist,
+        "acceptance_radius": acceptance,
+        "passes": dist <= acceptance,
+        "margin": acceptance - dist,
+    }
+
+
+def compute_attendance_decision_v3(
+    *,
+    latitude: float,
+    longitude: float,
+    points: list[tuple[float, float]],
+    raw_samples: list[dict],
+    reference: dict,
+    projection_origin: dict,
+    inscribed_radius_m: float,
+) -> dict:
+    polygon = normalize_polygon_points(points)
+    origin_lat = float(projection_origin.get("lat"))
+    origin_lon = float(projection_origin.get("lng"))
+    _, vertices = _build_projected_polygon(polygon)
+    student_cloud = build_position_cloud(raw_samples, origin_lat, origin_lon)
+    containment = polygon_containment_score(student_cloud["points"], vertices)
+    centroid_in_poly = _winding_number(student_cloud["centroid"], vertices) != 0
+    ref_result = reference_distance(student_cloud, reference, origin_lat, origin_lon, inscribed_radius_m)
+
+    case_a = centroid_in_poly and ref_result["passes"]
+    case_b = centroid_in_poly and containment >= 0.4
+    case_c = ref_result["passes"] and containment >= 0.5
+    if case_a or case_b or case_c:
+        confidence = round(containment * 50 + (30 if ref_result["passes"] else 0) + (20 if centroid_in_poly else 0))
+        return {
+            "present": True,
+            "confidence": confidence,
+            "containment_score": containment,
+            "dist_to_reference_m": ref_result["dist_to_ref"],
+            "acceptance_radius_m": ref_result["acceptance_radius"],
+            "matched_case": "A" if case_a else "B" if case_b else "C",
+            "signed_distance_m": _signed_distance_projected(student_cloud["centroid"], vertices),
+            "reason": "PRESENT",
+        }
+
+    clearly_absent = (not centroid_in_poly) and (not ref_result["passes"]) and containment < 0.3
+    if clearly_absent:
+        return {
+            "present": False,
+            "reason": "OUTSIDE",
+            "containment_score": containment,
+            "dist_to_reference_m": ref_result["dist_to_ref"],
+            "signed_distance_m": _signed_distance_projected(student_cloud["centroid"], vertices),
+        }
+
+    return {
+        "present": False,
+        "reason": "RETRY",
+        "containment_score": containment,
+        "dist_to_reference_m": ref_result["dist_to_ref"],
+        "signed_distance_m": _signed_distance_projected(student_cloud["centroid"], vertices),
+    }
 
 
 def is_inside_rectangle(

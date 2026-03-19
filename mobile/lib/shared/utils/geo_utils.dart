@@ -7,6 +7,10 @@ class GeoDecision {
     required this.signedDistanceM,
     required this.reason,
     required this.areaM2,
+    this.containmentScore,
+    this.distToReferenceM,
+    this.acceptanceRadiusM,
+    this.confidence,
   });
 
   final bool present;
@@ -14,6 +18,10 @@ class GeoDecision {
   final double signedDistanceM;
   final String reason;
   final double areaM2;
+  final double? containmentScore;
+  final double? distToReferenceM;
+  final double? acceptanceRadiusM;
+  final int? confidence;
 }
 
 class GeoUtils {
@@ -360,6 +368,168 @@ class GeoUtils {
       point: point,
       polygon: polygon,
       effectiveAccuracyM: math.max(effectiveAccuracyM, 0.5),
+    );
+  }
+
+  static double _median(List<double> values) {
+    if (values.isEmpty) return 0.0;
+    final sorted = [...values]..sort();
+    final mid = sorted.length ~/ 2;
+    if (sorted.length.isOdd) return sorted[mid];
+    return (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  static Map<String, dynamic> _buildPositionCloud(
+    List<Map<String, double>> rawSamples,
+    List<double> origin,
+  ) {
+    final projected = rawSamples
+        .map((s) => {
+              "x": _projectToMeters(s["lat"]!, s["lng"]!, origin[0], origin[1])[0],
+              "y": _projectToMeters(s["lat"]!, s["lng"]!, origin[0], origin[1])[1],
+              "accuracy": s["accuracy"] ?? 1.0,
+            })
+        .toList();
+    final medLat = _median(rawSamples.map((s) => s["lat"]!).toList());
+    final medLng = _median(rawSamples.map((s) => s["lng"]!).toList());
+    final medProj = _projectToMeters(medLat, medLng, origin[0], origin[1]);
+    final withDist = projected
+        .map((p) => {
+              ...p,
+              "dist":
+                  math.sqrt(math.pow(p["x"]! - medProj[0], 2) + math.pow(p["y"]! - medProj[1], 2)),
+            })
+        .toList();
+    final medDist = _median(withDist.map((p) => p["dist"] as double).toList());
+    final filtered = withDist
+        .where((p) => (p["dist"] as double) <= math.max(medDist * 2.5, 5.0))
+        .toList();
+    final usable = filtered.length >= 3 ? filtered : withDist;
+    final totalW =
+        usable.fold<double>(0.0, (acc, p) => acc + 1.0 / math.max(p["accuracy"] as double, 1.0));
+    final cx = usable.fold<double>(
+          0.0,
+          (acc, p) => acc + (p["x"] as double) / math.max(p["accuracy"] as double, 1.0),
+        ) /
+        totalW;
+    final cy = usable.fold<double>(
+          0.0,
+          (acc, p) => acc + (p["y"] as double) / math.max(p["accuracy"] as double, 1.0),
+        ) /
+        totalW;
+    final dists = usable
+        .map((p) => math.sqrt(math.pow(p["x"]! - cx, 2) + math.pow(p["y"]! - cy, 2)))
+        .toList()
+      ..sort();
+    final spread = dists[(dists.length * 0.9).floor().clamp(0, dists.length - 1)];
+    return {
+      "centroid": [cx, cy],
+      "spread_m": spread,
+      "points": usable,
+    };
+  }
+
+  static double _containmentScore(List<Map<String, dynamic>> points, List<List<double>> vertices) {
+    if (points.isEmpty) return 0.0;
+    var inside = 0;
+    for (final p in points) {
+      if (_windingNumber([p["x"] as double, p["y"] as double], vertices) != 0) {
+        inside += 1;
+      }
+    }
+    return inside / points.length;
+  }
+
+  static Map<String, dynamic> _referenceDistance(
+    Map<String, dynamic> studentCloud,
+    Map<String, dynamic> reference,
+    List<double> origin,
+    double inscribedRadiusM,
+  ) {
+    final center = reference["center"] as Map<String, dynamic>? ?? {};
+    final refLat = (center["lat"] as num).toDouble();
+    final refLng = (center["lng"] as num).toDouble();
+    final refProj = _projectToMeters(refLat, refLng, origin[0], origin[1]);
+    final centroid = studentCloud["centroid"] as List<double>;
+    final dist = math.sqrt(math.pow(centroid[0] - refProj[0], 2) + math.pow(centroid[1] - refProj[1], 2));
+    final refSpread = (reference["spread_m"] as num?)?.toDouble() ?? 0.0;
+    final rawRadius = refSpread + (studentCloud["spread_m"] as double) + 3.0;
+    final acceptance = inscribedRadiusM > 0 ? math.min(rawRadius, inscribedRadiusM * 0.8) : rawRadius;
+    return {
+      "dist_to_ref": dist,
+      "acceptance_radius": acceptance,
+      "passes": dist <= acceptance,
+    };
+  }
+
+  static GeoDecision checkAttendanceV3({
+    required List<dynamic> polygon,
+    required Map<String, dynamic> reference,
+    required Map<String, dynamic> projectionOrigin,
+    required double inscribedRadiusM,
+    required List<Map<String, double>> rawSamples,
+  }) {
+    final normalized = normalizePolygonFromMaps(polygon);
+    final originLat = (projectionOrigin["lat"] as num).toDouble();
+    final originLng = (projectionOrigin["lng"] as num).toDouble();
+    final origin = [originLat, originLng];
+    final vertices = _projectPolygon(normalized, origin);
+    final cloud = _buildPositionCloud(rawSamples, origin);
+    final centroid = cloud["centroid"] as List<double>;
+    final containment = _containmentScore(
+      (cloud["points"] as List).cast<Map<String, dynamic>>(),
+      vertices,
+    );
+    final centroidInside = _windingNumber(centroid, vertices) != 0;
+    final ref = _referenceDistance(cloud, reference, origin, inscribedRadiusM);
+
+    final caseA = centroidInside && (ref["passes"] as bool);
+    final caseB = centroidInside && containment >= 0.4;
+    final caseC = (ref["passes"] as bool) && containment >= 0.5;
+
+    final signedDist = _signedDistanceProjected(centroid, vertices);
+    if (caseA || caseB || caseC) {
+      final confidence = (containment * 50 +
+              ((ref["passes"] as bool) ? 30 : 0) +
+              (centroidInside ? 20 : 0))
+          .round()
+          .clamp(0, 100);
+      return GeoDecision(
+        present: true,
+        probability: containment,
+        signedDistanceM: signedDist,
+        reason: "PRESENT",
+        areaM2: _polygonAreaM2Projected(vertices),
+        containmentScore: containment,
+        distToReferenceM: ref["dist_to_ref"] as double,
+        acceptanceRadiusM: ref["acceptance_radius"] as double,
+        confidence: confidence,
+      );
+    }
+
+    final clearlyAbsent = !centroidInside && !(ref["passes"] as bool) && containment < 0.3;
+    if (clearlyAbsent) {
+      return GeoDecision(
+        present: false,
+        probability: containment,
+        signedDistanceM: signedDist,
+        reason: "OUTSIDE",
+        areaM2: _polygonAreaM2Projected(vertices),
+        containmentScore: containment,
+        distToReferenceM: ref["dist_to_ref"] as double,
+        acceptanceRadiusM: ref["acceptance_radius"] as double,
+      );
+    }
+
+    return GeoDecision(
+      present: false,
+      probability: containment,
+      signedDistanceM: signedDist,
+      reason: "RETRY",
+      areaM2: _polygonAreaM2Projected(vertices),
+      containmentScore: containment,
+      distToReferenceM: ref["dist_to_ref"] as double,
+      acceptanceRadiusM: ref["acceptance_radius"] as double,
     );
   }
 

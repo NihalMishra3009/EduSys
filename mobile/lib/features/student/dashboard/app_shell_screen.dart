@@ -9101,6 +9101,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   final LocationService _location = LocationService();
   final List<Map<String, dynamic>> _spacePoints = [];
   bool _recordingSpacePoint = false;
+  Map<String, dynamic>? _spaceReference;
+  bool _calibratingReference = false;
+  String _referenceStatus = "";
   List<Map<String, dynamic>> _createdSpaces = [];
   final TextEditingController _spaceNameController = TextEditingController();
   final TextEditingController _spaceThresholdController =
@@ -9557,6 +9560,25 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                       }).toList(),
                     ),
                   ],
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Stand at the center and stay still. We'll record 20 GPS samples to calibrate this room.",
+                  ),
+                  const SizedBox(height: 12),
+                  AppButton(
+                    label: _calibratingReference ? "Calibrating..." : "Calibrate from here",
+                    icon: Icons.center_focus_strong_rounded,
+                    isPrimary: false,
+                    onPressed:
+                        _spacePoints.length >= 3 && !_calibratingReference ? _calibrateReferencePoint : null,
+                  ),
+                  if (_referenceStatus.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _referenceStatus,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   AppButton(
                     label: "Create space",
@@ -9843,6 +9865,54 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     GlassToast.show(context, message, icon: Icons.info_outline);
   }
 
+  Future<void> _calibrateReferencePoint() async {
+    if (_calibratingReference) {
+      return;
+    }
+    setState(() {
+      _calibratingReference = true;
+      _referenceStatus = "Calibrating... 0/20";
+    });
+    try {
+      final calibration = await _location.getReferenceCalibration(
+        onSample: (index, sample) {
+          if (!mounted) return;
+          setState(() {
+            _referenceStatus =
+                "Calibrating... $index/20 (±${sample.accuracy.toStringAsFixed(1)}m)";
+          });
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _spaceReference = {
+          "center": {
+            "lat": calibration.centerLat,
+            "lng": calibration.centerLng,
+          },
+          "spread_m": calibration.spreadMeters,
+          "raw_samples": calibration.rawSamples,
+          "recorded_at": DateTime.now().millisecondsSinceEpoch,
+        };
+        _referenceStatus =
+            "Calibration complete. GPS spread ±${calibration.spreadMeters.toStringAsFixed(1)}m";
+      });
+      if (calibration.spreadMeters > 30) {
+        _toast(
+          "Warning: GPS spread ${calibration.spreadMeters.toStringAsFixed(1)}m. Consider recalibrating near a window.",
+        );
+      }
+    } on LocationServiceException {
+      if (!mounted) return;
+      Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const PermissionDeniedScreen()));
+    } finally {
+      if (mounted) {
+        setState(() => _calibratingReference = false);
+      }
+    }
+  }
+
   String _extractDetail(String body, String fallback) {
     try {
       final map = jsonDecode(body) as Map<String, dynamic>;
@@ -9870,6 +9940,8 @@ class _AttendanceTabState extends State<_AttendanceTab> {
             "accuracy_m": fix.accuracy,
           },
         );
+        _spaceReference = null;
+        _referenceStatus = "";
       });
       if (fix.accuracy > 20) {
         _toast("Warning: GPS accuracy ${fix.accuracy.toStringAsFixed(1)}m. Consider re-recording.");
@@ -9886,7 +9958,11 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   }
 
   void _clearSpacePoints() {
-    setState(() => _spacePoints.clear());
+    setState(() {
+      _spacePoints.clear();
+      _spaceReference = null;
+      _referenceStatus = "";
+    });
   }
 
   Future<void> _createSpace() async {
@@ -9897,6 +9973,10 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     }
     if (_spacePoints.length < 3) {
       _toast("Record at least 3 points to create the space");
+      return;
+    }
+    if (_spaceReference == null) {
+      _toast("Calibrate the reference point before creating the space");
       return;
     }
     final hasPolygon = _spacePoints.length >= 3;
@@ -9930,6 +10010,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                   })
               .toList()
           : null,
+      reference: _spaceReference,
       latitudeMin: hasPolygon ? null : latitudeMin,
       latitudeMax: hasPolygon ? null : latitudeMax,
       longitudeMin: hasPolygon ? null : longitudeMin,

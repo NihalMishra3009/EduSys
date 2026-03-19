@@ -6,7 +6,7 @@ from app.core.deps import get_current_user
 from app.models.classroom import Classroom
 from app.models.user import User, UserRole
 from app.schemas.classroom import ClassroomCreate, ClassroomOut
-from app.utils.geo import bounds_from_points, normalize_polygon_points, polygon_area_m2
+from app.utils.geo import bounds_from_points, normalize_polygon_points, build_polygon_meta
 
 router = APIRouter()
 
@@ -55,8 +55,9 @@ def create_classroom(
         latitude_min, latitude_max, longitude_min, longitude_max = bounds_from_points(storage_points)
         accuracies = [p.accuracy_m for p in payload.points or [] if p.accuracy_m is not None]
         effective_acc = round(sum(accuracies) / len(accuracies), 2) if accuracies else None
-        centroid_lat = sum(lat for lat, _ in storage_points) / len(storage_points)
-        centroid_lon = sum(lon for _, lon in storage_points) / len(storage_points)
+        meta = build_polygon_meta(storage_points, payload.reference)
+        if effective_acc is not None:
+            meta["effective_fence_accuracy_m"] = effective_acc
         point_fields = {
             "polygon_points": [
                 {
@@ -66,11 +67,7 @@ def create_classroom(
                 }
                 for idx, (lat, lon) in enumerate(storage_points)
             ],
-            "polygon_meta": {
-                "effective_fence_accuracy_m": effective_acc,
-                "centroid": {"lat": centroid_lat, "lng": centroid_lon},
-                "area_m2": round(polygon_area_m2(storage_points), 2),
-            },
+            "polygon_meta": meta,
             "point1_lat": storage_points[0][0] if len(storage_points) > 0 else None,
             "point1_lon": storage_points[0][1] if len(storage_points) > 0 else None,
             "point2_lat": storage_points[1][0] if len(storage_points) > 1 else None,

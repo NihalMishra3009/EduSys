@@ -12,7 +12,7 @@ from app.models.classroom import Classroom
 from app.models.lecture import Lecture, LectureStatus
 from app.models.user import User, UserRole
 from app.schemas.attendance import CheckpointRequest, CheckpointOut, AttendanceRecordOut
-from app.utils.geo import compute_attendance_decision, is_inside_rectangle
+from app.utils.geo import compute_attendance_decision_v3, is_inside_rectangle
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -118,8 +118,6 @@ def create_checkpoint(
                 "best_accuracy": payload.gps_accuracy_m or 0.0,
                 "effective_accuracy": payload.gps_accuracy_m or 0.0,
             }
-            if best_position["best_accuracy"] and best_position["best_accuracy"] > 40:
-                raise HTTPException(status_code=400, detail="GPS signal too weak. Please move and retry.")
             inside = is_inside_rectangle(
                 latitude=payload.latitude,
                 longitude=payload.longitude,
@@ -138,23 +136,29 @@ def create_checkpoint(
             }
         else:
             samples = _parse_samples(payload.raw_samples)
-            best_position = _compute_best_position(samples) if samples else None
-            if best_position is None:
-                best_position = {
-                    "latitude": payload.latitude,
-                    "longitude": payload.longitude,
-                    "best_accuracy": payload.gps_accuracy_m or 0.0,
-                    "effective_accuracy": payload.effective_accuracy_m or payload.gps_accuracy_m or 0.0,
-                    "filtered_samples": samples,
-                }
-            if best_position["best_accuracy"] and best_position["best_accuracy"] > 40:
-                raise HTTPException(status_code=400, detail="GPS signal too weak. Please move and retry.")
-            decision = compute_attendance_decision(
-                latitude=best_position["latitude"],
-                longitude=best_position["longitude"],
+            if len(samples) < 5:
+                raise HTTPException(status_code=400, detail="Insufficient GPS samples. Retry.")
+            polygon_meta = classroom.polygon_meta or {}
+            reference = polygon_meta.get("reference")
+            projection_origin = polygon_meta.get("projection_origin")
+            inscribed_radius = polygon_meta.get("inscribed_radius_m", 0.0)
+            if not reference or not projection_origin:
+                raise HTTPException(status_code=400, detail="Reference calibration missing for this space.")
+            decision = compute_attendance_decision_v3(
+                latitude=payload.latitude,
+                longitude=payload.longitude,
                 points=points,
-                effective_accuracy_m=best_position["effective_accuracy"] or best_position["best_accuracy"] or 5.0,
+                raw_samples=samples,
+                reference=reference,
+                projection_origin=projection_origin,
+                inscribed_radius_m=float(inscribed_radius or 0.0),
             )
+            best_position = _compute_best_position(samples) or {
+                "latitude": payload.latitude,
+                "longitude": payload.longitude,
+                "best_accuracy": payload.gps_accuracy_m or 0.0,
+                "effective_accuracy": payload.effective_accuracy_m or payload.gps_accuracy_m or 0.0,
+            }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -189,12 +193,10 @@ def create_checkpoint(
             record.status = AttendanceStatus.ABSENT
         db.commit()
         reason = decision.get("reason") or "Outside classroom geofence"
-        if reason == "HARD_DISTANCE_EXCEEDED":
-            raise HTTPException(status_code=400, detail="Too far outside classroom boundary.")
-        if reason == "AMBIGUOUS_SMALL_FENCE":
-            raise HTTPException(status_code=400, detail="GPS borderline. Stand inside and retry.")
-        if reason == "OUTSIDE_BBOX":
-            raise HTTPException(status_code=400, detail="Outside classroom geofence")
+        if reason == "RETRY":
+            raise HTTPException(status_code=400, detail="GPS is borderline. Wait 10 seconds and retry.")
+        if reason == "OUTSIDE":
+            raise HTTPException(status_code=400, detail="Outside classroom geofence.")
         raise HTTPException(status_code=400, detail="Outside classroom geofence")
 
     if record is None:
@@ -217,7 +219,7 @@ def create_checkpoint(
         longitude=best_position["longitude"],
         gps_accuracy_m=best_position.get("best_accuracy"),
         effective_accuracy_m=best_position.get("effective_accuracy"),
-        probability=decision.get("probability"),
+        probability=decision.get("probability") or decision.get("containment_score"),
         signed_distance_m=decision.get("signed_distance_m"),
         decision_reason=decision.get("reason"),
         raw_samples=payload.raw_samples,

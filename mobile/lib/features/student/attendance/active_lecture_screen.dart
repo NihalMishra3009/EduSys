@@ -77,52 +77,31 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     return null;
   }
 
-  GeoDecision _checkClassroom(
+  GeoDecision _checkClassroomV3(
     Map<String, dynamic> classroom,
-    double lat,
-    double lng,
-    double effectiveAccuracyM,
+    List<Map<String, double>> rawSamples,
   ) {
     final polygon = classroom["polygon_points"] as List<dynamic>?;
-    if (polygon != null && polygon.isNotEmpty) {
-      return GeoUtils.checkPointInsidePolygon(
-        point: {
-          "lat": lat,
-          "lng": lng,
-        },
-        polygon: polygon,
-        effectiveAccuracyM: effectiveAccuracyM,
-      );
+    final meta = classroom["polygon_meta"] as Map<String, dynamic>?;
+    if (polygon != null && polygon.isNotEmpty && meta != null) {
+      final reference = meta["reference"] as Map<String, dynamic>?;
+      final origin = meta["projection_origin"] as Map<String, dynamic>?;
+      final inscribed = (meta["inscribed_radius_m"] as num?)?.toDouble() ?? 0.0;
+      if (reference != null && origin != null) {
+        return GeoUtils.checkAttendanceV3(
+          polygon: polygon,
+          reference: reference,
+          projectionOrigin: origin,
+          inscribedRadiusM: inscribed,
+          rawSamples: rawSamples,
+        );
+      }
     }
-
-    final latMin = (classroom["latitude_min"] as num?)?.toDouble();
-    final latMax = (classroom["latitude_max"] as num?)?.toDouble();
-    final lonMin = (classroom["longitude_min"] as num?)?.toDouble();
-    final lonMax = (classroom["longitude_max"] as num?)?.toDouble();
-    if (latMin == null || latMax == null || lonMin == null || lonMax == null) {
-      return GeoDecision(
-        present: false,
-        probability: 0.0,
-        signedDistanceM: 0.0,
-        reason: "NO_BOUNDARY",
-        areaM2: 0.0,
-      );
-    }
-    final inside = GeoUtils.isInsideRectangle(
-      latitude: lat,
-      longitude: lng,
-      latitudeMin: latMin,
-      latitudeMax: latMax,
-      longitudeMin: lonMin,
-      longitudeMax: lonMax,
-      gpsAccuracyM: effectiveAccuracyM,
-      toleranceM: 0.0,
-    );
     return GeoDecision(
-      present: inside,
-      probability: inside ? 1.0 : 0.0,
+      present: false,
+      probability: 0.0,
       signedDistanceM: 0.0,
-      reason: "RECTANGLE",
+      reason: "NO_REFERENCE",
       areaM2: 0.0,
     );
   }
@@ -132,38 +111,25 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       setState(() => _loading = true);
     }
     try {
-      // GEO: multi-sample GPS fix (5 samples, 400ms apart).
-      final sampled = await _locationService.getBestPosition(
+      // GEO: collect 10 samples for device-agnostic check.
+      final rawSamples = await _locationService.getStudentSamples(
         onSample: (index, sample) {
           if (!mounted || silent) return;
           setState(() {
             _success = false;
             _message =
-                "Getting GPS fix... (sample $index/5, ±${sample.accuracy.toStringAsFixed(1)}m)";
+                "Sampling GPS... ($index/10, ±${sample.accuracy.toStringAsFixed(1)}m)";
           });
         },
       );
-      final accuracyWarning = sampled.bestAccuracy > 40
-          ? "GPS too weak (${sampled.bestAccuracy.toStringAsFixed(1)}m). Move near a window."
-          : null;
-      if (sampled.bestAccuracy > 40) {
-        if (!mounted) return;
-        if (!silent) {
-          setState(() {
-            _success = false;
-            _message = "GPS signal too weak. Please move closer to open sky and retry.";
-          });
-        }
-        return;
-      }
       if (_lastCheckpointPosition != null && _lastCheckpointAt != null) {
         final dt = DateTime.now().difference(_lastCheckpointAt!).inSeconds;
         if (dt > 0) {
           final distance = Geolocator.distanceBetween(
             _lastCheckpointPosition!.latitude,
             _lastCheckpointPosition!.longitude,
-            sampled.latitude,
-            sampled.longitude,
+            rawSamples.last["lat"] ?? _lastCheckpointPosition!.latitude,
+            rawSamples.last["lng"] ?? _lastCheckpointPosition!.longitude,
           );
           final speed = distance / dt;
           if (speed > 30.0) {
@@ -189,38 +155,36 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      final decision = _checkClassroom(
-        classroom,
-        sampled.latitude,
-        sampled.longitude,
-        sampled.effectiveAccuracy,
-      );
+      final decision = _checkClassroomV3(classroom, rawSamples);
       if (!decision.present) {
         if (!mounted) return;
         if (!silent) {
-          final lat = sampled.latitude.toStringAsFixed(6);
-          final lon = sampled.longitude.toStringAsFixed(6);
-          final acc = sampled.bestAccuracy.toStringAsFixed(1);
+          final last = rawSamples.last;
+          final lat = (last["lat"] ?? 0).toStringAsFixed(6);
+          final lon = (last["lng"] ?? 0).toStringAsFixed(6);
           final dist = decision.signedDistanceM.abs().toStringAsFixed(1);
+          final containmentPct =
+              ((decision.containmentScore ?? decision.probability) * 100).toStringAsFixed(0);
           setState(() {
             _success = false;
             _message = [
-              "Outside classroom geofence",
+              decision.reason == "RETRY" ? "GPS is borderline. Retry." : "Outside classroom geofence",
               "Lat: $lat, Lng: $lon",
-              "Accuracy: ${acc}m",
               "Distance from boundary: ${dist}m",
-              "Confidence: ${(decision.probability * 100).round()}%",
-              if (accuracyWarning != null) accuracyWarning,
+              "Containment: ${containmentPct}%",
+              if (decision.distToReferenceM != null && decision.acceptanceRadiusM != null)
+                "Ref distance: ${decision.distToReferenceM!.toStringAsFixed(1)}m / "
+                    "${decision.acceptanceRadiusM!.toStringAsFixed(1)}m",
             ].join("\n");
           });
         }
         return;
       }
       _lastCheckpointPosition = Position(
-        latitude: sampled.latitude,
-        longitude: sampled.longitude,
+        latitude: rawSamples.last["lat"] ?? 0,
+        longitude: rawSamples.last["lng"] ?? 0,
         timestamp: DateTime.now(),
-        accuracy: sampled.bestAccuracy,
+        accuracy: rawSamples.last["accuracy"] ?? 0,
         altitude: 0,
         altitudeAccuracy: 0,
         heading: 0,
@@ -231,18 +195,17 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       _lastCheckpointAt = DateTime.now();
       final response = await _api.submitCheckpoint(
         lectureId: lectureId,
-        latitude: sampled.latitude,
-        longitude: sampled.longitude,
-        gpsAccuracyM: sampled.bestAccuracy,
-        effectiveAccuracyM: sampled.effectiveAccuracy,
-        rawSamples: sampled.rawSamples,
+        latitude: rawSamples.last["lat"] ?? 0,
+        longitude: rawSamples.last["lng"] ?? 0,
+        gpsAccuracyM: rawSamples.last["accuracy"],
+        rawSamples: rawSamples,
       );
 
       if (!mounted) return;
       if (!silent) {
-        final lat = sampled.latitude.toStringAsFixed(6);
-        final lon = sampled.longitude.toStringAsFixed(6);
-        final acc = sampled.bestAccuracy.toStringAsFixed(1);
+        final lat = (rawSamples.last["lat"] ?? 0).toStringAsFixed(6);
+        final lon = (rawSamples.last["lng"] ?? 0).toStringAsFixed(6);
+        final acc = (rawSamples.last["accuracy"] ?? 0).toStringAsFixed(1);
         setState(() {
           _success = response.statusCode >= 200 && response.statusCode < 300;
           _message = _extractMessage(
@@ -252,8 +215,8 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                     "Checkpoint submitted",
                     "Lat: $lat, Lng: $lon",
                     "Accuracy: ${acc}m",
-                    "Confidence: ${(decision.probability * 100).round()}%",
-                    if (accuracyWarning != null) accuracyWarning,
+                    if (decision.confidence != null)
+                      "Confidence: ${decision.confidence}%",
                   ].join("\n")
                 : "Checkpoint failed",
           );
