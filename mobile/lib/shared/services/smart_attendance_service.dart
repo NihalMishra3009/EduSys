@@ -2,8 +2,10 @@ import "dart:async";
 import "dart:convert";
 import "dart:io";
 import "dart:math" as math;
+import "dart:ui" as ui;
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:flutter/widgets.dart";
 import "package:flutter/services.dart";
 import "package:flutter_blue_plus/flutter_blue_plus.dart";
 import "package:flutter_background_service/flutter_background_service.dart";
@@ -58,6 +60,7 @@ class SmartAttendanceService {
         _monitoring = false;
         return;
       }
+      await _ensureBackgroundService();
       _startForegroundMotionListener();
     } catch (_) {
       _monitoring = false;
@@ -79,6 +82,14 @@ class SmartAttendanceService {
     required int minAttendancePercent,
     int? scheduledStart,
   }) async {
+    final advertiseStatus = await Permission.bluetoothAdvertise.request();
+    final connectStatus = await Permission.bluetoothConnect.request();
+    if (!advertiseStatus.isGranted || !connectStatus.isGranted) {
+      throw Exception(
+        "Bluetooth advertise/connect permission denied. "
+        "Grant Bluetooth permissions in device settings.",
+      );
+    }
     final token = _uuid.v4();
     _currentSessionToken = token;
     await WakelockPlus.enable();
@@ -147,13 +158,18 @@ class SmartAttendanceService {
             onStart: smartAttendanceBackgroundStart,
             isForegroundMode: true,
             autoStart: true,
+            autoStartOnBoot: true,
             notificationChannelId: "edusys_attendance",
             initialNotificationTitle: "EduSys Attendance",
             initialNotificationContent: "Attendance tracking active",
+            foregroundServiceTypes: const [
+              AndroidForegroundType.dataSync,
+            ],
           ),
           iosConfiguration: IosConfiguration(
             onForeground: smartAttendanceBackgroundStart,
-            onBackground: (_) async => true,
+            onBackground: _onIosBackground,
+            autoStart: true,
           ),
         );
         await service.startService();
@@ -162,8 +178,15 @@ class SmartAttendanceService {
       _backgroundMotionSub ??=
           service.on("motion").listen((_) => _handleMotionDetected());
     } catch (_) {
-      // Fall back to foreground-only motion listener if background service fails.
+      _startForegroundMotionListener();
     }
+  }
+
+  @pragma("vm:entry-point")
+  static Future<bool> _onIosBackground(ServiceInstance service) async {
+    WidgetsFlutterBinding.ensureInitialized();
+    ui.DartPluginRegistrant.ensureInitialized();
+    return true;
   }
 
   void _startForegroundMotionListener() {
@@ -208,15 +231,27 @@ class SmartAttendanceService {
   }
 
   Future<Map<String, dynamic>?> _fetchActiveSession({int? roomId, int? lectureId}) async {
-    final response = await _api.getActiveAttendanceSession(
-      roomId: roomId,
-      lectureId: lectureId,
-    );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      if (response.body.isEmpty) return null;
-      final decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        final response = await _api.getActiveAttendanceSession(
+          roomId: roomId,
+          lectureId: lectureId,
+        );
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          if (response.body.isEmpty) {
+            await Future.delayed(const Duration(seconds: 2));
+            continue;
+          }
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map<String, dynamic>) {
+            return decoded;
+          }
+        }
+      } catch (_) {
+        // Network error — retry.
+      }
+      if (attempt < 2) {
+        await Future.delayed(const Duration(seconds: 2));
       }
     }
     return null;
@@ -361,11 +396,11 @@ class SmartAttendanceService {
       if (!scanStatus.isGranted) {
         return const _BleScanWindow(avgRssi: null, hitCount: 0);
       }
-      final state = await FlutterBluePlus.adapterState.first;
-      if (state != BluetoothAdapterState.on) {
+      final adapterState = await FlutterBluePlus.adapterState.first;
+      if (adapterState != BluetoothAdapterState.on) {
         return const _BleScanWindow(avgRssi: null, hitCount: 0);
       }
-      final subscription = FlutterBluePlus.scanResults.listen((list) {
+      final subscription = FlutterBluePlus.onScanResults.listen((list) {
         for (final result in list) {
           final payload = _decodeManufacturerPayload(result);
           if (payload == null) continue;
@@ -374,8 +409,8 @@ class SmartAttendanceService {
         }
       });
       await FlutterBluePlus.startScan(
-        withServices: [Guid(bleServiceUuid)],
         timeout: _scanWindow,
+        androidUsesFineLocation: false,
       );
       await Future.delayed(_scanWindow);
       await FlutterBluePlus.stopScan();
@@ -395,9 +430,9 @@ class SmartAttendanceService {
     try {
       final scanStatus = await Permission.bluetoothScan.request();
       if (!scanStatus.isGranted) return null;
-      final state = await FlutterBluePlus.adapterState.first;
-      if (state != BluetoothAdapterState.on) return null;
-      final subscription = FlutterBluePlus.scanResults.listen((list) {
+      final adapterState = await FlutterBluePlus.adapterState.first;
+      if (adapterState != BluetoothAdapterState.on) return null;
+      final subscription = FlutterBluePlus.onScanResults.listen((list) {
         for (final result in list) {
           final payload = _decodeManufacturerPayload(result);
           if (payload == null) continue;
@@ -406,10 +441,10 @@ class SmartAttendanceService {
         }
       });
       await FlutterBluePlus.startScan(
-        withServices: [Guid(bleServiceUuid)],
-        timeout: const Duration(seconds: 6),
+        timeout: const Duration(seconds: 8),
+        androidUsesFineLocation: false,
       );
-      await Future.delayed(const Duration(seconds: 6));
+      await Future.delayed(const Duration(seconds: 8));
       await FlutterBluePlus.stopScan();
       await subscription.cancel();
     } catch (_) {
@@ -478,28 +513,47 @@ class SmartAttendanceService {
 }
 
 @pragma("vm:entry-point")
-void smartAttendanceBackgroundStart(ServiceInstance service) {
+void smartAttendanceBackgroundStart(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  ui.DartPluginRegistrant.ensureInitialized();
+
   if (service is AndroidServiceInstance) {
-    service.setAsForegroundService();
+    service.on("setAsForeground").listen((_) {
+      service.setAsForegroundService();
+    });
+    service.on("setAsBackground").listen((_) {
+      service.setAsBackgroundService();
+    });
+    service.on("stopService").listen((_) {
+      service.stopSelf();
+    });
+    await service.setAsForegroundService();
   }
   AccelerometerEvent? last;
-  try {
-    SensorsPlatform.instance.accelerometerEvents.listen((event) {
-      if (last != null) {
-        final delta = math.sqrt(
-          math.pow(event.x - last!.x, 2) +
-              math.pow(event.y - last!.y, 2) +
-              math.pow(event.z - last!.z, 2),
-        );
-        if (delta > SmartAttendanceService._motionThreshold) {
-          service.invoke("motion");
+  for (int attempt = 0; attempt < 5; attempt++) {
+    try {
+      SensorsPlatform.instance.accelerometerEvents.listen((event) {
+        if (last != null) {
+          final delta = math.sqrt(
+            math.pow(event.x - last!.x, 2) +
+                math.pow(event.y - last!.y, 2) +
+                math.pow(event.z - last!.z, 2),
+          );
+          if (delta > SmartAttendanceService._motionThreshold) {
+            service.invoke("motion");
+          }
         }
-      }
-      last = event;
-    });
-  } catch (_) {
-    // Ignore background sensor failures.
+        last = event;
+      });
+      break;
+    } catch (_) {
+      await Future.delayed(const Duration(seconds: 2));
+    }
   }
+
+  Timer.periodic(const Duration(seconds: 30), (_) {
+    service.invoke("heartbeat");
+  });
 }
 
 class _BleScanWindow {
