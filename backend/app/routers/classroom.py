@@ -55,7 +55,7 @@ def create_classroom(
         latitude_min, latitude_max, longitude_min, longitude_max = bounds_from_points(storage_points)
         accuracies = [p.accuracy_m for p in payload.points or [] if p.accuracy_m is not None]
         effective_acc = round(sum(accuracies) / len(accuracies), 2) if accuracies else None
-        meta = build_polygon_meta(storage_points, payload.reference)
+        meta = build_polygon_meta(storage_points, None)
         if effective_acc is not None:
             meta["effective_fence_accuracy_m"] = effective_acc
         point_fields = {

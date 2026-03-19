@@ -9101,9 +9101,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   final LocationService _location = LocationService();
   final List<Map<String, dynamic>> _spacePoints = [];
   bool _recordingSpacePoint = false;
-  Map<String, dynamic>? _spaceReference;
-  bool _calibratingReference = false;
-  String _referenceStatus = "";
   List<Map<String, dynamic>> _createdSpaces = [];
   final TextEditingController _spaceNameController = TextEditingController();
   final TextEditingController _spaceThresholdController =
@@ -9542,41 +9539,15 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                         final lon = lonRaw is num
                             ? lonRaw.toDouble()
                             : (lonRaw is String ? double.tryParse(lonRaw) : null);
-                        final accRaw = entry.value["accuracy_m"] ??
-                            entry.value["accuracy"] ??
-                            entry.value["accuracyMeters"];
-                        final acc = accRaw is num
-                            ? accRaw.toDouble()
-                            : (accRaw is String ? double.tryParse(accRaw) : null);
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
                             lat != null && lon != null
                                 ? "Point $idx: ${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}"
-                                    "${acc != null ? " (±${acc.toStringAsFixed(1)}m)" : ""}"
                                 : "Point $idx: invalid (${entry.value})",
                           ),
                         );
                       }).toList(),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Stand at the center and stay still. We'll record 20 GPS samples to calibrate this room.",
-                  ),
-                  const SizedBox(height: 12),
-                  AppButton(
-                    label: _calibratingReference ? "Calibrating..." : "Calibrate from here",
-                    icon: Icons.center_focus_strong_rounded,
-                    isPrimary: false,
-                    onPressed:
-                        _spacePoints.length >= 3 && !_calibratingReference ? _calibrateReferencePoint : null,
-                  ),
-                  if (_referenceStatus.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      _referenceStatus,
-                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
                   const SizedBox(height: 12),
@@ -9865,53 +9836,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     GlassToast.show(context, message, icon: Icons.info_outline);
   }
 
-  Future<void> _calibrateReferencePoint() async {
-    if (_calibratingReference) {
-      return;
-    }
-    setState(() {
-      _calibratingReference = true;
-      _referenceStatus = "Calibrating... 0/20";
-    });
-    try {
-      final calibration = await _location.getReferenceCalibration(
-        onSample: (index, sample) {
-          if (!mounted) return;
-          setState(() {
-            _referenceStatus =
-                "Calibrating... $index/20 (±${sample.accuracy.toStringAsFixed(1)}m)";
-          });
-        },
-      );
-      if (!mounted) return;
-      setState(() {
-        _spaceReference = {
-          "center": {
-            "lat": calibration.centerLat,
-            "lng": calibration.centerLng,
-          },
-          "spread_m": calibration.spreadMeters,
-          "raw_samples": calibration.rawSamples,
-          "recorded_at": DateTime.now().millisecondsSinceEpoch,
-        };
-        _referenceStatus =
-            "Calibration complete. GPS spread ±${calibration.spreadMeters.toStringAsFixed(1)}m";
-      });
-      if (calibration.spreadMeters > 30) {
-        _toast(
-          "Warning: GPS spread ${calibration.spreadMeters.toStringAsFixed(1)}m. Consider recalibrating near a window.",
-        );
-      }
-    } on LocationServiceException {
-      if (!mounted) return;
-      Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const PermissionDeniedScreen()));
-    } finally {
-      if (mounted) {
-        setState(() => _calibratingReference = false);
-      }
-    }
-  }
+  Future<void> _calibrateReferencePoint() async {}
 
   String _extractDetail(String body, String fallback) {
     try {
@@ -9937,15 +9862,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
             "lng": fix.longitude.toDouble(),
             "latitude": fix.latitude.toDouble(),
             "longitude": fix.longitude.toDouble(),
-            "accuracy_m": fix.accuracy,
           },
         );
-        _spaceReference = null;
-        _referenceStatus = "";
       });
-      if (fix.accuracy > 20) {
-        _toast("Warning: GPS accuracy ${fix.accuracy.toStringAsFixed(1)}m. Consider re-recording.");
-      }
     } on LocationServiceException {
       if (!mounted) return;
       Navigator.of(context).push(
@@ -9960,8 +9879,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   void _clearSpacePoints() {
     setState(() {
       _spacePoints.clear();
-      _spaceReference = null;
-      _referenceStatus = "";
     });
   }
 
@@ -9973,10 +9890,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     }
     if (_spacePoints.length < 3) {
       _toast("Record at least 3 points to create the space");
-      return;
-    }
-    if (_spaceReference == null) {
-      _toast("Calibrate the reference point before creating the space");
       return;
     }
     final hasPolygon = _spacePoints.length >= 3;
@@ -10006,11 +9919,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
               .map((p) => {
                     "lat": (p["lat"] ?? p["latitude"] as num).toDouble(),
                     "lng": (p["lng"] ?? p["longitude"] as num).toDouble(),
-                    if (p["accuracy_m"] is num) "accuracy_m": (p["accuracy_m"] as num).toDouble(),
                   })
               .toList()
           : null,
-      reference: _spaceReference,
       latitudeMin: hasPolygon ? null : latitudeMin,
       latitudeMax: hasPolygon ? null : latitudeMax,
       longitudeMin: hasPolygon ? null : longitudeMin,

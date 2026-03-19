@@ -385,15 +385,27 @@ def is_inside_polygon(
     gps_accuracy_m: float | None = None,
     tolerance_m: float = 0.0,
 ) -> bool:
+    # v4: pure point-in-polygon using projected meters, ignore accuracy.
     validate_coordinates(latitude, longitude)
-    effective_accuracy = max(0.5, (gps_accuracy_m or 0.0) + max(0.0, tolerance_m))
-    decision = compute_attendance_decision(
-        latitude=latitude,
-        longitude=longitude,
-        points=points,
-        effective_accuracy_m=effective_accuracy,
-    )
-    return bool(decision.get("present"))
+    polygon = normalize_polygon_points(points)
+    origin_lat, origin_lon = _centroid(polygon)
+    projected_point = _project_to_meters(latitude, longitude, origin_lat, origin_lon)
+    _, projected_vertices = _build_projected_polygon(polygon)
+    return _ray_cast(projected_point, projected_vertices)
+
+
+def _ray_cast(point: tuple[float, float], vertices: list[tuple[float, float]]) -> bool:
+    inside = False
+    px, py = point
+    for i in range(len(vertices)):
+        x1, y1 = vertices[i - 1]
+        x2, y2 = vertices[i]
+        crosses = (y1 > py) != (y2 > py)
+        if crosses:
+            x_intersect = ((x2 - x1) * (py - y1)) / (y2 - y1) + x1
+            if px < x_intersect:
+                inside = not inside
+    return inside
 
 
 def _median(values: list[float]) -> float:

@@ -29,29 +29,12 @@ class VertexFix {
   VertexFix({
     required this.latitude,
     required this.longitude,
-    required this.accuracy,
   });
 
   final double latitude;
   final double longitude;
-  final double accuracy;
 }
 
-class ReferenceCalibration {
-  ReferenceCalibration({
-    required this.centerLat,
-    required this.centerLng,
-    required this.spreadMeters,
-    required this.rawSamples,
-  });
-
-  final double centerLat;
-  final double centerLng;
-  final double spreadMeters;
-  final List<Map<String, double>> rawSamples;
-}
-
-double _degToRad(double deg) => deg * (math.pi / 180.0);
 
 class LocationService {
   Future<void> _ensurePermission() async {
@@ -192,8 +175,8 @@ class LocationService {
   }
 
   Future<VertexFix> getVertexFix({
-    int samples = 8,
-    Duration interval = const Duration(milliseconds: 500),
+    int samples = 5,
+    Duration interval = const Duration(milliseconds: 400),
   }) async {
     await _ensurePermission();
     final raw = <Position>[];
@@ -216,25 +199,13 @@ class LocationService {
     if (raw.length < 3) {
       throw LocationServiceException(LocationErrorType.unstable);
     }
-    raw.sort((a, b) => a.accuracy.compareTo(b.accuracy));
-    final keep = raw.take(math.max(1, raw.length - 3)).toList();
-    double totalWeight = 0.0;
-    double sumLat = 0.0;
-    double sumLng = 0.0;
-    for (final p in keep) {
-      final w = 1.0 / math.max(p.accuracy, 1.0);
-      totalWeight += w;
-      sumLat += p.latitude * w;
-      sumLng += p.longitude * w;
-    }
-    final avgLat = sumLat / totalWeight;
-    final avgLng = sumLng / totalWeight;
-    final bestAcc = keep.first.accuracy;
-    return VertexFix(latitude: avgLat, longitude: avgLng, accuracy: bestAcc);
+    final avgLat = raw.map((p) => p.latitude).reduce((a, b) => a + b) / raw.length;
+    final avgLng = raw.map((p) => p.longitude).reduce((a, b) => a + b) / raw.length;
+    return VertexFix(latitude: avgLat, longitude: avgLng);
   }
 
-  Future<ReferenceCalibration> getReferenceCalibration({
-    int samples = 20,
+  Future<Map<String, double>> getAveragedCoordinate({
+    int samples = 5,
     Duration interval = const Duration(milliseconds: 500),
     void Function(int index, Position sample)? onSample,
   }) async {
@@ -257,82 +228,12 @@ class LocationService {
         await Future.delayed(interval);
       }
     }
-    if (raw.length < 5) {
+    if (raw.length < 3) {
       throw LocationServiceException(LocationErrorType.unstable);
     }
-    final originLat = raw.first.latitude;
-    final originLng = raw.first.longitude;
-    double totalWeight = 0.0;
-    double sumX = 0.0;
-    double sumY = 0.0;
-    final projected = <List<double>>[];
-    for (final p in raw) {
-      final x = 6371000.0 *
-          _degToRad(p.longitude - originLng) *
-          math.cos(_degToRad(originLat));
-      final y = 6371000.0 * _degToRad(p.latitude - originLat);
-      final w = 1.0 / math.max(p.accuracy, 1.0);
-      totalWeight += w;
-      sumX += x * w;
-      sumY += y * w;
-      projected.add([x, y]);
-    }
-    final cx = sumX / totalWeight;
-    final cy = sumY / totalWeight;
-    final centerLat = originLat + (cy / 6371000.0) * (180 / math.pi);
-    final centerLng =
-        originLng + (cx / (6371000.0 * math.cos(_degToRad(originLat)))) * (180 / math.pi);
-    final distances = projected
-        .map((p) => math.sqrt(math.pow(p[0] - cx, 2) + math.pow(p[1] - cy, 2)))
-        .toList()
-      ..sort();
-    final spread90 = distances[(distances.length * 0.9).floor().clamp(0, distances.length - 1)];
-    return ReferenceCalibration(
-      centerLat: centerLat,
-      centerLng: centerLng,
-      spreadMeters: spread90,
-      rawSamples: raw
-          .map((p) => {
-                "lat": p.latitude,
-                "lng": p.longitude,
-                "accuracy": p.accuracy,
-              })
-          .toList(),
-    );
-  }
-
-  Future<List<Map<String, double>>> getStudentSamples({
-    int samples = 10,
-    Duration interval = const Duration(milliseconds: 500),
-    void Function(int index, Position sample)? onSample,
-  }) async {
-    await _ensurePermission();
-    final raw = <Map<String, double>>[];
-    for (var i = 0; i < samples; i++) {
-      try {
-        final pos = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(accuracy: LocationAccuracy.best),
-        );
-        if (pos.isMocked || pos.accuracy == 0) {
-          throw LocationServiceException(LocationErrorType.mocked);
-        }
-        raw.add({
-          "lat": pos.latitude,
-          "lng": pos.longitude,
-          "accuracy": pos.accuracy,
-        });
-        onSample?.call(i + 1, pos);
-      } catch (_) {
-        // Ignore failed sample.
-      }
-      if (i < samples - 1) {
-        await Future.delayed(interval);
-      }
-    }
-    if (raw.length < 5) {
-      throw LocationServiceException(LocationErrorType.unstable);
-    }
-    return raw;
+    final avgLat = raw.map((p) => p.latitude).reduce((a, b) => a + b) / raw.length;
+    final avgLng = raw.map((p) => p.longitude).reduce((a, b) => a + b) / raw.length;
+    return {"lat": avgLat, "lng": avgLng};
   }
 
   // GEO: Collect multiple high-accuracy samples and guard against spoofing/teleporting.

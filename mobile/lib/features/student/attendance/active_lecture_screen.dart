@@ -77,33 +77,12 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     return null;
   }
 
-  GeoDecision _checkClassroomV3(
-    Map<String, dynamic> classroom,
-    List<Map<String, double>> rawSamples,
-  ) {
+  bool _isInsidePolygon(Map<String, dynamic> classroom, Map<String, double> point) {
     final polygon = classroom["polygon_points"] as List<dynamic>?;
-    final meta = classroom["polygon_meta"] as Map<String, dynamic>?;
-    if (polygon != null && polygon.isNotEmpty && meta != null) {
-      final reference = meta["reference"] as Map<String, dynamic>?;
-      final origin = meta["projection_origin"] as Map<String, dynamic>?;
-      final inscribed = (meta["inscribed_radius_m"] as num?)?.toDouble() ?? 0.0;
-      if (reference != null && origin != null) {
-        return GeoUtils.checkAttendanceV3(
-          polygon: polygon,
-          reference: reference,
-          projectionOrigin: origin,
-          inscribedRadiusM: inscribed,
-          rawSamples: rawSamples,
-        );
-      }
+    if (polygon == null || polygon.isEmpty) {
+      return false;
     }
-    return GeoDecision(
-      present: false,
-      probability: 0.0,
-      signedDistanceM: 0.0,
-      reason: "NO_REFERENCE",
-      areaM2: 0.0,
-    );
+    return GeoUtils.isPointInsidePolygon(point: point, polygon: polygon);
   }
 
   Future<void> _sendCheckpoint(int lectureId, int classroomId, {bool silent = false}) async {
@@ -111,14 +90,14 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       setState(() => _loading = true);
     }
     try {
-      // GEO: collect 10 samples for device-agnostic check.
-      final rawSamples = await _locationService.getStudentSamples(
+      // GEO: average 5 samples for a stable coordinate (no accuracy gating).
+      final averaged = await _locationService.getAveragedCoordinate(
         onSample: (index, sample) {
           if (!mounted || silent) return;
           setState(() {
             _success = false;
             _message =
-                "Sampling GPS... ($index/10, ±${sample.accuracy.toStringAsFixed(1)}m)";
+                "Sampling GPS... ($index/5)";
           });
         },
       );
@@ -128,8 +107,8 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
           final distance = Geolocator.distanceBetween(
             _lastCheckpointPosition!.latitude,
             _lastCheckpointPosition!.longitude,
-            rawSamples.last["lat"] ?? _lastCheckpointPosition!.latitude,
-            rawSamples.last["lng"] ?? _lastCheckpointPosition!.longitude,
+            averaged["lat"] ?? _lastCheckpointPosition!.latitude,
+            averaged["lng"] ?? _lastCheckpointPosition!.longitude,
           );
           final speed = distance / dt;
           if (speed > 30.0) {
@@ -155,36 +134,24 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      final decision = _checkClassroomV3(classroom, rawSamples);
-      if (!decision.present) {
+      final inside = _isInsidePolygon(classroom, averaged);
+      if (!inside) {
         if (!mounted) return;
         if (!silent) {
-          final last = rawSamples.last;
-          final lat = (last["lat"] ?? 0).toStringAsFixed(6);
-          final lon = (last["lng"] ?? 0).toStringAsFixed(6);
-          final dist = decision.signedDistanceM.abs().toStringAsFixed(1);
-          final containmentPct =
-              ((decision.containmentScore ?? decision.probability) * 100).toStringAsFixed(0);
+          final lat = (averaged["lat"] ?? 0).toStringAsFixed(6);
+          final lon = (averaged["lng"] ?? 0).toStringAsFixed(6);
           setState(() {
             _success = false;
-            _message = [
-              decision.reason == "RETRY" ? "GPS is borderline. Retry." : "Outside classroom geofence",
-              "Lat: $lat, Lng: $lon",
-              "Distance from boundary: ${dist}m",
-              "Containment: ${containmentPct}%",
-              if (decision.distToReferenceM != null && decision.acceptanceRadiusM != null)
-                "Ref distance: ${decision.distToReferenceM!.toStringAsFixed(1)}m / "
-                    "${decision.acceptanceRadiusM!.toStringAsFixed(1)}m",
-            ].join("\n");
+            _message = "Outside classroom geofence\nLat: $lat, Lng: $lon";
           });
         }
         return;
       }
       _lastCheckpointPosition = Position(
-        latitude: rawSamples.last["lat"] ?? 0,
-        longitude: rawSamples.last["lng"] ?? 0,
+        latitude: averaged["lat"] ?? 0,
+        longitude: averaged["lng"] ?? 0,
         timestamp: DateTime.now(),
-        accuracy: rawSamples.last["accuracy"] ?? 0,
+        accuracy: 0,
         altitude: 0,
         altitudeAccuracy: 0,
         heading: 0,
@@ -195,17 +162,14 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       _lastCheckpointAt = DateTime.now();
       final response = await _api.submitCheckpoint(
         lectureId: lectureId,
-        latitude: rawSamples.last["lat"] ?? 0,
-        longitude: rawSamples.last["lng"] ?? 0,
-        gpsAccuracyM: rawSamples.last["accuracy"],
-        rawSamples: rawSamples,
+        latitude: averaged["lat"] ?? 0,
+        longitude: averaged["lng"] ?? 0,
       );
 
       if (!mounted) return;
       if (!silent) {
-        final lat = (rawSamples.last["lat"] ?? 0).toStringAsFixed(6);
-        final lon = (rawSamples.last["lng"] ?? 0).toStringAsFixed(6);
-        final acc = (rawSamples.last["accuracy"] ?? 0).toStringAsFixed(1);
+        final lat = (averaged["lat"] ?? 0).toStringAsFixed(6);
+        final lon = (averaged["lng"] ?? 0).toStringAsFixed(6);
         setState(() {
           _success = response.statusCode >= 200 && response.statusCode < 300;
           _message = _extractMessage(
@@ -214,9 +178,6 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                 ? [
                     "Checkpoint submitted",
                     "Lat: $lat, Lng: $lon",
-                    "Accuracy: ${acc}m",
-                    if (decision.confidence != null)
-                      "Confidence: ${decision.confidence}%",
                   ].join("\n")
                 : "Checkpoint failed",
           );

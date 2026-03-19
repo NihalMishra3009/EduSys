@@ -19,7 +19,6 @@ class ClassroomCreate(BaseModel):
     longitude_min: float | None = None
     longitude_max: float | None = None
     points: list[GeoPoint] | None = None
-    reference: dict | None = None
     professor_id: int | None = None
 
 
@@ -29,7 +28,6 @@ class ClassroomBoundaryUpdate(BaseModel):
     longitude_min: float | None = None
     longitude_max: float | None = None
     points: list[GeoPoint] | None = None
-    reference: dict | None = None
 
 
 class ClassroomOut(BaseModel):

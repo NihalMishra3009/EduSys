@@ -1,6 +1,5 @@
 ﻿from datetime import datetime
 import logging
-import math
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -12,7 +11,7 @@ from app.models.classroom import Classroom
 from app.models.lecture import Lecture, LectureStatus
 from app.models.user import User, UserRole
 from app.schemas.attendance import CheckpointRequest, CheckpointOut, AttendanceRecordOut
-from app.utils.geo import compute_attendance_decision_v3, is_inside_rectangle
+from app.utils.geo import is_inside_polygon, is_inside_rectangle
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -34,51 +33,6 @@ def create_checkpoint(
     classroom = db.get(Classroom, lecture.classroom_id)
     if not classroom:
         raise HTTPException(status_code=404, detail="Classroom not found")
-
-    def _parse_samples(raw):
-        samples = []
-        if not isinstance(raw, list):
-            return samples
-        for entry in raw:
-            if not isinstance(entry, dict):
-                continue
-            lat = entry.get("lat", entry.get("latitude"))
-            lng = entry.get("lng", entry.get("longitude"))
-            acc = entry.get("accuracy") or entry.get("accuracy_m") or entry.get("accuracyMeters")
-            if lat is None or lng is None or acc is None:
-                continue
-            try:
-                samples.append({"lat": float(lat), "lng": float(lng), "accuracy": float(acc)})
-            except (TypeError, ValueError):
-                continue
-        return samples
-
-    def _compute_best_position(samples):
-        if not samples:
-            return None
-        accuracies = sorted(s["accuracy"] for s in samples)
-        q1 = accuracies[int(len(accuracies) * 0.25)]
-        q3 = accuracies[int(len(accuracies) * 0.75)]
-        iqr = q3 - q1
-        upper = q3 + 1.5 * iqr
-        filtered = [s for s in samples if s["accuracy"] <= upper]
-        if len(filtered) < 2:
-            filtered = samples
-        total_weight = sum(1.0 / (s["accuracy"] ** 2) for s in filtered if s["accuracy"] > 0)
-        if total_weight <= 0:
-            return None
-        avg_lat = sum(s["lat"] / (s["accuracy"] ** 2) for s in filtered) / total_weight
-        avg_lng = sum(s["lng"] / (s["accuracy"] ** 2) for s in filtered) / total_weight
-        best_acc = min(s["accuracy"] for s in filtered)
-        weighted_acc = sum((s["accuracy"] ** 2) * (1.0 / (s["accuracy"] ** 2)) for s in filtered)
-        effective_acc = math.sqrt(weighted_acc / total_weight)
-        return {
-            "latitude": avg_lat,
-            "longitude": avg_lng,
-            "best_accuracy": best_acc,
-            "effective_accuracy": effective_acc,
-            "filtered_samples": filtered,
-        }
 
     try:
         points = None
@@ -112,12 +66,6 @@ def create_checkpoint(
         if not points:
             if classroom.latitude_min is None or classroom.latitude_max is None:
                 raise HTTPException(status_code=400, detail="Classroom polygon is missing")
-            best_position = {
-                "latitude": payload.latitude,
-                "longitude": payload.longitude,
-                "best_accuracy": payload.gps_accuracy_m or 0.0,
-                "effective_accuracy": payload.gps_accuracy_m or 0.0,
-            }
             inside = is_inside_rectangle(
                 latitude=payload.latitude,
                 longitude=payload.longitude,
@@ -125,8 +73,6 @@ def create_checkpoint(
                 latitude_max=classroom.latitude_max,
                 longitude_min=classroom.longitude_min,
                 longitude_max=classroom.longitude_max,
-                gps_accuracy_m=payload.gps_accuracy_m,
-                tolerance_m=5.0,
             )
             decision = {
                 "present": inside,
@@ -134,30 +80,25 @@ def create_checkpoint(
                 "signed_distance_m": 0.0,
                 "reason": "RECTANGLE",
             }
+            best_position = {
+                "latitude": payload.latitude,
+                "longitude": payload.longitude,
+            }
         else:
-            samples = _parse_samples(payload.raw_samples)
-            if len(samples) < 5:
-                raise HTTPException(status_code=400, detail="Insufficient GPS samples. Retry.")
-            polygon_meta = classroom.polygon_meta or {}
-            reference = polygon_meta.get("reference")
-            projection_origin = polygon_meta.get("projection_origin")
-            inscribed_radius = polygon_meta.get("inscribed_radius_m", 0.0)
-            if not reference or not projection_origin:
-                raise HTTPException(status_code=400, detail="Reference calibration missing for this space.")
-            decision = compute_attendance_decision_v3(
+            inside = is_inside_polygon(
                 latitude=payload.latitude,
                 longitude=payload.longitude,
                 points=points,
-                raw_samples=samples,
-                reference=reference,
-                projection_origin=projection_origin,
-                inscribed_radius_m=float(inscribed_radius or 0.0),
             )
-            best_position = _compute_best_position(samples) or {
+            decision = {
+                "present": inside,
+                "probability": 1.0 if inside else 0.0,
+                "signed_distance_m": 0.0,
+                "reason": "POLYGON",
+            }
+            best_position = {
                 "latitude": payload.latitude,
                 "longitude": payload.longitude,
-                "best_accuracy": payload.gps_accuracy_m or 0.0,
-                "effective_accuracy": payload.effective_accuracy_m or payload.gps_accuracy_m or 0.0,
             }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -192,11 +133,6 @@ def create_checkpoint(
         elif record.status != AttendanceStatus.ABSENT:
             record.status = AttendanceStatus.ABSENT
         db.commit()
-        reason = decision.get("reason") or "Outside classroom geofence"
-        if reason == "RETRY":
-            raise HTTPException(status_code=400, detail="GPS is borderline. Wait 10 seconds and retry.")
-        if reason == "OUTSIDE":
-            raise HTTPException(status_code=400, detail="Outside classroom geofence.")
         raise HTTPException(status_code=400, detail="Outside classroom geofence")
 
     if record is None:
@@ -217,12 +153,12 @@ def create_checkpoint(
         timestamp=datetime.utcnow(),
         latitude=best_position["latitude"],
         longitude=best_position["longitude"],
-        gps_accuracy_m=best_position.get("best_accuracy"),
-        effective_accuracy_m=best_position.get("effective_accuracy"),
-        probability=decision.get("probability") or decision.get("containment_score"),
+        gps_accuracy_m=None,
+        effective_accuracy_m=None,
+        probability=decision.get("probability"),
         signed_distance_m=decision.get("signed_distance_m"),
         decision_reason=decision.get("reason"),
-        raw_samples=payload.raw_samples,
+        raw_samples=None,
     )
     db.add(checkpoint)
     db.commit()
