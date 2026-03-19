@@ -9953,7 +9953,17 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     if (!mounted) return;
     setState(() => _loading = false);
     final isOk = res.statusCode >= 200 && res.statusCode < 300;
-    _toast(_extractDetail(res.body, isOk ? "Space created" : "Failed to create space"));
+    var feedback = _extractDetail(res.body, isOk ? "Space created" : "Failed to create space");
+    if (isOk) {
+      try {
+        final payload = jsonDecode(res.body) as Map<String, dynamic>;
+        final polygon = payload["polygon_points"];
+        if (polygon is List && polygon.isNotEmpty) {
+          feedback = "$feedback\nBoundary created with ${polygon.length} points.";
+        }
+      } catch (_) {}
+    }
+    _toast(feedback);
     if (res.statusCode >= 200 && res.statusCode < 300) {
       setState(() {
         _spacePoints.clear();

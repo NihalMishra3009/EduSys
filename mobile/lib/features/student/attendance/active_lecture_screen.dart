@@ -186,11 +186,16 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
 
       if (!mounted) return;
       if (!silent) {
+        final lat = position.latitude.toStringAsFixed(6);
+        final lon = position.longitude.toStringAsFixed(6);
+        final acc = position.accuracy.toStringAsFixed(1);
         setState(() {
           _success = response.statusCode >= 200 && response.statusCode < 300;
           _message = _extractMessage(
             response.body,
-            fallback: _success ? "Checkpoint submitted" : "Checkpoint failed",
+            fallback: _success
+                ? "Checkpoint submitted\nLat: $lat, Lng: $lon\nAccuracy: ${acc}m"
+                : "Checkpoint failed",
           );
         });
       }
