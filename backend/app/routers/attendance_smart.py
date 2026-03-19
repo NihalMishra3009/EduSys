@@ -23,8 +23,8 @@ from app.schemas.attendance_smart import (
 router = APIRouter()
 
 
-@router.get("/rooms/{room_id}/calibration", response_model=RoomCalibrationOut)
-def get_room_calibration(
+@router.get("/rooms/{room_id}", response_model=RoomCalibrationOut)
+def get_room_config(
     room_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -37,8 +37,8 @@ def get_room_calibration(
     return calibration
 
 
-@router.post("/rooms/{room_id}/calibration", response_model=RoomCalibrationOut)
-def set_room_calibration(
+@router.post("/rooms/{room_id}", response_model=RoomCalibrationOut)
+def set_room_config(
     room_id: int,
     payload: RoomCalibrationIn,
     db: Session = Depends(get_db),
@@ -51,15 +51,32 @@ def set_room_calibration(
         calibration = RoomCalibration(room_id=room_id)
         db.add(calibration)
     calibration.name = payload.name
-    calibration.building_id = payload.building_id
-    calibration.floor_pressure_baseline = payload.floor_pressure_baseline
-    calibration.lower_floor_pressure = payload.lower_floor_pressure
-    calibration.half_floor_gap = payload.half_floor_gap
-    calibration.gps_fence = payload.gps_fence
+    calibration.ceiling_height_m = payload.ceiling_height_m
     calibration.ble_rssi_threshold = payload.ble_rssi_threshold or calibration.ble_rssi_threshold
+    if payload.ble_rssi_threshold_auto is not None:
+        calibration.ble_rssi_threshold_auto = payload.ble_rssi_threshold_auto
     db.commit()
     db.refresh(calibration)
     return calibration
+
+
+@router.get("/rooms/{room_id}/calibration", response_model=RoomCalibrationOut)
+def get_room_calibration(
+    room_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return get_room_config(room_id=room_id, db=db, current_user=current_user)
+
+
+@router.post("/rooms/{room_id}/calibration", response_model=RoomCalibrationOut)
+def set_room_calibration(
+    room_id: int,
+    payload: RoomCalibrationIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return set_room_config(room_id=room_id, payload=payload, db=db, current_user=current_user)
 
 
 @router.post("/sessions/start", response_model=SessionOut)
@@ -139,6 +156,26 @@ def log_scan_event(
     session = db.get(LectureSession, payload.session_token)
     if not session or session.status != "active":
         raise HTTPException(status_code=400, detail="Session not active")
+    existing = db.get(ScanEvent, payload.scan_id)
+    if existing:
+        return {"status": "ok"}
+    last = (
+        db.query(ScanEvent)
+        .filter(
+            ScanEvent.lecture_id == payload.lecture_id,
+            ScanEvent.session_token == payload.session_token,
+            ScanEvent.student_id == payload.student_id,
+        )
+        .order_by(ScanEvent.timestamp.desc())
+        .first()
+    )
+    if last:
+        expected_type = "EXIT" if last.type == "ENTRY" else "ENTRY"
+        if payload.type != expected_type:
+            raise HTTPException(status_code=409, detail="Scan type out of sequence")
+        if payload.scan_index is not None and last.scan_index is not None:
+            if payload.scan_index != last.scan_index + 1:
+                raise HTTPException(status_code=409, detail="Scan index mismatch")
     event = ScanEvent(
         scan_id=payload.scan_id,
         student_id=payload.student_id,

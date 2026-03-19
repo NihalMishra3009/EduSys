@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, Integer, JSON, String
+from sqlalchemy import Column, Float, Integer, JSON, String, Boolean
 from app.core.database import Base
 
 
@@ -13,3 +13,5 @@ class RoomCalibration(Base):
     half_floor_gap = Column(Float, nullable=True)
     gps_fence = Column(JSON, nullable=True)
     ble_rssi_threshold = Column(Integer, nullable=False, default=-85)
+    ceiling_height_m = Column(Float, nullable=True)
+    ble_rssi_threshold_auto = Column(Boolean, nullable=True, default=True)

@@ -31,7 +31,6 @@ import "package:provider/provider.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart";
 import "package:file_picker/file_picker.dart";
-import "package:sensors_plus/sensors_plus.dart";
 
 const bool kUseDemoDataEverywhere = false;
 const double kDockScrollBottomInset = 96;
@@ -9101,13 +9100,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   int? _selectedStudentId;
   final LocationService _location = LocationService();
   final List<Map<String, dynamic>> _spacePoints = [];
-  double? _floorBaseline;
-  double? _lowerFloorPressure;
-  double? _halfFloorGap;
-  bool _recordingFloorBaseline = false;
-  bool _recordingLowerFloor = false;
-  final TextEditingController _bleRssiController =
-      TextEditingController(text: "-85");
+  final TextEditingController _ceilingHeightController = TextEditingController();
+  final TextEditingController _bleRssiController = TextEditingController();
+  bool _bleRssiAuto = true;
   bool _recordingSpacePoint = false;
   List<Map<String, dynamic>> _createdSpaces = [];
   final TextEditingController _spaceNameController = TextEditingController();
@@ -9206,6 +9201,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   @override
   void dispose() {
     _spaceNameController.dispose();
+    _ceilingHeightController.dispose();
     _bleRssiController.dispose();
     _spaceThresholdController.dispose();
     _thresholdLectureIdController.dispose();
@@ -9482,20 +9478,11 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       context: context,
       builder: (context) {
         return StatefulBuilder(builder: (context, setDialogState) {
-          Future<void> recordPoint() async {
-            await _recordSpacePoint();
-            if (mounted) {
-              setDialogState(() {});
-            }
-          }
-
-          void clearPoints() {
-            _clearSpacePoints();
-            if (mounted) {
-              setDialogState(() {});
-            }
-          }
-
+          final height = double.tryParse(_ceilingHeightController.text.trim());
+          final hasValidHeight = height != null && height >= 2.0 && height <= 10.0;
+          final hasRssi = _bleRssiController.text.trim().isNotEmpty;
+          final canSave =
+              _spaceNameController.text.trim().isNotEmpty && hasValidHeight && hasRssi;
           return AlertDialog(
             title: const Text("Create Space"),
             content: SingleChildScrollView(
@@ -9508,111 +9495,71 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                       labelText: "Space name",
                       prefixIcon: Icon(Icons.meeting_room_rounded),
                     ),
+                    onChanged: (_) => setDialogState(() {}),
                   ),
                   const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: AppButton(
-                          label: _recordingSpacePoint
-                              ? "Recording..."
-                              : "Record point ${_spacePoints.length + 1}",
-                          icon: Icons.my_location_rounded,
-                          onPressed: _recordingSpacePoint ? null : recordPoint,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: AppButton(
-                          label: "Clear points",
-                          icon: Icons.refresh_rounded,
-                          isPrimary: false,
-                          onPressed: _spacePoints.isEmpty ? null : clearPoints,
-                        ),
-                      ),
-                    ],
+                  TextField(
+                    controller: _ceilingHeightController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: "Ceiling height (metres)",
+                      hintText: "e.g. 3.0, 3.5, 4.0",
+                      prefixIcon: Icon(Icons.height_rounded),
+                    ),
+                    onChanged: (value) {
+                      final parsed = double.tryParse(value.trim());
+                      if (parsed == null || parsed < 2.0 || parsed > 10.0) {
+                        setDialogState(() {
+                          _bleRssiController.text = "";
+                          _bleRssiAuto = true;
+                        });
+                        return;
+                      }
+                      final rssi = _computeRssiThreshold(parsed);
+                      if (rssi == null) {
+                        setDialogState(() {
+                          _bleRssiController.text = "";
+                          _bleRssiAuto = true;
+                        });
+                        return;
+                      }
+                      if (_bleRssiAuto) {
+                        setDialogState(() {
+                          _bleRssiController.text = rssi.round().toString();
+                        });
+                      }
+                      setDialogState(() {});
+                    },
                   ),
-                  const SizedBox(height: 8),
-                  Text("Points recorded: ${_spacePoints.length}"),
-                  if (_spacePoints.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: _spacePoints.asMap().entries.map((entry) {
-                        final idx = entry.key + 1;
-                        final latRaw = entry.value["lat"] ?? entry.value["latitude"];
-                        final lonRaw = entry.value["lng"] ?? entry.value["longitude"];
-                        final lat = latRaw is num
-                            ? latRaw.toDouble()
-                            : (latRaw is String ? double.tryParse(latRaw) : null);
-                        final lon = lonRaw is num
-                            ? lonRaw.toDouble()
-                            : (lonRaw is String ? double.tryParse(lonRaw) : null);
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            lat != null && lon != null
-                                ? "Point $idx: ${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}"
-                                : "Point $idx: invalid (${entry.value})",
-                          ),
-                        );
-                      }).toList(),
+                  const SizedBox(height: 6),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      "Standard classroom ≈ 3.0–3.5m. Lecture hall ≈ 4.5–5.0m.",
                     ),
-                  ],
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: AppButton(
-                          label: _recordingFloorBaseline
-                              ? "Recording..."
-                              : "Set Floor Baseline",
-                          icon: Icons.speed_rounded,
-                          onPressed:
-                              _recordingFloorBaseline ? null : _recordFloorBaseline,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: AppButton(
-                          label: _recordingLowerFloor
-                              ? "Recording..."
-                              : "Set Lower Bound",
-                          icon: Icons.stairs_rounded,
-                          isPrimary: false,
-                          onPressed:
-                              _recordingLowerFloor ? null : _recordLowerFloor,
-                        ),
-                      ),
-                    ],
                   ),
-                  const SizedBox(height: 8),
-                  if (_floorBaseline != null)
-                    Text(
-                      "Baseline: ${_floorBaseline!.toStringAsFixed(2)} hPa",
-                    ),
-                  if (_lowerFloorPressure != null)
-                    Text(
-                      "Lower floor: ${_lowerFloorPressure!.toStringAsFixed(2)} hPa",
-                    ),
-                  if (_halfFloorGap != null)
-                    Text(
-                      "Half floor gap: ${_halfFloorGap!.toStringAsFixed(2)} hPa",
-                    ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: _bleRssiController,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
-                      labelText: "BLE RSSI Threshold (e.g., -85)",
+                      labelText: "BLE RSSI Threshold (dBm)",
+                      hintText: "Auto-computed — edit only after real-world testing",
                       prefixIcon: Icon(Icons.bluetooth_searching_rounded),
                     ),
+                    onChanged: (_) {
+                      if (_bleRssiAuto) {
+                        setDialogState(() => _bleRssiAuto = false);
+                      }
+                      setDialogState(() {});
+                    },
                   ),
                   const SizedBox(height: 12),
                   AppButton(
                     label: "Create space",
                     icon: Icons.add_location_alt_rounded,
-                    onPressed: _spacePoints.isNotEmpty ? _createSpace : null,
+                    onPressed: canSave ? _createSpace : null,
                   ),
                 ],
               ),
@@ -9894,72 +9841,16 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     GlassToast.show(context, message, icon: Icons.info_outline);
   }
 
-  Future<void> _recordFloorBaseline() async {
-    if (_recordingFloorBaseline) return;
-    setState(() => _recordingFloorBaseline = true);
-    try {
-      final avg = await _capturePressureSamples();
-      if (avg == null) {
-        _toast("Barometer unavailable.");
-        return;
-      }
-      setState(() {
-        _floorBaseline = avg;
-        _halfFloorGap = _computeHalfFloorGap();
-      });
-      _toast("Baseline set: ${avg.toStringAsFixed(2)} hPa");
-    } finally {
-      if (mounted) setState(() => _recordingFloorBaseline = false);
-    }
-  }
-
-  Future<void> _recordLowerFloor() async {
-    if (_recordingLowerFloor) return;
-    setState(() => _recordingLowerFloor = true);
-    try {
-      final avg = await _capturePressureSamples();
-      if (avg == null) {
-        _toast("Barometer unavailable.");
-        return;
-      }
-      setState(() {
-        _lowerFloorPressure = avg;
-        _halfFloorGap = _computeHalfFloorGap();
-      });
-      _toast("Lower floor set: ${avg.toStringAsFixed(2)} hPa");
-    } finally {
-      if (mounted) setState(() => _recordingLowerFloor = false);
-    }
-  }
-
-  double? _computeHalfFloorGap() {
-    if (_floorBaseline == null || _lowerFloorPressure == null) return null;
-    return (_lowerFloorPressure! - _floorBaseline!).abs() * 0.6;
-  }
-
-  Future<double?> _capturePressureSamples() async {
-    try {
-      final values = <double>[];
-      late StreamSubscription sub;
-      final completer = Completer<void>();
-      sub = barometerEventStream().listen((event) {
-        values.add(event.pressure);
-        if (values.length >= 10) {
-          completer.complete();
-          sub.cancel();
-        }
-      });
-      await completer.future.timeout(const Duration(seconds: 20), onTimeout: () {
-        sub.cancel();
-      });
-      if (values.isEmpty) {
-        return null;
-      }
-      final total = values.reduce((a, b) => a + b);
-      return total / values.length;
-    } catch (_) {
-      return null;
-    }
+  double? _computeRssiThreshold(double ceilingHeightM) {
+    if (ceilingHeightM <= 1.0) return null;
+    const txPower = -59.0;
+    const n = 3.2;
+    const floorSlabPenalty = -25.0;
+    final verticalDistance = ceilingHeightM - 1.0;
+    final rssiAtCeiling =
+        txPower - (10.0 * n * (math.log(verticalDistance) / math.ln10));
+    final rssiAboveSlab = rssiAtCeiling + floorSlabPenalty;
+    return rssiAboveSlab + 5.0;
   }
 
   String _extractDetail(String body, String fallback) {
@@ -10003,9 +9894,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   void _clearSpacePoints() {
     setState(() {
       _spacePoints.clear();
-      _floorBaseline = null;
-      _lowerFloorPressure = null;
-      _halfFloorGap = null;
+      _ceilingHeightController.clear();
+      _bleRssiController.clear();
+      _bleRssiAuto = true;
     });
   }
 
@@ -10015,44 +9906,23 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       _toast("Enter a space name");
       return;
     }
-    if (_spacePoints.length < 3) {
-      _toast("Record at least 3 points to create the space");
+    final ceilingHeight = double.tryParse(_ceilingHeightController.text.trim());
+    if (ceilingHeight == null || ceilingHeight < 2.0 || ceilingHeight > 10.0) {
+      _toast("Enter ceiling height between 2.0 and 10.0");
       return;
     }
-    final hasPolygon = _spacePoints.length >= 3;
-    final lats = _spacePoints
-        .map((p) => p["lat"] ?? p["latitude"])
-        .whereType<num>()
-        .map((v) => v.toDouble())
-        .toList();
-    final lons = _spacePoints
-        .map((p) => p["lng"] ?? p["longitude"])
-        .whereType<num>()
-        .map((v) => v.toDouble())
-        .toList();
-    if (lats.isEmpty || lons.isEmpty) {
-      _toast("Invalid points recorded");
+    final rssi = int.tryParse(_bleRssiController.text.trim());
+    if (rssi == null) {
+      _toast("Enter a BLE RSSI threshold");
       return;
     }
-    final latitudeMin = lats.reduce(math.min);
-    final latitudeMax = lats.reduce(math.max);
-    final longitudeMin = lons.reduce(math.min);
-    final longitudeMax = lons.reduce(math.max);
     setState(() => _loading = true);
     final res = await _api.createClassroom(
       name: name,
-      points: hasPolygon
-          ? _spacePoints
-              .map((p) => {
-                    "lat": (p["lat"] ?? p["latitude"] as num).toDouble(),
-                    "lng": (p["lng"] ?? p["longitude"] as num).toDouble(),
-                  })
-              .toList()
-          : null,
-      latitudeMin: hasPolygon ? null : latitudeMin,
-      latitudeMax: hasPolygon ? null : latitudeMax,
-      longitudeMin: hasPolygon ? null : longitudeMin,
-      longitudeMax: hasPolygon ? null : longitudeMax,
+      latitudeMin: 0,
+      latitudeMax: 0,
+      longitudeMin: 0,
+      longitudeMax: 0,
     );
     if (!mounted) return;
     setState(() => _loading = false);
@@ -10062,10 +9932,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     if (isOk) {
       try {
         final payload = jsonDecode(res.body) as Map<String, dynamic>;
-        final polygon = payload["polygon_points"];
-        if (polygon is List && polygon.isNotEmpty) {
-          feedback = "$feedback\nBoundary created with ${polygon.length} points.";
-        }
         final id = payload["id"];
         if (id is num) {
           roomId = id.toInt();
@@ -10073,19 +9939,13 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       } catch (_) {}
     }
     _toast(feedback);
-    final gpsFencePayload = _spacePoints
-        .map((p) => {
-              "lat": (p["lat"] ?? p["latitude"] as num).toDouble(),
-              "lng": (p["lng"] ?? p["longitude"] as num).toDouble(),
-            })
-        .toList();
     if (res.statusCode >= 200 && res.statusCode < 300) {
       setState(() {
         _spacePoints.clear();
         _spaceNameController.clear();
-        _floorBaseline = null;
-        _lowerFloorPressure = null;
-        _halfFloorGap = null;
+        _ceilingHeightController.clear();
+        _bleRssiController.clear();
+        _bleRssiAuto = true;
         try {
           final payload = jsonDecode(res.body) as Map<String, dynamic>;
           _createdSpaces = [
@@ -10098,17 +9958,12 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       });
       await _persistCreatedSpaces();
       if (roomId != null) {
-        final bleThreshold =
-            int.tryParse(_bleRssiController.text.trim()) ?? -85;
         final calibrationPayload = {
           "room_id": roomId,
           "name": name,
-          "building_id": "main_block",
-          "floor_pressure_baseline": _floorBaseline,
-          "lower_floor_pressure": _lowerFloorPressure,
-          "half_floor_gap": _halfFloorGap,
-          "gps_fence": gpsFencePayload,
-          "ble_rssi_threshold": bleThreshold,
+          "ceiling_height_m": ceilingHeight,
+          "ble_rssi_threshold": rssi,
+          "ble_rssi_threshold_auto": _bleRssiAuto,
         };
         await _api.setRoomCalibration(
           roomId: roomId!,

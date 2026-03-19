@@ -4,12 +4,10 @@ import "dart:io";
 import "dart:math" as math;
 
 import "package:edusys_mobile/shared/services/api_service.dart";
-import "package:edusys_mobile/shared/utils/geo_utils.dart";
 import "package:flutter/services.dart";
 import "package:flutter_blue_plus/flutter_blue_plus.dart";
 import "package:flutter_background_service/flutter_background_service.dart";
 import "package:flutter_background_service_android/flutter_background_service_android.dart";
-import "package:geolocator/geolocator.dart";
 import "package:permission_handler/permission_handler.dart";
 import "package:sensors_plus/sensors_plus.dart";
 import "package:uuid/uuid.dart";
@@ -24,7 +22,7 @@ class SmartAttendanceService {
 
   final ApiService _api = ApiService();
   final Uuid _uuid = const Uuid();
-  final Map<int, Map<String, dynamic>> _calibrationCache = {};
+  final Map<int, Map<String, dynamic>> _roomConfigCache = {};
   final Map<String, _SessionState> _sessionStates = {};
   final List<int> _activeRoomIds = [];
 
@@ -118,8 +116,6 @@ class SmartAttendanceService {
 
   Future<void> _requestStudentPermissions() async {
     final permissions = <Permission>[
-      Permission.locationWhenInUse,
-      if (Platform.isAndroid) Permission.locationAlways,
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.bluetoothAdvertise,
@@ -248,11 +244,11 @@ class SmartAttendanceService {
         _sessionStates.remove(sessionToken);
       }
 
-      final calibration = await _getCalibration(roomId);
-      if (calibration == null) {
+      final roomConfig = await _getRoomConfig(roomId);
+      if (roomConfig == null) {
         return const SmartAttendanceResult(
           success: false,
-          message: "Room calibration missing",
+          message: "Room config missing",
         );
       }
 
@@ -261,31 +257,9 @@ class SmartAttendanceService {
         () => _SessionState(sessionToken: sessionToken),
       );
 
-      if (state.confirmedState == _PresenceState.outside) {
-        final onCampus = await _checkCampusGate(calibration);
-        if (!onCampus) {
-          return const SmartAttendanceResult(
-            success: false,
-            message: "Outside campus boundary",
-          );
-        }
-      }
-
-      final pressure = await _readBarometerOnce();
-      final floorSkipped = pressure == null;
-      if (!floorSkipped) {
-        final onFloor = _checkFloor(pressure!, calibration);
-        if (!onFloor) {
-          return const SmartAttendanceResult(
-            success: false,
-            message: "Wrong floor detected",
-          );
-        }
-      }
-
       final scanResult = await _scanBleWindow(sessionToken);
       final threshold =
-          (calibration["ble_rssi_threshold"] as num?)?.toDouble() ?? -85;
+          (roomConfig["ble_rssi_threshold"] as num?)?.toDouble() ?? -85;
       final inside =
           scanResult.avgRssi != null && scanResult.avgRssi! >= threshold;
       final newState = inside ? _PresenceState.inside : _PresenceState.outside;
@@ -317,8 +291,6 @@ class SmartAttendanceService {
           timestamp: DateTime.now().millisecondsSinceEpoch,
           scanIndex: state.scanIndex,
           rssi: scanResult.avgRssi,
-          pressure: pressure,
-          floorSkipped: floorSkipped,
         );
         return SmartAttendanceResult(
           success: true,
@@ -337,62 +309,18 @@ class SmartAttendanceService {
     }
   }
 
-  Future<Map<String, dynamic>?> _getCalibration(int roomId) async {
-    final cached = _calibrationCache[roomId];
+  Future<Map<String, dynamic>?> _getRoomConfig(int roomId) async {
+    final cached = _roomConfigCache[roomId];
     if (cached != null) return cached;
     final response = await _api.getRoomCalibration(roomId);
     if (response.statusCode >= 200 && response.statusCode < 300) {
       final decoded = jsonDecode(response.body);
       if (decoded is Map<String, dynamic>) {
-        _calibrationCache[roomId] = decoded;
+        _roomConfigCache[roomId] = decoded;
         return decoded;
       }
     }
     return null;
-  }
-
-  Future<bool> _checkCampusGate(Map<String, dynamic> calibration) async {
-    final fence = calibration["gps_fence"] as List<dynamic>?;
-    if (fence == null || fence.length < 3) {
-      return true;
-    }
-    final position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-      timeLimit: const Duration(seconds: 8),
-    );
-    final point = {
-      "lat": position.latitude,
-      "lng": position.longitude,
-    };
-    return GeoUtils.isPointInsidePolygon(point: point, polygon: fence);
-  }
-
-  bool _checkFloor(double pressure, Map<String, dynamic> calibration) {
-    final baseline =
-        (calibration["floor_pressure_baseline"] as num?)?.toDouble();
-    final halfGap = (calibration["half_floor_gap"] as num?)?.toDouble();
-    if (baseline == null || halfGap == null) {
-      return true;
-    }
-    final delta = (pressure - baseline).abs();
-    return delta <= halfGap;
-  }
-
-  Future<double?> _readBarometerOnce() async {
-    try {
-      final completer = Completer<double?>();
-      late StreamSubscription sub;
-      sub = barometerEventStream().listen((event) {
-        completer.complete(event.pressure);
-        sub.cancel();
-      });
-      return completer.future.timeout(const Duration(seconds: 3), onTimeout: () {
-        sub.cancel();
-        return null;
-      });
-    } catch (_) {
-      return null;
-    }
   }
 
   Future<_BleScanWindow> _scanBleWindow(String sessionToken) async {

@@ -4,12 +4,9 @@ from pydantic import BaseModel
 class RoomCalibrationIn(BaseModel):
     room_id: int
     name: str | None = None
-    building_id: str | None = None
-    floor_pressure_baseline: float | None = None
-    lower_floor_pressure: float | None = None
-    half_floor_gap: float | None = None
-    gps_fence: list[dict] | None = None
     ble_rssi_threshold: int | None = None
+    ceiling_height_m: float | None = None
+    ble_rssi_threshold_auto: bool | None = None
 
 
 class RoomCalibrationOut(RoomCalibrationIn):

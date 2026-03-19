@@ -420,7 +420,7 @@ class ApiService {
   Future<http.Response> getRoomCalibration(int roomId) async {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
-      path: "/attendance/rooms/$roomId/calibration",
+      path: "/attendance/rooms/$roomId",
       sender: (uri) => http.get(uri, headers: headers),
     );
   }
@@ -432,7 +432,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     final body = jsonEncode(payload);
     return _sendWithFallback(
-      path: "/attendance/rooms/$roomId/calibration",
+      path: "/attendance/rooms/$roomId",
       sender: (uri) => http.post(uri, headers: headers, body: body),
     );
   }
