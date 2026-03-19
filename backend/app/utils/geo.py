@@ -1,4 +1,5 @@
 import math
+import random
 from math import cos, radians
 from typing import Iterable
 
@@ -164,45 +165,6 @@ def _validate_simple_polygon(points: list[tuple[float, float]]) -> None:
                 raise ValueError("Polygon self-intersects. Adjust points to form a valid boundary.")
 
 
-def _order_points_clockwise(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    # GEO: Order points around centroid to form a simple polygon.
-    lat_sum = sum(lat for lat, _ in points)
-    lon_sum = sum(lon for _, lon in points)
-    centroid = (lat_sum / len(points), lon_sum / len(points))
-
-    def angle(p: tuple[float, float]) -> float:
-        lat, lon = p
-        return radians(0) if (lat, lon) == centroid else math.atan2(lat - centroid[0], lon - centroid[1])
-
-    return sorted(points, key=angle)
-
-
-def _cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
-    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-
-def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    # GEO: Fallback hull if user points still self-intersect after ordering.
-    pts = sorted({(lon, lat) for lat, lon in points})
-    if len(pts) < 3:
-        raise ValueError("At least 3 unique points are required for classroom geofence")
-
-    lower: list[tuple[float, float]] = []
-    for p in pts:
-        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-
-    upper: list[tuple[float, float]] = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-
-    hull = lower[:-1] + upper[:-1]
-    return [(lat, lon) for lon, lat in hull]
-
-
 def normalize_polygon_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
     # GEO: Normalize, validate, and close polygon for geofencing.
     if len(points) < 3:
@@ -214,28 +176,184 @@ def normalize_polygon_points(points: list[tuple[float, float]]) -> list[tuple[fl
     normalized = _clean_duplicates(normalized)
     if len(normalized) < 3:
         raise ValueError("At least 3 unique points are required for classroom geofence")
-    # Order points around centroid to avoid self-intersection.
-    ordered = _order_points_clockwise(normalized)
-    closed = _close_polygon(ordered)
+    closed = _close_polygon(normalized)
     if _polygon_area(closed) > 0:
         closed = list(reversed(closed))
-    try:
-        _validate_simple_polygon(closed)
-        return closed
-    except ValueError:
-        # Fallback to convex hull if still self-intersecting.
-        hull = _convex_hull(normalized)
-        closed = _close_polygon(hull)
-        if _polygon_area(closed) > 0:
-            closed = list(reversed(closed))
-        _validate_simple_polygon(closed)
-        return closed
+    _validate_simple_polygon(closed)
+    return closed
 
 
 def bounds_from_points(points: list[tuple[float, float]]) -> tuple[float, float, float, float]:
     lats = [lat for lat, _ in points]
     lons = [lon for _, lon in points]
     return min(lats), max(lats), min(lons), max(lons)
+
+
+def _centroid(points: list[tuple[float, float]]) -> tuple[float, float]:
+    lat_sum = sum(lat for lat, _ in points)
+    lon_sum = sum(lon for _, lon in points)
+    return lat_sum / len(points), lon_sum / len(points)
+
+
+def _project_to_meters(lat: float, lon: float, origin_lat: float, origin_lon: float) -> tuple[float, float]:
+    r = 6_371_000.0
+    lat0 = radians(origin_lat)
+    x = r * radians(lon - origin_lon) * cos(lat0)
+    y = r * radians(lat - origin_lat)
+    return x, y
+
+
+def _build_projected_polygon(points: list[tuple[float, float]]) -> tuple[tuple[float, float], list[tuple[float, float]]]:
+    origin_lat, origin_lon = _centroid(points)
+    projected = [_project_to_meters(lat, lon, origin_lat, origin_lon) for lat, lon in points]
+    return (origin_lat, origin_lon), projected
+
+
+def _build_projected_bbox(vertices: list[tuple[float, float]]) -> tuple[float, float, float, float]:
+    xs = [x for x, _ in vertices]
+    ys = [y for _, y in vertices]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def _winding_number(point: tuple[float, float], vertices: list[tuple[float, float]]) -> int:
+    wn = 0
+    px, py = point
+    n = len(vertices)
+    for i in range(n):
+        x1, y1 = vertices[i - 1]
+        x2, y2 = vertices[i]
+        if y1 <= py:
+            if y2 > py and ((x2 - x1) * (py - y1) - (px - x1) * (y2 - y1)) > 0:
+                wn += 1
+        else:
+            if y2 <= py and ((x2 - x1) * (py - y1) - (px - x1) * (y2 - y1)) < 0:
+                wn -= 1
+    return wn
+
+
+def _point_to_segment_distance(point: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    px, py = point
+    ax, ay = a
+    bx, by = b
+    dx = bx - ax
+    dy = by - ay
+    len_sq = dx * dx + dy * dy
+    if len_sq == 0:
+        return math.hypot(px - ax, py - ay)
+    t = ((px - ax) * dx + (py - ay) * dy) / len_sq
+    t = max(0.0, min(1.0, t))
+    proj_x = ax + t * dx
+    proj_y = ay + t * dy
+    return math.hypot(px - proj_x, py - proj_y)
+
+
+def _signed_distance_projected(point: tuple[float, float], vertices: list[tuple[float, float]]) -> float:
+    min_dist = float("inf")
+    n = len(vertices)
+    for i in range(n):
+        a = vertices[i - 1]
+        b = vertices[i]
+        dist = _point_to_segment_distance(point, a, b)
+        min_dist = min(min_dist, dist)
+    if min_dist <= 0.5:
+        return -0.0
+    inside = _winding_number(point, vertices) != 0
+    return -min_dist if inside else min_dist
+
+
+def polygon_area_m2(points: list[tuple[float, float]]) -> float:
+    _, vertices = _build_projected_polygon(points)
+    area = 0.0
+    for i in range(len(vertices)):
+        x1, y1 = vertices[i - 1]
+        x2, y2 = vertices[i]
+        area += (x1 * y2) - (x2 * y1)
+    return abs(area) * 0.5
+
+
+def compute_attendance_decision(
+    *,
+    latitude: float,
+    longitude: float,
+    points: list[tuple[float, float]],
+    effective_accuracy_m: float,
+    max_outside_cap_m: float | None = None,
+    monte_carlo_samples: int = 300,
+) -> dict:
+    polygon = normalize_polygon_points(points)
+    _, vertices = _build_projected_polygon(polygon)
+    bbox = _build_projected_bbox(vertices)
+    origin_lat, origin_lon = _centroid(polygon)
+    projected_point = _project_to_meters(latitude, longitude, origin_lat, origin_lon)
+
+    margin = min(8.0, max(2.0, effective_accuracy_m * 0.2))
+    if (
+        projected_point[0] < bbox[0] - margin
+        or projected_point[0] > bbox[1] + margin
+        or projected_point[1] < bbox[2] - margin
+        or projected_point[1] > bbox[3] + margin
+    ):
+        signed_dist = _signed_distance_projected(projected_point, vertices)
+        return {
+            "present": False,
+            "probability": 0.0,
+            "signed_distance_m": signed_dist,
+            "reason": "OUTSIDE_BBOX",
+        }
+
+    signed_dist = _signed_distance_projected(projected_point, vertices)
+    max_outside = max_outside_cap_m if max_outside_cap_m is not None else min(effective_accuracy_m * 1.5, 12.0)
+    if signed_dist > max_outside:
+        return {
+            "present": False,
+            "probability": 0.0,
+            "signed_distance_m": signed_dist,
+            "reason": "HARD_DISTANCE_EXCEEDED",
+        }
+
+    sigma = max(0.5, effective_accuracy_m / 2.0)
+    inside = 0
+    rnd = random.Random()
+    for _ in range(monte_carlo_samples):
+        u1 = max(1e-12, rnd.random())
+        u2 = rnd.random()
+        r = sigma * math.sqrt(-2 * math.log(u1))
+        theta = 2 * math.pi * u2
+        sample = (projected_point[0] + r * math.cos(theta), projected_point[1] + r * math.sin(theta))
+        if _winding_number(sample, vertices) != 0:
+            inside += 1
+    probability = inside / monte_carlo_samples
+
+    area_m2 = polygon_area_m2(polygon)
+    present_threshold = 0.60
+    absent_threshold = 0.20
+    if probability >= present_threshold:
+        return {
+            "present": True,
+            "probability": probability,
+            "signed_distance_m": signed_dist,
+            "reason": "PROB_PRESENT",
+        }
+    if probability < absent_threshold:
+        return {
+            "present": False,
+            "probability": probability,
+            "signed_distance_m": signed_dist,
+            "reason": "PROB_ABSENT",
+        }
+    if area_m2 < 100:
+        return {
+            "present": False,
+            "probability": probability,
+            "signed_distance_m": signed_dist,
+            "reason": "AMBIGUOUS_SMALL_FENCE",
+        }
+    return {
+        "present": probability >= 0.35,
+        "probability": probability,
+        "signed_distance_m": signed_dist,
+        "reason": "AMBIGUOUS",
+    }
 
 
 def is_inside_polygon(
@@ -247,26 +365,14 @@ def is_inside_polygon(
     tolerance_m: float = 0.0,
 ) -> bool:
     validate_coordinates(latitude, longitude)
-    polygon = normalize_polygon_points(points)
-
-    fixed_buffer_m = 5.0
-    dynamic_buffer_m = max(0.0, (gps_accuracy_m or 0.0) * 0.5)
-    dynamic_buffer_m = min(dynamic_buffer_m, 20.0)
-    total_buffer_m = fixed_buffer_m + dynamic_buffer_m + max(0.0, tolerance_m)
-
-    lat_pad = _meters_to_lat_degrees(total_buffer_m)
-    lon_pad = _meters_to_lon_degrees(total_buffer_m, at_latitude=latitude)
-    min_lat, max_lat, min_lon, max_lon = bounds_from_points(polygon)
-    if (
-        latitude < min_lat - lat_pad
-        or latitude > max_lat + lat_pad
-        or longitude < min_lon - lon_pad
-        or longitude > max_lon + lon_pad
-    ):
-        return False
-
-    signed_dist = _signed_distance_to_polygon_meters(latitude, longitude, polygon)
-    return signed_dist <= total_buffer_m
+    effective_accuracy = max(0.5, (gps_accuracy_m or 0.0) + max(0.0, tolerance_m))
+    decision = compute_attendance_decision(
+        latitude=latitude,
+        longitude=longitude,
+        points=points,
+        effective_accuracy_m=effective_accuracy,
+    )
+    return bool(decision.get("present"))
 
 
 def is_inside_rectangle(

@@ -13,6 +13,7 @@ class Classroom(Base):
     longitude_min = Column(Float, nullable=False)
     longitude_max = Column(Float, nullable=False)
     polygon_points = Column(JSON, nullable=True)
+    polygon_meta = Column(JSON, nullable=True)
     point1_lat = Column(Float, nullable=True)
     point1_lon = Column(Float, nullable=True)
     point2_lat = Column(Float, nullable=True)

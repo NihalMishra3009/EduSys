@@ -9539,11 +9539,18 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                         final lon = lonRaw is num
                             ? lonRaw.toDouble()
                             : (lonRaw is String ? double.tryParse(lonRaw) : null);
+                        final accRaw = entry.value["accuracy_m"] ??
+                            entry.value["accuracy"] ??
+                            entry.value["accuracyMeters"];
+                        final acc = accRaw is num
+                            ? accRaw.toDouble()
+                            : (accRaw is String ? double.tryParse(accRaw) : null);
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
                             lat != null && lon != null
                                 ? "Point $idx: ${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}"
+                                    "${acc != null ? " (±${acc.toStringAsFixed(1)}m)" : ""}"
                                 : "Point $idx: invalid (${entry.value})",
                           ),
                         );
@@ -9851,45 +9858,22 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     }
     setState(() => _recordingSpacePoint = true);
     try {
-      final last = await _location.getLastKnownPosition();
-      int? addedIndex;
-      if (!mounted) return;
-      if (last != null) {
-        setState(() {
-          _spacePoints.add(
-            {
-              "lat": last.latitude.toDouble(),
-              "lng": last.longitude.toDouble(),
-              "latitude": last.latitude.toDouble(),
-              "longitude": last.longitude.toDouble(),
-            },
-          );
-          addedIndex = _spacePoints.length - 1;
-        });
-      }
-
-      final pos = await _location.getCurrentPosition();
+      final fix = await _location.getVertexFix();
       if (!mounted) return;
       setState(() {
-        final index = addedIndex;
-        if (index != null && index >= 0 && index < _spacePoints.length) {
-          _spacePoints[index] = {
-            "lat": pos.latitude.toDouble(),
-            "lng": pos.longitude.toDouble(),
-            "latitude": pos.latitude.toDouble(),
-            "longitude": pos.longitude.toDouble(),
-          };
-        } else {
-          _spacePoints.add(
-            {
-              "lat": pos.latitude.toDouble(),
-              "lng": pos.longitude.toDouble(),
-              "latitude": pos.latitude.toDouble(),
-              "longitude": pos.longitude.toDouble(),
-            },
-          );
-        }
+        _spacePoints.add(
+          {
+            "lat": fix.latitude.toDouble(),
+            "lng": fix.longitude.toDouble(),
+            "latitude": fix.latitude.toDouble(),
+            "longitude": fix.longitude.toDouble(),
+            "accuracy_m": fix.accuracy,
+          },
+        );
       });
+      if (fix.accuracy > 20) {
+        _toast("Warning: GPS accuracy ${fix.accuracy.toStringAsFixed(1)}m. Consider re-recording.");
+      }
     } on LocationServiceException {
       if (!mounted) return;
       Navigator.of(context).push(
@@ -9942,6 +9926,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
               .map((p) => {
                     "lat": (p["lat"] ?? p["latitude"] as num).toDouble(),
                     "lng": (p["lng"] ?? p["longitude"] as num).toDouble(),
+                    if (p["accuracy_m"] is num) "accuracy_m": (p["accuracy_m"] as num).toDouble(),
                   })
               .toList()
           : null,

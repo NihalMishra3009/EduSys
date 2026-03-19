@@ -5,6 +5,7 @@ class GeoPoint(BaseModel):
     # GEO: Accept both {lat,lng} and {latitude,longitude} inputs.
     latitude: float = Field(validation_alias=AliasChoices("latitude", "lat"))
     longitude: float = Field(validation_alias=AliasChoices("longitude", "lng"))
+    accuracy_m: float | None = Field(default=None, validation_alias=AliasChoices("accuracy_m", "accuracyMeters"))
 
     model_config = {
         "populate_by_name": True,
@@ -37,6 +38,7 @@ class ClassroomOut(BaseModel):
     longitude_min: float
     longitude_max: float
     polygon_points: list[GeoPoint] | None = None
+    polygon_meta: dict | None = None
     point1_lat: float | None = None
     point1_lon: float | None = None
     point2_lat: float | None = None

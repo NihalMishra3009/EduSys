@@ -1,9 +1,30 @@
 import "dart:math" as math;
 
+class GeoDecision {
+  GeoDecision({
+    required this.present,
+    required this.probability,
+    required this.signedDistanceM,
+    required this.reason,
+    required this.areaM2,
+  });
+
+  final bool present;
+  final double probability;
+  final double signedDistanceM;
+  final String reason;
+  final double areaM2;
+}
+
 class GeoUtils {
   static const double _metersPerDegree = 111320.0;
   static const double _earthRadiusM = 6371000.0;
   static const double _edgeToleranceM = 0.5;
+  static const double _presentThreshold = 0.60;
+  static const double _absentThreshold = 0.20;
+  static const double _maxOutsideCapM = 12.0;
+  static const int _monteCarloSamples = 300;
+  static const double _smallFenceAreaM2 = 100.0;
 
   static void _validate(double latitude, double longitude) {
     if (latitude < -90 || latitude > 90) {
@@ -126,103 +147,215 @@ class GeoUtils {
     return normalizePolygonPoints(points);
   }
 
-  static bool _pointInPolygon(double latitude, double longitude, List<List<double>> points) {
-    var inside = false;
-    var j = points.length - 1;
-    for (var i = 0; i < points.length; i++) {
-      final latI = points[i][0];
-      final lonI = points[i][1];
-      final latJ = points[j][0];
-      final lonJ = points[j][1];
-      final intersects = ((lonI > longitude) != (lonJ > longitude)) &&
-          (latitude <
-              (latJ - latI) * (longitude - lonI) / ((lonJ - lonI) + 1e-12) + latI);
-      if (intersects) {
-        inside = !inside;
-      }
-      j = i;
-    }
-    return inside;
+  static List<double> _centroid(List<List<double>> points) {
+    final latSum = points.fold<double>(0.0, (acc, p) => acc + p[0]);
+    final lonSum = points.fold<double>(0.0, (acc, p) => acc + p[1]);
+    return [latSum / points.length, lonSum / points.length];
   }
 
-  static double _signedDistanceToPolygonMeters(
-    double latitude,
-    double longitude,
-    List<List<double>> polygon,
+  static List<double> _projectToMeters(
+    double lat,
+    double lon,
+    double originLat,
+    double originLon,
   ) {
-    double minDist = double.infinity;
-    for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      final lat1 = polygon[j][0];
-      final lon1 = polygon[j][1];
-      final lat2 = polygon[i][0];
-      final lon2 = polygon[i][1];
-      final dist = _distanceToSegmentMeters(latitude, longitude, lat1, lon1, lat2, lon2);
-      if (dist < minDist) {
-        minDist = dist;
+    final lat0 = _degToRad(originLat);
+    final x = _earthRadiusM * _degToRad(lon - originLon) * math.cos(lat0);
+    final y = _earthRadiusM * _degToRad(lat - originLat);
+    return [x, y];
+  }
+
+  static List<List<double>> _projectPolygon(List<List<double>> points, List<double> origin) {
+    return points.map((p) => _projectToMeters(p[0], p[1], origin[0], origin[1])).toList();
+  }
+
+  static List<double> _buildProjectedBbox(List<List<double>> vertices) {
+    var minX = vertices.first[0];
+    var maxX = vertices.first[0];
+    var minY = vertices.first[1];
+    var maxY = vertices.first[1];
+    for (final v in vertices) {
+      minX = math.min(minX, v[0]);
+      maxX = math.max(maxX, v[0]);
+      minY = math.min(minY, v[1]);
+      maxY = math.max(maxY, v[1]);
+    }
+    return [minX, maxX, minY, maxY];
+  }
+
+  static double _polygonAreaM2Projected(List<List<double>> vertices) {
+    double area = 0.0;
+    for (var i = 0; i < vertices.length; i++) {
+      final prev = vertices[(i - 1 + vertices.length) % vertices.length];
+      final curr = vertices[i];
+      area += (prev[0] * curr[1]) - (curr[0] * prev[1]);
+    }
+    return area.abs() * 0.5;
+  }
+
+  static int _windingNumber(List<double> point, List<List<double>> vertices) {
+    var wn = 0;
+    final px = point[0];
+    final py = point[1];
+    for (var i = 0; i < vertices.length; i++) {
+      final v1 = vertices[(i - 1 + vertices.length) % vertices.length];
+      final v2 = vertices[i];
+      if (v1[1] <= py) {
+        if (v2[1] > py && ((v2[0] - v1[0]) * (py - v1[1]) - (px - v1[0]) * (v2[1] - v1[1])) > 0) {
+          wn += 1;
+        }
+      } else {
+        if (v2[1] <= py && ((v2[0] - v1[0]) * (py - v1[1]) - (px - v1[0]) * (v2[1] - v1[1])) < 0) {
+          wn -= 1;
+        }
       }
+    }
+    return wn;
+  }
+
+  static double _pointToSegmentDistance(List<double> p, List<double> a, List<double> b) {
+    final dx = b[0] - a[0];
+    final dy = b[1] - a[1];
+    final lenSq = dx * dx + dy * dy;
+    if (lenSq == 0) {
+      return math.hypot(p[0] - a[0], p[1] - a[1]);
+    }
+    var t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq;
+    t = t.clamp(0.0, 1.0);
+    final projX = a[0] + t * dx;
+    final projY = a[1] + t * dy;
+    return math.hypot(p[0] - projX, p[1] - projY);
+  }
+
+  static double _signedDistanceProjected(List<double> point, List<List<double>> vertices) {
+    double minDist = double.infinity;
+    for (var i = 0; i < vertices.length; i++) {
+      final a = vertices[(i - 1 + vertices.length) % vertices.length];
+      final b = vertices[i];
+      final dist = _pointToSegmentDistance(point, a, b);
+      minDist = math.min(minDist, dist);
     }
     if (minDist <= _edgeToleranceM) {
       return -0.0;
     }
-    return _pointInPolygon(latitude, longitude, polygon) ? -minDist : minDist;
+    final inside = _windingNumber(point, vertices) != 0;
+    return inside ? -minDist : minDist;
   }
 
-  static bool isInsidePolygon({
-    required double latitude,
-    required double longitude,
-    required List<List<double>> points,
-    double? gpsAccuracyM,
-    double toleranceM = 0.0,
-  }) {
-    _validate(latitude, longitude);
-    final polygon = normalizePolygonPoints(points);
-
-    const fixedBufferM = 5.0;
-    final dynamicBufferM = ((gpsAccuracyM ?? 0.0) * 0.5).clamp(0.0, 20.0);
-    final totalBufferM = fixedBufferM + dynamicBufferM + (toleranceM < 0 ? 0.0 : toleranceM);
-
-    final latPad = _metersToLatDegrees(totalBufferM);
-    final lonPad = _metersToLonDegrees(totalBufferM, latitude);
-    var minLat = polygon.first[0];
-    var maxLat = polygon.first[0];
-    var minLon = polygon.first[1];
-    var maxLon = polygon.first[1];
-    for (final p in polygon) {
-      minLat = math.min(minLat, p[0]);
-      maxLat = math.max(maxLat, p[0]);
-      minLon = math.min(minLon, p[1]);
-      maxLon = math.max(maxLon, p[1]);
+  static double _computeProbability(List<double> point, List<List<double>> vertices, double effectiveAccuracyM) {
+    final sigma = math.max(0.5, effectiveAccuracyM / 2.0);
+    var inside = 0;
+    final rnd = math.Random();
+    for (var i = 0; i < _monteCarloSamples; i++) {
+      final u1 = math.max(1e-12, rnd.nextDouble());
+      final u2 = rnd.nextDouble();
+      final r = sigma * math.sqrt(-2 * math.log(u1));
+      final theta = 2 * math.pi * u2;
+      final sample = [point[0] + r * math.cos(theta), point[1] + r * math.sin(theta)];
+      if (_windingNumber(sample, vertices) != 0) {
+        inside += 1;
+      }
     }
-    if (latitude < minLat - latPad ||
-        latitude > maxLat + latPad ||
-        longitude < minLon - lonPad ||
-        longitude > maxLon + lonPad) {
-      return false;
-    }
-
-    final signedDist = _signedDistanceToPolygonMeters(latitude, longitude, polygon);
-    return signedDist <= totalBufferM;
+    return inside / _monteCarloSamples;
   }
 
-  // GEO: Reusable point-in-polygon check for app-level geofencing.
-  static bool checkPointInsidePolygon({
+  static GeoDecision evaluatePointInPolygon({
     required Map<String, double> point,
     required List<dynamic> polygon,
-    double? gpsAccuracyM,
-    double toleranceM = 0.0,
+    required double effectiveAccuracyM,
   }) {
     final lat = point["lat"];
     final lng = point["lng"];
     if (lat == null || lng == null) {
-      return false;
+      return GeoDecision(
+        present: false,
+        probability: 0.0,
+        signedDistanceM: 0.0,
+        reason: "INVALID_POINT",
+        areaM2: 0.0,
+      );
     }
+    _validate(lat, lng);
     final normalized = normalizePolygonFromMaps(polygon);
-    return isInsidePolygon(
-      latitude: lat,
-      longitude: lng,
-      points: normalized,
-      gpsAccuracyM: gpsAccuracyM,
-      toleranceM: toleranceM,
+    final origin = _centroid(normalized);
+    final vertices = _projectPolygon(normalized, origin);
+    final projectedPoint = _projectToMeters(lat, lng, origin[0], origin[1]);
+    final bbox = _buildProjectedBbox(vertices);
+    final margin = math.min(8.0, math.max(2.0, effectiveAccuracyM * 0.2));
+    if (projectedPoint[0] < bbox[0] - margin ||
+        projectedPoint[0] > bbox[1] + margin ||
+        projectedPoint[1] < bbox[2] - margin ||
+        projectedPoint[1] > bbox[3] + margin) {
+      final signedDist = _signedDistanceProjected(projectedPoint, vertices);
+      return GeoDecision(
+        present: false,
+        probability: 0.0,
+        signedDistanceM: signedDist,
+        reason: "OUTSIDE_BBOX",
+        areaM2: _polygonAreaM2Projected(vertices),
+      );
+    }
+
+    final signedDist = _signedDistanceProjected(projectedPoint, vertices);
+    final maxOutside = math.min(effectiveAccuracyM * 1.5, _maxOutsideCapM);
+    if (signedDist > maxOutside) {
+      return GeoDecision(
+        present: false,
+        probability: 0.0,
+        signedDistanceM: signedDist,
+        reason: "HARD_DISTANCE_EXCEEDED",
+        areaM2: _polygonAreaM2Projected(vertices),
+      );
+    }
+
+    final probability = _computeProbability(projectedPoint, vertices, effectiveAccuracyM);
+    final areaM2 = _polygonAreaM2Projected(vertices);
+    if (probability >= _presentThreshold) {
+      return GeoDecision(
+        present: true,
+        probability: probability,
+        signedDistanceM: signedDist,
+        reason: "PROB_PRESENT",
+        areaM2: areaM2,
+      );
+    }
+    if (probability < _absentThreshold) {
+      return GeoDecision(
+        present: false,
+        probability: probability,
+        signedDistanceM: signedDist,
+        reason: "PROB_ABSENT",
+        areaM2: areaM2,
+      );
+    }
+    if (areaM2 < _smallFenceAreaM2) {
+      return GeoDecision(
+        present: false,
+        probability: probability,
+        signedDistanceM: signedDist,
+        reason: "AMBIGUOUS_SMALL_FENCE",
+        areaM2: areaM2,
+      );
+    }
+    return GeoDecision(
+      present: probability >= 0.35,
+      probability: probability,
+      signedDistanceM: signedDist,
+      reason: "AMBIGUOUS",
+      areaM2: areaM2,
+    );
+  }
+
+  // GEO: Reusable point-in-polygon check for app-level geofencing.
+  static GeoDecision checkPointInsidePolygon({
+    required Map<String, double> point,
+    required List<dynamic> polygon,
+    required double effectiveAccuracyM,
+  }) {
+    return evaluatePointInPolygon(
+      point: point,
+      polygon: polygon,
+      effectiveAccuracyM: math.max(effectiveAccuracyM, 0.5),
     );
   }
 

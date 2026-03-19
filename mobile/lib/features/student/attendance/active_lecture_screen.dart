@@ -77,18 +77,21 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     return null;
   }
 
-  bool _isInsideClassroom(Map<String, dynamic> classroom, Position position) {
-    const toleranceM = 15.0;
+  GeoDecision _checkClassroom(
+    Map<String, dynamic> classroom,
+    double lat,
+    double lng,
+    double effectiveAccuracyM,
+  ) {
     final polygon = classroom["polygon_points"] as List<dynamic>?;
     if (polygon != null && polygon.isNotEmpty) {
       return GeoUtils.checkPointInsidePolygon(
         point: {
-          "lat": position.latitude,
-          "lng": position.longitude,
+          "lat": lat,
+          "lng": lng,
         },
         polygon: polygon,
-        gpsAccuracyM: position.accuracy,
-        toleranceM: toleranceM,
+        effectiveAccuracyM: effectiveAccuracyM,
       );
     }
 
@@ -97,17 +100,30 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     final lonMin = (classroom["longitude_min"] as num?)?.toDouble();
     final lonMax = (classroom["longitude_max"] as num?)?.toDouble();
     if (latMin == null || latMax == null || lonMin == null || lonMax == null) {
-      return false;
+      return GeoDecision(
+        present: false,
+        probability: 0.0,
+        signedDistanceM: 0.0,
+        reason: "NO_BOUNDARY",
+        areaM2: 0.0,
+      );
     }
-    return GeoUtils.isInsideRectangle(
-      latitude: position.latitude,
-      longitude: position.longitude,
+    final inside = GeoUtils.isInsideRectangle(
+      latitude: lat,
+      longitude: lng,
       latitudeMin: latMin,
       latitudeMax: latMax,
       longitudeMin: lonMin,
       longitudeMax: lonMax,
-      gpsAccuracyM: position.accuracy,
-      toleranceM: toleranceM,
+      gpsAccuracyM: effectiveAccuracyM,
+      toleranceM: 0.0,
+    );
+    return GeoDecision(
+      present: inside,
+      probability: inside ? 1.0 : 0.0,
+      signedDistanceM: 0.0,
+      reason: "RECTANGLE",
+      areaM2: 0.0,
     );
   }
 
@@ -116,49 +132,38 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       setState(() => _loading = true);
     }
     try {
-      // GEO: take a few samples and use the best accuracy reading.
-      const samples = 3;
-      final readings = <Position>[];
-      for (var i = 0; i < samples; i++) {
-        final sample = await _locationService.getFreshPosition();
-        if (sample.isMocked) {
-          if (!mounted) return;
-          if (!silent) {
-            setState(() {
-              _success = false;
-              _message = "Mock location detected.";
-            });
-          }
-          return;
-        }
-        readings.add(sample);
-        if (i < samples - 1) {
-          await Future.delayed(const Duration(milliseconds: 1500));
-        }
-      }
-      if (readings.isEmpty) {
+      // GEO: multi-sample GPS fix (5 samples, 400ms apart).
+      final sampled = await _locationService.getBestPosition(
+        onSample: (index, sample) {
+          if (!mounted || silent) return;
+          setState(() {
+            _success = false;
+            _message =
+                "Getting GPS fix... (sample $index/5, ±${sample.accuracy.toStringAsFixed(1)}m)";
+          });
+        },
+      );
+      final accuracyWarning = sampled.bestAccuracy > 40
+          ? "GPS too weak (${sampled.bestAccuracy.toStringAsFixed(1)}m). Move near a window."
+          : null;
+      if (sampled.bestAccuracy > 40) {
         if (!mounted) return;
         if (!silent) {
           setState(() {
             _success = false;
-            _message = "Unable to read GPS. Please retry.";
+            _message = "GPS signal too weak. Please move closer to open sky and retry.";
           });
         }
         return;
       }
-      readings.sort((a, b) => a.accuracy.compareTo(b.accuracy));
-      final current = readings.first;
-      final accuracyWarning = current.accuracy > 50
-          ? "GPS accuracy low (${current.accuracy.toStringAsFixed(1)}m). Move to open sky."
-          : null;
       if (_lastCheckpointPosition != null && _lastCheckpointAt != null) {
         final dt = DateTime.now().difference(_lastCheckpointAt!).inSeconds;
         if (dt > 0) {
           final distance = Geolocator.distanceBetween(
             _lastCheckpointPosition!.latitude,
             _lastCheckpointPosition!.longitude,
-            current.latitude,
-            current.longitude,
+            sampled.latitude,
+            sampled.longitude,
           );
           final speed = distance / dt;
           if (speed > 30.0) {
@@ -184,39 +189,60 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      final inside = _isInsideClassroom(classroom, current);
-      if (!inside) {
+      final decision = _checkClassroom(
+        classroom,
+        sampled.latitude,
+        sampled.longitude,
+        sampled.effectiveAccuracy,
+      );
+      if (!decision.present) {
         if (!mounted) return;
         if (!silent) {
-          final lat = current.latitude.toStringAsFixed(6);
-          final lon = current.longitude.toStringAsFixed(6);
-          final acc = current.accuracy.toStringAsFixed(1);
+          final lat = sampled.latitude.toStringAsFixed(6);
+          final lon = sampled.longitude.toStringAsFixed(6);
+          final acc = sampled.bestAccuracy.toStringAsFixed(1);
+          final dist = decision.signedDistanceM.abs().toStringAsFixed(1);
           setState(() {
             _success = false;
             _message = [
               "Outside classroom geofence",
               "Lat: $lat, Lng: $lon",
               "Accuracy: ${acc}m",
+              "Distance from boundary: ${dist}m",
+              "Confidence: ${(decision.probability * 100).round()}%",
               if (accuracyWarning != null) accuracyWarning,
             ].join("\n");
           });
         }
         return;
       }
-      _lastCheckpointPosition = current;
+      _lastCheckpointPosition = Position(
+        latitude: sampled.latitude,
+        longitude: sampled.longitude,
+        timestamp: DateTime.now(),
+        accuracy: sampled.bestAccuracy,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
+      );
       _lastCheckpointAt = DateTime.now();
       final response = await _api.submitCheckpoint(
         lectureId: lectureId,
-        latitude: current.latitude,
-        longitude: current.longitude,
-        gpsAccuracyM: current.accuracy,
+        latitude: sampled.latitude,
+        longitude: sampled.longitude,
+        gpsAccuracyM: sampled.bestAccuracy,
+        effectiveAccuracyM: sampled.effectiveAccuracy,
+        rawSamples: sampled.rawSamples,
       );
 
       if (!mounted) return;
       if (!silent) {
-        final lat = current.latitude.toStringAsFixed(6);
-        final lon = current.longitude.toStringAsFixed(6);
-        final acc = current.accuracy.toStringAsFixed(1);
+        final lat = sampled.latitude.toStringAsFixed(6);
+        final lon = sampled.longitude.toStringAsFixed(6);
+        final acc = sampled.bestAccuracy.toStringAsFixed(1);
         setState(() {
           _success = response.statusCode >= 200 && response.statusCode < 300;
           _message = _extractMessage(
@@ -226,6 +252,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                     "Checkpoint submitted",
                     "Lat: $lat, Lng: $lon",
                     "Accuracy: ${acc}m",
+                    "Confidence: ${(decision.probability * 100).round()}%",
                     if (accuracyWarning != null) accuracyWarning,
                   ].join("\n")
                 : "Checkpoint failed",

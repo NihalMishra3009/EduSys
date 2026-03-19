@@ -1,5 +1,5 @@
 ﻿from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, AliasChoices
 from app.models.attendance_record import AttendanceStatus
 
 
@@ -8,6 +8,8 @@ class CheckpointRequest(BaseModel):
     latitude: float
     longitude: float
     gps_accuracy_m: float | None = None
+    effective_accuracy_m: float | None = None
+    raw_samples: list[dict] | None = None
 
 
 class CheckpointOut(BaseModel):

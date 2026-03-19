@@ -399,6 +399,8 @@ class ApiService {
     required double latitude,
     required double longitude,
     double? gpsAccuracyM,
+    double? effectiveAccuracyM,
+    List<Map<String, double>>? rawSamples,
   }) async {
     final headers = await _headers(auth: true);
     final body = jsonEncode({
@@ -406,6 +408,8 @@ class ApiService {
       "latitude": latitude,
       "longitude": longitude,
       "gps_accuracy_m": gpsAccuracyM,
+      "effective_accuracy_m": effectiveAccuracyM,
+      "raw_samples": rawSamples,
     });
     return _sendWithFallback(
       path: "/attendance/checkpoint",
