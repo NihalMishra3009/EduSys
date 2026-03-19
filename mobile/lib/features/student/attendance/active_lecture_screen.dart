@@ -116,14 +116,47 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       setState(() => _loading = true);
     }
     try {
-      // GEO: single-point check on button click.
-      final position = await _locationService.getFreshPosition();
-      if (position.isMocked) {
+      // GEO: single-point check on button click, wait for good accuracy.
+      Position? position;
+      const maxAccuracyM = 10.0;
+      const attempts = 3;
+      for (var attempt = 0; attempt < attempts; attempt++) {
+        position = await _locationService.getFreshPosition();
+        if (position.isMocked) {
+          if (!mounted) return;
+          if (!silent) {
+            setState(() {
+              _success = false;
+              _message = "Mock location detected.";
+            });
+          }
+          return;
+        }
+        if (position.accuracy <= maxAccuracyM) {
+          break;
+        }
+        if (attempt < attempts - 1) {
+          await Future.delayed(const Duration(seconds: 1));
+        }
+      }
+      if (position == null) {
         if (!mounted) return;
         if (!silent) {
           setState(() {
             _success = false;
-            _message = "Mock location detected.";
+            _message = "Unable to read GPS. Please retry.";
+          });
+        }
+        return;
+      }
+      final current = position;
+      if (current.accuracy > maxAccuracyM) {
+        if (!mounted) return;
+        if (!silent) {
+          setState(() {
+            _success = false;
+            _message =
+                "Waiting for better GPS accuracy.\nAccuracy: ${current.accuracy.toStringAsFixed(1)}m";
           });
         }
         return;
@@ -134,8 +167,8 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
           final distance = Geolocator.distanceBetween(
             _lastCheckpointPosition!.latitude,
             _lastCheckpointPosition!.longitude,
-            position.latitude,
-            position.longitude,
+            current.latitude,
+            current.longitude,
           );
           final speed = distance / dt;
           if (speed > 30.0) {
@@ -161,13 +194,13 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      final inside = _isInsideClassroom(classroom, position);
+      final inside = _isInsideClassroom(classroom, current);
       if (!inside) {
         if (!mounted) return;
         if (!silent) {
-          final lat = position.latitude.toStringAsFixed(6);
-          final lon = position.longitude.toStringAsFixed(6);
-          final acc = position.accuracy.toStringAsFixed(1);
+          final lat = current.latitude.toStringAsFixed(6);
+          final lon = current.longitude.toStringAsFixed(6);
+          final acc = current.accuracy.toStringAsFixed(1);
           setState(() {
             _success = false;
             _message = "Outside classroom geofence\nLat: $lat, Lng: $lon\nAccuracy: ${acc}m";
@@ -175,20 +208,20 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      _lastCheckpointPosition = position;
+      _lastCheckpointPosition = current;
       _lastCheckpointAt = DateTime.now();
       final response = await _api.submitCheckpoint(
         lectureId: lectureId,
-        latitude: position.latitude,
-        longitude: position.longitude,
-        gpsAccuracyM: position.accuracy,
+        latitude: current.latitude,
+        longitude: current.longitude,
+        gpsAccuracyM: current.accuracy,
       );
 
       if (!mounted) return;
       if (!silent) {
-        final lat = position.latitude.toStringAsFixed(6);
-        final lon = position.longitude.toStringAsFixed(6);
-        final acc = position.accuracy.toStringAsFixed(1);
+        final lat = current.latitude.toStringAsFixed(6);
+        final lon = current.longitude.toStringAsFixed(6);
+        final acc = current.accuracy.toStringAsFixed(1);
         setState(() {
           _success = response.statusCode >= 200 && response.statusCode < 300;
           _message = _extractMessage(
