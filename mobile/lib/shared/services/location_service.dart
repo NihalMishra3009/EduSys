@@ -37,4 +37,35 @@ class LocationService {
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
     );
   }
+
+  Future<Position> getFreshPosition({Duration maxAge = const Duration(seconds: 8)}) async {
+    await _ensurePermission();
+    final now = DateTime.now();
+    Position? position;
+    try {
+      position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+    } catch (_) {
+      position = null;
+    }
+
+    final timestamp = position?.timestamp;
+    if (position != null && timestamp != null) {
+      final age = now.difference(timestamp).abs();
+      if (age <= maxAge) {
+        return position;
+      }
+    } else if (position != null) {
+      return position;
+    }
+
+    final stream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+      ),
+    );
+    return stream.first.timeout(const Duration(seconds: 12));
+  }
 }

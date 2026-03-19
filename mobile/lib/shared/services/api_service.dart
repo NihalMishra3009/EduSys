@@ -867,6 +867,14 @@ class ApiService {
     );
   }
 
+  Future<http.Response> getClassroom(int classroomId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/classroom/$classroomId",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
   Future<http.Response> studentsList() async {
     final headers = await _headers(auth: true);
     return _sendWithFallback(

@@ -71,3 +71,22 @@ def create_classroom(
     db.refresh(classroom)
     return classroom
 
+
+@router.get("/{classroom_id}", response_model=ClassroomOut)
+def get_classroom(
+    classroom_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in (UserRole.ADMIN, UserRole.PROFESSOR, UserRole.STUDENT):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    classroom = db.get(Classroom, classroom_id)
+    if not classroom:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+
+    if current_user.role == UserRole.PROFESSOR and classroom.professor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only owning professor can view this classroom")
+
+    return classroom
+

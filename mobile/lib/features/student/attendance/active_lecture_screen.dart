@@ -3,7 +3,9 @@ import "dart:async";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/location_service.dart";
+import "package:edusys_mobile/shared/utils/geo_utils.dart";
 import "package:flutter/material.dart";
+import "package:geolocator/geolocator.dart";
 
 class ActiveLectureScreen extends StatefulWidget {
   const ActiveLectureScreen({super.key});
@@ -22,6 +24,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
   bool _success = false;
   final Map<int, Timer> _autoTimers = {};
   final Set<int> _autoEnabled = {};
+  final Map<int, Map<String, dynamic>> _classroomCache = {};
 
   static const Duration _checkpointInterval = Duration(minutes: 15);
 
@@ -58,12 +61,98 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     });
   }
 
-  Future<void> _sendCheckpoint(int lectureId, {bool silent = false}) async {
+  Future<Map<String, dynamic>?> _getClassroom(int classroomId) async {
+    final cached = _classroomCache[classroomId];
+    if (cached != null) {
+      return cached;
+    }
+    final response = await _api.getClassroom(classroomId);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      _classroomCache[classroomId] = decoded;
+      return decoded;
+    }
+    return null;
+  }
+
+  bool _isInsideClassroom(Map<String, dynamic> classroom, Position position) {
+    const toleranceM = 8.0;
+    final polygon = classroom["polygon_points"] as List<dynamic>?;
+    if (polygon != null && polygon.isNotEmpty) {
+      final points = <List<double>>[];
+      for (final point in polygon) {
+        if (point is Map<String, dynamic>) {
+          final lat = point["latitude"] as num?;
+          final lon = point["longitude"] as num?;
+          if (lat != null && lon != null) {
+            points.add([lat.toDouble(), lon.toDouble()]);
+          }
+        } else if (point is List && point.length >= 2) {
+          final lat = point[0] as num?;
+          final lon = point[1] as num?;
+          if (lat != null && lon != null) {
+            points.add([lat.toDouble(), lon.toDouble()]);
+          }
+        }
+      }
+      if (points.length >= 3) {
+        return GeoUtils.isInsidePolygon(
+          latitude: position.latitude,
+          longitude: position.longitude,
+          points: points,
+          gpsAccuracyM: position.accuracy,
+          toleranceM: toleranceM,
+        );
+      }
+    }
+
+    final latMin = (classroom["latitude_min"] as num?)?.toDouble();
+    final latMax = (classroom["latitude_max"] as num?)?.toDouble();
+    final lonMin = (classroom["longitude_min"] as num?)?.toDouble();
+    final lonMax = (classroom["longitude_max"] as num?)?.toDouble();
+    if (latMin == null || latMax == null || lonMin == null || lonMax == null) {
+      return false;
+    }
+    return GeoUtils.isInsideRectangle(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      latitudeMin: latMin,
+      latitudeMax: latMax,
+      longitudeMin: lonMin,
+      longitudeMax: lonMax,
+      gpsAccuracyM: position.accuracy,
+      toleranceM: toleranceM,
+    );
+  }
+
+  Future<void> _sendCheckpoint(int lectureId, int classroomId, {bool silent = false}) async {
     if (!silent) {
       setState(() => _loading = true);
     }
     try {
-      final position = await _locationService.getCurrentPosition();
+      final position = await _locationService.getFreshPosition();
+      final classroom = await _getClassroom(classroomId);
+      if (classroom == null) {
+        if (!mounted) return;
+        if (!silent) {
+          setState(() {
+            _success = false;
+            _message = "Unable to load classroom boundary.";
+          });
+        }
+        return;
+      }
+      final inside = _isInsideClassroom(classroom, position);
+      if (!inside) {
+        if (!mounted) return;
+        if (!silent) {
+          setState(() {
+            _success = false;
+            _message = "Outside classroom geofence";
+          });
+        }
+        return;
+      }
       final response = await _api.submitCheckpoint(
         lectureId: lectureId,
         latitude: position.latitude,
@@ -96,7 +185,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     }
   }
 
-  void _toggleAutoCheckpoint(int lectureId) {
+  void _toggleAutoCheckpoint(int lectureId, int classroomId) {
     final timer = _autoTimers[lectureId];
     if (timer != null) {
       timer.cancel();
@@ -104,10 +193,10 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       setState(() => _autoEnabled.remove(lectureId));
       return;
     }
-    _sendCheckpoint(lectureId);
+    _sendCheckpoint(lectureId, classroomId);
     _autoTimers[lectureId] = Timer.periodic(
       _checkpointInterval,
-      (_) => _sendCheckpoint(lectureId, silent: true),
+      (_) => _sendCheckpoint(lectureId, classroomId, silent: true),
     );
     setState(() => _autoEnabled.add(lectureId));
   }
@@ -153,6 +242,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                 else
                   ..._lectures.map((lecture) {
                     final id = (lecture["id"] as num).toInt();
+                    final classroomId = (lecture["classroom_id"] as num).toInt();
                     return Card(
                       margin: const EdgeInsets.only(bottom: 12),
                       child: Padding(
@@ -190,12 +280,12 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                               children: [
                                 FilledButton(
                                   onPressed:
-                                      _loading ? null : () => _sendCheckpoint(id),
+                                      _loading ? null : () => _sendCheckpoint(id, classroomId),
                                   child: const Text("Checkpoint"),
                                 ),
                                 const SizedBox(height: 8),
                                 OutlinedButton(
-                                  onPressed: () => _toggleAutoCheckpoint(id),
+                                  onPressed: () => _toggleAutoCheckpoint(id, classroomId),
                                   child: Text(
                                     _autoEnabled.contains(id)
                                         ? "Stop Auto"
