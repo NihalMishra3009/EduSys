@@ -559,7 +559,7 @@ class ApiService {
 
   Future<http.Response> createClassroom({
     required String name,
-    List<Map<String, double>>? points,
+    List<Map<String, dynamic>>? points,
     double? latitudeMin,
     double? latitudeMax,
     double? longitudeMin,
