@@ -58,7 +58,6 @@ class SmartAttendanceService {
         _monitoring = false;
         return;
       }
-      await _ensureBackgroundService();
       _startForegroundMotionListener();
     } catch (_) {
       _monitoring = false;
@@ -279,10 +278,15 @@ class SmartAttendanceService {
       );
 
       final scanResult = await _scanBleWindow(sessionToken);
+      if (scanResult.avgRssi == null) {
+        return const SmartAttendanceResult(
+          success: false,
+          message: "No BLE beacon detected. Turn on Bluetooth and retry.",
+        );
+      }
       final threshold =
           (roomConfig["ble_rssi_threshold"] as num?)?.toDouble() ?? -85;
-      final inside =
-          scanResult.avgRssi != null && scanResult.avgRssi! >= threshold;
+      final inside = scanResult.avgRssi! >= threshold;
       final newState = inside ? _PresenceState.inside : _PresenceState.outside;
 
       if (newState == state.confirmedState) {
@@ -346,25 +350,32 @@ class SmartAttendanceService {
 
   Future<_BleScanWindow> _scanBleWindow(String sessionToken) async {
     final results = <int>[];
-    final subscription = FlutterBluePlus.scanResults.listen((list) {
-      for (final result in list) {
-        final payload = _decodeManufacturerPayload(result);
-        if (payload == null) continue;
-        if (payload["sessionToken"]?.toString() != sessionToken) continue;
-        results.add(result.rssi);
-      }
-    });
     try {
+      final scanStatus = await Permission.bluetoothScan.request();
+      if (!scanStatus.isGranted) {
+        return const _BleScanWindow(avgRssi: null, hitCount: 0);
+      }
+      final state = await FlutterBluePlus.adapterState.first;
+      if (state != BluetoothAdapterState.on) {
+        return const _BleScanWindow(avgRssi: null, hitCount: 0);
+      }
+      final subscription = FlutterBluePlus.scanResults.listen((list) {
+        for (final result in list) {
+          final payload = _decodeManufacturerPayload(result);
+          if (payload == null) continue;
+          if (payload["sessionToken"]?.toString() != sessionToken) continue;
+          results.add(result.rssi);
+        }
+      });
       await FlutterBluePlus.startScan(
         withServices: [Guid(bleServiceUuid)],
         timeout: _scanWindow,
       );
       await Future.delayed(_scanWindow);
-    } catch (_) {
-      // Ignore scan failures; will result in empty RSSI list.
-    } finally {
       await FlutterBluePlus.stopScan();
       await subscription.cancel();
+    } catch (_) {
+      // Ignore scan failures; will result in empty RSSI list.
     }
     if (results.isEmpty) {
       return const _BleScanWindow(avgRssi: null, hitCount: 0);
