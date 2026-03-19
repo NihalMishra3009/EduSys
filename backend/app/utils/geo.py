@@ -1,3 +1,4 @@
+import math
 from math import cos, radians
 from typing import Iterable
 
@@ -106,6 +107,45 @@ def _validate_simple_polygon(points: list[tuple[float, float]]) -> None:
                 raise ValueError("Polygon self-intersects. Adjust points to form a valid boundary.")
 
 
+def _order_points_clockwise(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    # GEO: Order points around centroid to form a simple polygon.
+    lat_sum = sum(lat for lat, _ in points)
+    lon_sum = sum(lon for _, lon in points)
+    centroid = (lat_sum / len(points), lon_sum / len(points))
+
+    def angle(p: tuple[float, float]) -> float:
+        lat, lon = p
+        return radians(0) if (lat, lon) == centroid else math.atan2(lat - centroid[0], lon - centroid[1])
+
+    return sorted(points, key=angle)
+
+
+def _cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    # GEO: Fallback hull if user points still self-intersect after ordering.
+    pts = sorted({(lon, lat) for lat, lon in points})
+    if len(pts) < 3:
+        raise ValueError("At least 3 unique points are required for classroom geofence")
+
+    lower: list[tuple[float, float]] = []
+    for p in pts:
+        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+
+    upper: list[tuple[float, float]] = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+
+    hull = lower[:-1] + upper[:-1]
+    return [(lat, lon) for lon, lat in hull]
+
+
 def normalize_polygon_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
     # GEO: Normalize, validate, and close polygon for geofencing.
     if len(points) < 3:
@@ -117,12 +157,22 @@ def normalize_polygon_points(points: list[tuple[float, float]]) -> list[tuple[fl
     normalized = _clean_duplicates(normalized)
     if len(normalized) < 3:
         raise ValueError("At least 3 unique points are required for classroom geofence")
-    # Normalize orientation (clockwise) and close polygon.
-    closed = _close_polygon(normalized)
+    # Order points around centroid to avoid self-intersection.
+    ordered = _order_points_clockwise(normalized)
+    closed = _close_polygon(ordered)
     if _polygon_area(closed) > 0:
         closed = list(reversed(closed))
-    _validate_simple_polygon(closed)
-    return closed
+    try:
+        _validate_simple_polygon(closed)
+        return closed
+    except ValueError:
+        # Fallback to convex hull if still self-intersecting.
+        hull = _convex_hull(normalized)
+        closed = _close_polygon(hull)
+        if _polygon_area(closed) > 0:
+            closed = list(reversed(closed))
+        _validate_simple_polygon(closed)
+        return closed
 
 
 def bounds_from_points(points: list[tuple[float, float]]) -> tuple[float, float, float, float]:
