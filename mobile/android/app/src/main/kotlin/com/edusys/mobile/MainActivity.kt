@@ -21,57 +21,80 @@ class MainActivity : FlutterActivity() {
     private val bleChannelName = "edusys/ble_advertise"
     private var advertiser: BluetoothLeAdvertiser? = null
     private var advertiseCallback: AdvertiseCallback? = null
+    private var pendingAdvertiseResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
-            if (call.method == "getSimSerial") {
-                result.success(getSimSerial())
-            } else {
-                result.notImplemented()
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+            .setMethodCallHandler { call, result ->
+                if (call.method == "getSimSerial") {
+                    result.success(getSimSerial())
+                } else {
+                    result.notImplemented()
+                }
             }
-        }
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, bleChannelName).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "startAdvertising" -> {
-                    val serviceUuid = call.argument<String>("serviceUuid")
-                    val manufacturerId = call.argument<Int>("manufacturerId") ?: 0x0001
-                    val payloadBase64 = call.argument<String>("payloadBase64") ?: ""
-                    val payload = Base64.decode(payloadBase64, Base64.NO_WRAP)
-                    val ok = startAdvertising(serviceUuid, manufacturerId, payload)
-                    if (ok) {
-                        result.success(true)
-                    } else {
-                        result.error("BLE_ADVERTISE_FAILED", "Unable to start BLE advertising", null)
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, bleChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "startAdvertising" -> {
+                        val serviceUuid = call.argument<String>("serviceUuid")
+                        val manufacturerId = call.argument<Int>("manufacturerId") ?: 0x0001
+                        val payloadBase64 = call.argument<String>("payloadBase64") ?: ""
+                        val payload = Base64.decode(payloadBase64, Base64.NO_WRAP)
+                        pendingAdvertiseResult = result
+                        startAdvertising(serviceUuid, manufacturerId, payload)
                     }
+                    "stopAdvertising" -> {
+                        stopAdvertising()
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
                 }
-                "stopAdvertising" -> {
-                    stopAdvertising()
-                    result.success(true)
-                }
-                else -> result.notImplemented()
             }
-        }
     }
 
     private fun getSimSerial(): String {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            return ""
-        }
-
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_PHONE_STATE
+            ) != PackageManager.PERMISSION_GRANTED
+        ) return ""
         val manager = getSystemService(SubscriptionManager::class.java) ?: return ""
         val subscriptions = manager.activeSubscriptionInfoList ?: return ""
-        if (subscriptions.isEmpty()) {
-            return ""
-        }
+        if (subscriptions.isEmpty()) return ""
         return subscriptions[0].iccId ?: ""
     }
 
-    private fun startAdvertising(serviceUuid: String?, manufacturerId: Int, payload: ByteArray): Boolean {
-        if (serviceUuid.isNullOrBlank()) return false
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
-        if (!adapter.isEnabled) return false
-        val bleAdvertiser = adapter.bluetoothLeAdvertiser ?: return false
+    private fun startAdvertising(
+        serviceUuid: String?,
+        manufacturerId: Int,
+        payload: ByteArray
+    ) {
+        if (serviceUuid.isNullOrBlank()) {
+            pendingAdvertiseResult?.error("INVALID_UUID", "serviceUuid is null or blank", null)
+            pendingAdvertiseResult = null
+            return
+        }
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        if (adapter == null || !adapter.isEnabled) {
+            pendingAdvertiseResult?.error("BT_OFF", "Bluetooth adapter unavailable or off", null)
+            pendingAdvertiseResult = null
+            return
+        }
+        val bleAdvertiser = adapter.bluetoothLeAdvertiser
+        if (bleAdvertiser == null) {
+            pendingAdvertiseResult?.error(
+                "BLE_ADVERTISE_UNSUPPORTED",
+                "Device does not support BLE advertising",
+                null
+            )
+            pendingAdvertiseResult = null
+            return
+        }
+
+        stopAdvertising()
         advertiser = bleAdvertiser
 
         val settings = AdvertiseSettings.Builder()
@@ -80,21 +103,49 @@ class MainActivity : FlutterActivity() {
             .setConnectable(false)
             .build()
 
+        val safePayload = if (payload.size > 11) payload.copyOf(11) else payload
+
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(UUID.fromString(serviceUuid)))
-            .addManufacturerData(manufacturerId, payload)
+            .addManufacturerData(manufacturerId, safePayload)
             .build()
 
-        advertiseCallback = object : AdvertiseCallback() {}
+        advertiseCallback = object : AdvertiseCallback() {
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                runOnUiThread {
+                    pendingAdvertiseResult?.success(true)
+                    pendingAdvertiseResult = null
+                }
+            }
+
+            override fun onStartFailure(errorCode: Int) {
+                val reason = when (errorCode) {
+                    ADVERTISE_FAILED_DATA_TOO_LARGE -> "Payload too large for BLE advertisement"
+                    ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "Too many concurrent advertisers"
+                    ADVERTISE_FAILED_ALREADY_STARTED -> "Already advertising"
+                    ADVERTISE_FAILED_INTERNAL_ERROR -> "Internal BLE error"
+                    ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "BLE advertising not supported on this device"
+                    else -> "Unknown error: $errorCode"
+                }
+                runOnUiThread {
+                    pendingAdvertiseResult?.error("BLE_ADVERTISE_FAILED", reason, errorCode)
+                    pendingAdvertiseResult = null
+                }
+            }
+        }
+
         bleAdvertiser.startAdvertising(settings, data, advertiseCallback)
-        return true
     }
 
     private fun stopAdvertising() {
         val bleAdvertiser = advertiser ?: return
         val callback = advertiseCallback ?: return
-        bleAdvertiser.stopAdvertising(callback)
+        try {
+            bleAdvertiser.stopAdvertising(callback)
+        } catch (_: Exception) {
+            // Ignore — adapter may have been turned off
+        }
         advertiser = null
         advertiseCallback = null
     }

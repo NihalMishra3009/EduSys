@@ -60,8 +60,11 @@ class SmartAttendanceService {
         _monitoring = false;
         return;
       }
-      await _ensureBackgroundService();
-      _startForegroundMotionListener();
+      if (Platform.isAndroid) {
+        await _ensureBackgroundService();
+      } else {
+        _startForegroundMotionListener();
+      }
     } catch (_) {
       _monitoring = false;
     }
@@ -146,9 +149,7 @@ class SmartAttendanceService {
   }
 
   Future<void> _ensureBackgroundService() async {
-    if (!Platform.isAndroid) {
-      return;
-    }
+    if (!Platform.isAndroid) return;
     try {
       final service = FlutterBackgroundService();
       final isRunning = await service.isRunning();
@@ -175,8 +176,14 @@ class SmartAttendanceService {
         await service.startService();
       }
 
-      _backgroundMotionSub ??=
+      await _backgroundMotionSub?.cancel();
+      _backgroundMotionSub =
           service.on("motion").listen((_) => _handleMotionDetected());
+
+      service.on("heartbeat").listen((_) {
+        _accelSub?.cancel();
+        _accelSub = null;
+      });
     } catch (_) {
       _startForegroundMotionListener();
     }
@@ -275,24 +282,32 @@ class SmartAttendanceService {
         session = await _fetchActiveSession(lectureId: lectureId);
       }
       String? sessionToken = session?["session_token"]?.toString();
-      if (session == null || sessionToken == null || sessionToken.isEmpty) {
-        final beacon = await _scanForAnyBeacon();
-        if (beacon == null) {
-          return const SmartAttendanceResult(
-            success: false,
-            message: "No active lecture session or BLE beacon",
-          );
+        if (session == null || sessionToken == null || sessionToken.isEmpty) {
+          final beacon = await _scanForAnyBeacon();
+          if (beacon == null) {
+            return const SmartAttendanceResult(
+              success: false,
+              message: "No active lecture session or BLE beacon",
+            );
+          }
+          final beaconLecture = beacon["lectureId"] as int?;
+          if (beaconLecture != null && beaconLecture != lectureId) {
+            return SmartAttendanceResult(
+              success: false,
+              message:
+                  "Beacon belongs to Lecture #$beaconLecture. Switch to that lecture.",
+            );
+          }
+          sessionToken = beacon["sessionToken"]?.toString();
+          if (sessionToken == null || sessionToken.isEmpty) {
+            final beaconRoom = beacon["roomId"] as int?;
+            if (beaconRoom != null) {
+              final fallbackSession = await _fetchActiveSession(roomId: beaconRoom);
+              session = fallbackSession ?? session;
+              sessionToken = fallbackSession?["session_token"]?.toString();
+            }
+          }
         }
-        final beaconLecture = beacon["lectureId"] as int?;
-        if (beaconLecture != null && beaconLecture != lectureId) {
-          return SmartAttendanceResult(
-            success: false,
-            message:
-                "Beacon belongs to Lecture #$beaconLecture. Switch to that lecture.",
-          );
-        }
-        sessionToken = beacon["sessionToken"]?.toString();
-      }
       if (sessionToken == null || sessionToken.isEmpty) {
         return const SmartAttendanceResult(
           success: false,
@@ -318,7 +333,7 @@ class SmartAttendanceService {
         () => _SessionState(sessionToken: token),
       );
 
-      final scanResult = await _scanBleWindow(sessionToken);
+        final scanResult = await _scanBleWindow(sessionToken, roomId: roomId);
       if (scanResult.avgRssi == null) {
         return const SmartAttendanceResult(
           success: false,
@@ -389,7 +404,7 @@ class SmartAttendanceService {
     return null;
   }
 
-  Future<_BleScanWindow> _scanBleWindow(String sessionToken) async {
+  Future<_BleScanWindow> _scanBleWindow(String sessionToken, {int? roomId}) async {
     final results = <int>[];
     try {
       final scanStatus = await Permission.bluetoothScan.request();
@@ -402,12 +417,19 @@ class SmartAttendanceService {
       }
       final subscription = FlutterBluePlus.onScanResults.listen((list) {
         for (final result in list) {
-          final payload = _decodeManufacturerPayload(result);
-          if (payload == null) continue;
-          if (payload["sessionToken"]?.toString() != sessionToken) continue;
+        final payload = _decodeManufacturerPayload(result);
+        if (payload == null) continue;
+        final payloadSession = payload["sessionToken"]?.toString();
+        if (payloadSession != null && payloadSession == sessionToken) {
+          results.add(result.rssi);
+          continue;
+        }
+        final payloadRoom = payload["roomId"] ?? payload["r"];
+        if (roomId != null && payloadRoom is num && payloadRoom.toInt() == roomId) {
           results.add(result.rssi);
         }
-      });
+      }
+    });
       await FlutterBluePlus.startScan(
         timeout: _scanWindow,
         androidUsesFineLocation: false,
@@ -434,12 +456,12 @@ class SmartAttendanceService {
       if (adapterState != BluetoothAdapterState.on) return null;
       final subscription = FlutterBluePlus.onScanResults.listen((list) {
         for (final result in list) {
-          final payload = _decodeManufacturerPayload(result);
-          if (payload == null) continue;
-          if (payload["sessionToken"] == null) continue;
-          hits.add(payload);
-        }
-      });
+        final payload = _decodeManufacturerPayload(result);
+        if (payload == null) continue;
+        if (payload["r"] == null && payload["sessionToken"] == null) continue;
+        hits.add(payload);
+      }
+    });
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 8),
         androidUsesFineLocation: false,
@@ -452,6 +474,13 @@ class SmartAttendanceService {
     }
     if (hits.isEmpty) return null;
     final first = hits.first;
+    if (first.containsKey("r")) {
+      return {
+        "roomId": first["r"] is num ? (first["r"] as num).toInt() : null,
+        "sessionToken": null,
+        "lectureId": null,
+      };
+    }
     return {
       "sessionToken": first["sessionToken"],
       "lectureId": first["lectureId"] is num ? (first["lectureId"] as num).toInt() : null,
@@ -464,8 +493,16 @@ class SmartAttendanceService {
     if (bytes == null || bytes.isEmpty) return null;
     try {
       final decoded = jsonDecode(utf8.decode(bytes));
-      if (decoded is Map<String, dynamic>) return decoded;
-      return null;
+      if (decoded is! Map<String, dynamic>) return null;
+      if (decoded.containsKey("r") && decoded.containsKey("s")) {
+        return {
+          "roomId": decoded["r"],
+          "compactSessionId": decoded["s"],
+          "r": decoded["r"],
+          "s": decoded["s"],
+        };
+      }
+      return decoded;
     } catch (_) {
       return null;
     }
@@ -493,22 +530,36 @@ class SmartAttendanceService {
     required int roomId,
   }) async {
     final channel = const MethodChannel(_bleChannelName);
+    final compactSessionId = int.parse(
+      sessionToken.replaceAll("-", "").substring(0, 8),
+      radix: 16,
+    );
     final payload = jsonEncode({
-      "classroomId": roomId,
-      "sessionToken": sessionToken,
-      "lectureId": lectureId,
+      "r": roomId,
+      "s": compactSessionId,
     });
     final args = {
       "serviceUuid": bleServiceUuid,
       "manufacturerId": manufacturerId,
       "payloadBase64": base64Encode(utf8.encode(payload)),
     };
-    await channel.invokeMethod("startAdvertising", args);
+    try {
+      await channel.invokeMethod("startAdvertising", args);
+    } on PlatformException catch (e) {
+      throw Exception(
+        "BLE advertising failed: ${e.message ?? e.code}. "
+        "Ensure Bluetooth is on and the device supports BLE advertising.",
+      );
+    }
   }
 
   Future<void> _stopBleAdvertising() async {
     final channel = const MethodChannel(_bleChannelName);
-    await channel.invokeMethod("stopAdvertising");
+    try {
+      await channel.invokeMethod("stopAdvertising");
+    } on PlatformException catch (_) {
+      // Ignore stop failures — BT may have been turned off
+    }
   }
 }
 
@@ -530,28 +581,37 @@ void smartAttendanceBackgroundStart(ServiceInstance service) async {
     await service.setAsForegroundService();
   }
   AccelerometerEvent? last;
-  for (int attempt = 0; attempt < 5; attempt++) {
-    try {
-      SensorsPlatform.instance.accelerometerEvents.listen((event) {
-        if (last != null) {
-          final delta = math.sqrt(
-            math.pow(event.x - last!.x, 2) +
-                math.pow(event.y - last!.y, 2) +
-                math.pow(event.z - last!.z, 2),
-          );
-          if (delta > SmartAttendanceService._motionThreshold) {
-            service.invoke("motion");
+  StreamSubscription<AccelerometerEvent>? accelSub;
+
+  Future<void> subscribeAccelerometer() async {
+    for (int attempt = 0; attempt < 5; attempt++) {
+      try {
+        accelSub = SensorsPlatform.instance.accelerometerEvents.listen((event) {
+          if (last != null) {
+            final delta = math.sqrt(
+              math.pow(event.x - last!.x, 2) +
+                  math.pow(event.y - last!.y, 2) +
+                  math.pow(event.z - last!.z, 2),
+            );
+            if (delta > SmartAttendanceService._motionThreshold) {
+              service.invoke("motion");
+            }
           }
-        }
-        last = event;
-      });
-      break;
-    } catch (_) {
-      await Future.delayed(const Duration(seconds: 2));
+          last = event;
+        });
+        return;
+      } catch (_) {
+        await Future.delayed(const Duration(seconds: 2));
+      }
     }
   }
 
-  Timer.periodic(const Duration(seconds: 30), (_) {
+  await subscribeAccelerometer();
+
+  Timer.periodic(const Duration(seconds: 60), (_) async {
+    if (accelSub == null) {
+      await subscribeAccelerometer();
+    }
     service.invoke("heartbeat");
   });
 }
