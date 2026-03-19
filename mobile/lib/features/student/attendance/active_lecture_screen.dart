@@ -78,7 +78,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
   }
 
   bool _isInsideClassroom(Map<String, dynamic> classroom, Position position) {
-    const toleranceM = 0.0;
+    const toleranceM = 15.0;
     final polygon = classroom["polygon_points"] as List<dynamic>?;
     if (polygon != null && polygon.isNotEmpty) {
       return GeoUtils.checkPointInsidePolygon(
