@@ -165,9 +165,12 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       if (!inside) {
         if (!mounted) return;
         if (!silent) {
+          final lat = position.latitude.toStringAsFixed(6);
+          final lon = position.longitude.toStringAsFixed(6);
+          final acc = position.accuracy.toStringAsFixed(1);
           setState(() {
             _success = false;
-            _message = "Outside classroom geofence";
+            _message = "Outside classroom geofence\nLat: $lat, Lng: $lon\nAccuracy: ${acc}m";
           });
         }
         return;
