@@ -9531,8 +9531,8 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: _spacePoints.asMap().entries.map((entry) {
                         final idx = entry.key + 1;
-                        final lat = entry.value["latitude"];
-                        final lon = entry.value["longitude"];
+                        final lat = entry.value["lat"] ?? entry.value["latitude"];
+                        final lon = entry.value["lng"] ?? entry.value["longitude"];
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
