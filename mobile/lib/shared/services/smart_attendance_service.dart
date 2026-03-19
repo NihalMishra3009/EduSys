@@ -52,9 +52,17 @@ class SmartAttendanceService {
   Future<void> startStudentMonitoring() async {
     if (_monitoring) return;
     _monitoring = true;
-    await _requestStudentPermissions();
-    await _ensureBackgroundService();
-    _startForegroundMotionListener();
+    try {
+      final ok = await _requestStudentPermissions();
+      if (!ok) {
+        _monitoring = false;
+        return;
+      }
+      await _ensureBackgroundService();
+      _startForegroundMotionListener();
+    } catch (_) {
+      _monitoring = false;
+    }
   }
 
   Future<void> stopStudentMonitoring() async {
@@ -114,42 +122,49 @@ class SmartAttendanceService {
     return _runAttendanceScan(lectureId: lectureId, roomId: roomId);
   }
 
-  Future<void> _requestStudentPermissions() async {
+  Future<bool> _requestStudentPermissions() async {
     final permissions = <Permission>[
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.bluetoothAdvertise,
       Permission.activityRecognition,
+      if (Platform.isAndroid) Permission.notification,
     ];
-    await permissions.request();
+    final results = await permissions.request();
+    final denied = results.values.any((status) => status.isDenied || status.isPermanentlyDenied);
+    return !denied;
   }
 
   Future<void> _ensureBackgroundService() async {
     if (!Platform.isAndroid) {
       return;
     }
-    final service = FlutterBackgroundService();
-    final isRunning = await service.isRunning();
-    if (!isRunning) {
-      await service.configure(
-        androidConfiguration: AndroidConfiguration(
-          onStart: smartAttendanceBackgroundStart,
-          isForegroundMode: true,
-          autoStart: true,
-          notificationChannelId: "edusys_attendance",
-          initialNotificationTitle: "EduSys Attendance",
-          initialNotificationContent: "Monitoring motion for attendance",
-        ),
-        iosConfiguration: IosConfiguration(
-          onForeground: smartAttendanceBackgroundStart,
-          onBackground: (_) async => true,
-        ),
-      );
-      await service.startService();
-    }
+    try {
+      final service = FlutterBackgroundService();
+      final isRunning = await service.isRunning();
+      if (!isRunning) {
+        await service.configure(
+          androidConfiguration: AndroidConfiguration(
+            onStart: smartAttendanceBackgroundStart,
+            isForegroundMode: true,
+            autoStart: true,
+            notificationChannelId: "edusys_attendance",
+            initialNotificationTitle: "EduSys Attendance",
+            initialNotificationContent: "Attendance tracking active",
+          ),
+          iosConfiguration: IosConfiguration(
+            onForeground: smartAttendanceBackgroundStart,
+            onBackground: (_) async => true,
+          ),
+        );
+        await service.startService();
+      }
 
-    _backgroundMotionSub ??=
-        service.on("motion").listen((_) => _handleMotionDetected());
+      _backgroundMotionSub ??=
+          service.on("motion").listen((_) => _handleMotionDetected());
+    } catch (_) {
+      // Fall back to foreground-only motion listener if background service fails.
+    }
   }
 
   void _startForegroundMotionListener() {
@@ -417,19 +432,23 @@ void smartAttendanceBackgroundStart(ServiceInstance service) {
     service.setAsForegroundService();
   }
   AccelerometerEvent? last;
-  SensorsPlatform.instance.accelerometerEvents.listen((event) {
-    if (last != null) {
-      final delta = math.sqrt(
-        math.pow(event.x - last!.x, 2) +
-            math.pow(event.y - last!.y, 2) +
-            math.pow(event.z - last!.z, 2),
-      );
-      if (delta > SmartAttendanceService._motionThreshold) {
-        service.invoke("motion");
+  try {
+    SensorsPlatform.instance.accelerometerEvents.listen((event) {
+      if (last != null) {
+        final delta = math.sqrt(
+          math.pow(event.x - last!.x, 2) +
+              math.pow(event.y - last!.y, 2) +
+              math.pow(event.z - last!.z, 2),
+        );
+        if (delta > SmartAttendanceService._motionThreshold) {
+          service.invoke("motion");
+        }
       }
-    }
-    last = event;
-  });
+      last = event;
+    });
+  } catch (_) {
+    // Ignore background sensor failures.
+  }
 }
 
 class _BleScanWindow {
