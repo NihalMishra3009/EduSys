@@ -9533,12 +9533,18 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                         final idx = entry.key + 1;
                         final latRaw = entry.value["lat"] ?? entry.value["latitude"];
                         final lonRaw = entry.value["lng"] ?? entry.value["longitude"];
-                        final lat = latRaw is num ? latRaw.toDouble() : null;
-                        final lon = lonRaw is num ? lonRaw.toDouble() : null;
+                        final lat = latRaw is num
+                            ? latRaw.toDouble()
+                            : (latRaw is String ? double.tryParse(latRaw) : null);
+                        final lon = lonRaw is num
+                            ? lonRaw.toDouble()
+                            : (lonRaw is String ? double.tryParse(lonRaw) : null);
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
-                            "Point $idx: ${lat?.toStringAsFixed(6)}, ${lon?.toStringAsFixed(6)}",
+                            lat != null && lon != null
+                                ? "Point $idx: ${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}"
+                                : "Point $idx: invalid (${entry.value})",
                           ),
                         );
                       }).toList(),
@@ -9852,10 +9858,10 @@ class _AttendanceTabState extends State<_AttendanceTab> {
         setState(() {
           _spacePoints.add(
             {
-              "lat": last.latitude,
-              "lng": last.longitude,
-              "latitude": last.latitude,
-              "longitude": last.longitude,
+              "lat": last.latitude.toDouble(),
+              "lng": last.longitude.toDouble(),
+              "latitude": last.latitude.toDouble(),
+              "longitude": last.longitude.toDouble(),
             },
           );
           addedIndex = _spacePoints.length - 1;
@@ -9868,18 +9874,18 @@ class _AttendanceTabState extends State<_AttendanceTab> {
         final index = addedIndex;
         if (index != null && index >= 0 && index < _spacePoints.length) {
           _spacePoints[index] = {
-            "lat": pos.latitude,
-            "lng": pos.longitude,
-            "latitude": pos.latitude,
-            "longitude": pos.longitude,
+            "lat": pos.latitude.toDouble(),
+            "lng": pos.longitude.toDouble(),
+            "latitude": pos.latitude.toDouble(),
+            "longitude": pos.longitude.toDouble(),
           };
         } else {
           _spacePoints.add(
             {
-              "lat": pos.latitude,
-              "lng": pos.longitude,
-              "latitude": pos.latitude,
-              "longitude": pos.longitude,
+              "lat": pos.latitude.toDouble(),
+              "lng": pos.longitude.toDouble(),
+              "latitude": pos.latitude.toDouble(),
+              "longitude": pos.longitude.toDouble(),
             },
           );
         }
