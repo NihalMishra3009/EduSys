@@ -30,6 +30,21 @@
 	<string>ConnectEd needs camera access for in-app online meetings.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ConnectEd needs microphone access for in-app online meetings.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>EduSys uses Bluetooth to detect in-room attendance.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>EduSys uses Bluetooth to broadcast lecture beacons.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>EduSys uses location to verify campus presence.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>EduSys uses motion to trigger attendance scans.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+		<string>location</string>
+		<string>processing</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

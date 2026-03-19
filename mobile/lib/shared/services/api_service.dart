@@ -417,6 +417,115 @@ class ApiService {
     );
   }
 
+  Future<http.Response> getRoomCalibration(int roomId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/attendance/rooms/$roomId/calibration",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> setRoomCalibration({
+    required int roomId,
+    required Map<String, dynamic> payload,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode(payload);
+    return _sendWithFallback(
+      path: "/attendance/rooms/$roomId/calibration",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> startAttendanceSession({
+    required int lectureId,
+    required int roomId,
+    required String sessionToken,
+    required int scheduledDurationMs,
+    required int minAttendancePercent,
+    int? scheduledStart,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "lecture_id": lectureId,
+      "room_id": roomId,
+      "session_token": sessionToken,
+      "scheduled_start": scheduledStart,
+      "scheduled_duration_ms": scheduledDurationMs,
+      "min_attendance_percent": minAttendancePercent,
+    });
+    return _sendWithFallback(
+      path: "/attendance/sessions/start",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> endAttendanceSession({
+    required int lectureId,
+    required String sessionToken,
+    required int endTime,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "lecture_id": lectureId,
+      "session_token": sessionToken,
+      "end_time": endTime,
+    });
+    return _sendWithFallback(
+      path: "/attendance/sessions/end",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> getActiveAttendanceSession({
+    int? lectureId,
+    int? roomId,
+  }) async {
+    final headers = await _headers(auth: true);
+    final query = [
+      if (lectureId != null) "lecture_id=$lectureId",
+      if (roomId != null) "room_id=$roomId",
+    ].join("&");
+    final path = query.isEmpty
+        ? "/attendance/sessions/active"
+        : "/attendance/sessions/active?$query";
+    return _sendWithFallback(
+      path: path,
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> logAttendanceScan({
+    required String scanId,
+    required int studentId,
+    required int lectureId,
+    required String sessionToken,
+    required String type,
+    required int timestamp,
+    int? scanIndex,
+    double? rssi,
+    double? pressure,
+    bool floorSkipped = false,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "scan_id": scanId,
+      "student_id": studentId,
+      "lecture_id": lectureId,
+      "session_token": sessionToken,
+      "type": type,
+      "timestamp": timestamp,
+      "scan_index": scanIndex,
+      "rssi": rssi,
+      "pressure": pressure,
+      "floor_skipped": floorSkipped,
+    });
+    return _sendWithFallback(
+      path: "/attendance/scan",
+      sender: (uri) => http.post(uri, headers: headers, body: body),
+    );
+  }
+
   Future<http.Response> attendanceHistory() async {
     final headers = await _headers(auth: true);
     return _sendWithFallback(

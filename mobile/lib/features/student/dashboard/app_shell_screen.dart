@@ -31,6 +31,7 @@ import "package:provider/provider.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart";
 import "package:file_picker/file_picker.dart";
+import "package:sensors_plus/sensors_plus.dart";
 
 const bool kUseDemoDataEverywhere = false;
 const double kDockScrollBottomInset = 96;
@@ -9100,6 +9101,13 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   int? _selectedStudentId;
   final LocationService _location = LocationService();
   final List<Map<String, dynamic>> _spacePoints = [];
+  double? _floorBaseline;
+  double? _lowerFloorPressure;
+  double? _halfFloorGap;
+  bool _recordingFloorBaseline = false;
+  bool _recordingLowerFloor = false;
+  final TextEditingController _bleRssiController =
+      TextEditingController(text: "-85");
   bool _recordingSpacePoint = false;
   List<Map<String, dynamic>> _createdSpaces = [];
   final TextEditingController _spaceNameController = TextEditingController();
@@ -9198,6 +9206,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   @override
   void dispose() {
     _spaceNameController.dispose();
+    _bleRssiController.dispose();
     _spaceThresholdController.dispose();
     _thresholdLectureIdController.dispose();
     _manualLectureId.dispose();
@@ -9551,6 +9560,55 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                     ),
                   ],
                   const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppButton(
+                          label: _recordingFloorBaseline
+                              ? "Recording..."
+                              : "Set Floor Baseline",
+                          icon: Icons.speed_rounded,
+                          onPressed:
+                              _recordingFloorBaseline ? null : _recordFloorBaseline,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: AppButton(
+                          label: _recordingLowerFloor
+                              ? "Recording..."
+                              : "Set Lower Bound",
+                          icon: Icons.stairs_rounded,
+                          isPrimary: false,
+                          onPressed:
+                              _recordingLowerFloor ? null : _recordLowerFloor,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (_floorBaseline != null)
+                    Text(
+                      "Baseline: ${_floorBaseline!.toStringAsFixed(2)} hPa",
+                    ),
+                  if (_lowerFloorPressure != null)
+                    Text(
+                      "Lower floor: ${_lowerFloorPressure!.toStringAsFixed(2)} hPa",
+                    ),
+                  if (_halfFloorGap != null)
+                    Text(
+                      "Half floor gap: ${_halfFloorGap!.toStringAsFixed(2)} hPa",
+                    ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _bleRssiController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "BLE RSSI Threshold (e.g., -85)",
+                      prefixIcon: Icon(Icons.bluetooth_searching_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   AppButton(
                     label: "Create space",
                     icon: Icons.add_location_alt_rounded,
@@ -9836,7 +9894,73 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     GlassToast.show(context, message, icon: Icons.info_outline);
   }
 
-  Future<void> _calibrateReferencePoint() async {}
+  Future<void> _recordFloorBaseline() async {
+    if (_recordingFloorBaseline) return;
+    setState(() => _recordingFloorBaseline = true);
+    try {
+      final avg = await _capturePressureSamples();
+      if (avg == null) {
+        _toast("Barometer unavailable.");
+        return;
+      }
+      setState(() {
+        _floorBaseline = avg;
+        _halfFloorGap = _computeHalfFloorGap();
+      });
+      _toast("Baseline set: ${avg.toStringAsFixed(2)} hPa");
+    } finally {
+      if (mounted) setState(() => _recordingFloorBaseline = false);
+    }
+  }
+
+  Future<void> _recordLowerFloor() async {
+    if (_recordingLowerFloor) return;
+    setState(() => _recordingLowerFloor = true);
+    try {
+      final avg = await _capturePressureSamples();
+      if (avg == null) {
+        _toast("Barometer unavailable.");
+        return;
+      }
+      setState(() {
+        _lowerFloorPressure = avg;
+        _halfFloorGap = _computeHalfFloorGap();
+      });
+      _toast("Lower floor set: ${avg.toStringAsFixed(2)} hPa");
+    } finally {
+      if (mounted) setState(() => _recordingLowerFloor = false);
+    }
+  }
+
+  double? _computeHalfFloorGap() {
+    if (_floorBaseline == null || _lowerFloorPressure == null) return null;
+    return (_lowerFloorPressure! - _floorBaseline!).abs() * 0.6;
+  }
+
+  Future<double?> _capturePressureSamples() async {
+    try {
+      final values = <double>[];
+      late StreamSubscription sub;
+      final completer = Completer<void>();
+      sub = barometerEventStream().listen((event) {
+        values.add(event.pressure);
+        if (values.length >= 10) {
+          completer.complete();
+          sub.cancel();
+        }
+      });
+      await completer.future.timeout(const Duration(seconds: 20), onTimeout: () {
+        sub.cancel();
+      });
+      if (values.isEmpty) {
+        return null;
+      }
+      final total = values.reduce((a, b) => a + b);
+      return total / values.length;
+    } catch (_) {
+      return null;
+    }
+  }
 
   String _extractDetail(String body, String fallback) {
     try {
@@ -9879,6 +10003,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   void _clearSpacePoints() {
     setState(() {
       _spacePoints.clear();
+      _floorBaseline = null;
+      _lowerFloorPressure = null;
+      _halfFloorGap = null;
     });
   }
 
@@ -9931,6 +10058,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     setState(() => _loading = false);
     final isOk = res.statusCode >= 200 && res.statusCode < 300;
     var feedback = _extractDetail(res.body, isOk ? "Space created" : "Failed to create space");
+    int? roomId;
     if (isOk) {
       try {
         final payload = jsonDecode(res.body) as Map<String, dynamic>;
@@ -9938,13 +10066,26 @@ class _AttendanceTabState extends State<_AttendanceTab> {
         if (polygon is List && polygon.isNotEmpty) {
           feedback = "$feedback\nBoundary created with ${polygon.length} points.";
         }
+        final id = payload["id"];
+        if (id is num) {
+          roomId = id.toInt();
+        }
       } catch (_) {}
     }
     _toast(feedback);
+    final gpsFencePayload = _spacePoints
+        .map((p) => {
+              "lat": (p["lat"] ?? p["latitude"] as num).toDouble(),
+              "lng": (p["lng"] ?? p["longitude"] as num).toDouble(),
+            })
+        .toList();
     if (res.statusCode >= 200 && res.statusCode < 300) {
       setState(() {
         _spacePoints.clear();
         _spaceNameController.clear();
+        _floorBaseline = null;
+        _lowerFloorPressure = null;
+        _halfFloorGap = null;
         try {
           final payload = jsonDecode(res.body) as Map<String, dynamic>;
           _createdSpaces = [
@@ -9956,6 +10097,24 @@ class _AttendanceTabState extends State<_AttendanceTab> {
         }
       });
       await _persistCreatedSpaces();
+      if (roomId != null) {
+        final bleThreshold =
+            int.tryParse(_bleRssiController.text.trim()) ?? -85;
+        final calibrationPayload = {
+          "room_id": roomId,
+          "name": name,
+          "building_id": "main_block",
+          "floor_pressure_baseline": _floorBaseline,
+          "lower_floor_pressure": _lowerFloorPressure,
+          "half_floor_gap": _halfFloorGap,
+          "gps_fence": gpsFencePayload,
+          "ble_rssi_threshold": bleThreshold,
+        };
+        await _api.setRoomCalibration(
+          roomId: roomId!,
+          payload: calibrationPayload,
+        );
+      }
     }
   }
 

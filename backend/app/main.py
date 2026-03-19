@@ -9,7 +9,7 @@ from app.core.security import hash_password
 from app import models as _models  # Register metadata for all tables.
 from app.models.user import User, UserRole
 from app.models.classroom import Classroom
-from app.routers import admin, attendance, audit, auth, classroom, complaint, department, geo, lecture, notification, resources, users
+from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, lecture, notification, resources, users
 
 app = FastAPI(title="EduSys API", version="1.0.0")
 _media_dir = Path(__file__).resolve().parent.parent / "media"
@@ -35,6 +35,7 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(classroom.router, prefix="/classroom", tags=["classroom"])
 app.include_router(lecture.router, prefix="/lecture", tags=["lecture"])
 app.include_router(attendance.router, prefix="/attendance", tags=["attendance"])
+app.include_router(attendance_smart.router, prefix="/attendance", tags=["attendance-smart"])
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])

@@ -10,6 +10,9 @@ from app.models.notification import AppNotification, NotificationType
 from app.models.complaint import Complaint, ComplaintStatus
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
+from app.models.room_calibration import RoomCalibration
+from app.models.lecture_session import LectureSession
+from app.models.scan_event import ScanEvent
 
 __all__ = [
     "Base",
@@ -29,4 +32,7 @@ __all__ = [
     "ComplaintStatus",
     "Assignment",
     "AssignmentSubmission",
+    "RoomCalibration",
+    "LectureSession",
+    "ScanEvent",
 ]

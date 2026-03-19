@@ -1,6 +1,7 @@
 import "dart:convert";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
 import "package:flutter/material.dart";
 
 class StartLectureScreen extends StatefulWidget {
@@ -12,6 +13,7 @@ class StartLectureScreen extends StatefulWidget {
 
 class _StartLectureScreenState extends State<StartLectureScreen> {
   final _api = ApiService();
+  final _smartAttendance = SmartAttendanceService();
   final _classroomController = TextEditingController();
   final _lectureIdController = TextEditingController();
   final _thresholdController = TextEditingController(text: "75");
@@ -44,6 +46,9 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
       classroomId,
       requiredPresencePercent: threshold,
     );
+    int? lectureId;
+    int? durationMs;
+    int? scheduledStart;
     setState(() {
       _loading = false;
       _success = response.statusCode >= 200 && response.statusCode < 300;
@@ -51,9 +56,21 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
 
       if (_success) {
         final map = jsonDecode(response.body) as Map<String, dynamic>;
-        _lectureIdController.text = map["id"].toString();
+        lectureId = (map["id"] as num).toInt();
+        _lectureIdController.text = lectureId.toString();
+        durationMs = ((map["scheduled_duration_ms"] as num?)?.toInt() ?? 60) * 60 * 1000;
+        scheduledStart = map["scheduled_start"] as int?;
       }
     });
+    if (_success && lectureId != null && durationMs != null) {
+      await _smartAttendance.startProfessorSession(
+        lectureId: lectureId!,
+        roomId: classroomId,
+        scheduledDurationMs: durationMs!,
+        minAttendancePercent: ((threshold ?? 75).round()),
+        scheduledStart: scheduledStart,
+      );
+    }
   }
 
   Future<void> _endLecture() async {
@@ -73,6 +90,9 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
       _success = response.statusCode >= 200 && response.statusCode < 300;
       _message = _parseMessage(response.body, fallback: "Lecture end request completed");
     });
+    if (_success) {
+      await _smartAttendance.endProfessorSession(lectureId: lectureId);
+    }
   }
 
   String _parseMessage(String body, {required String fallback}) {
