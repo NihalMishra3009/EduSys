@@ -9099,7 +9099,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   double _monthlyPercentage = 0;
   int? _selectedStudentId;
   final LocationService _location = LocationService();
-  final List<Map<String, double>> _spacePoints = [];
+  final List<Map<String, dynamic>> _spacePoints = [];
   bool _recordingSpacePoint = false;
   List<Map<String, dynamic>> _createdSpaces = [];
   final TextEditingController _spaceNameController = TextEditingController();
@@ -9531,8 +9531,10 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: _spacePoints.asMap().entries.map((entry) {
                         final idx = entry.key + 1;
-                        final lat = entry.value["lat"] ?? entry.value["latitude"];
-                        final lon = entry.value["lng"] ?? entry.value["longitude"];
+                        final latRaw = entry.value["lat"] ?? entry.value["latitude"];
+                        final lonRaw = entry.value["lng"] ?? entry.value["longitude"];
+                        final lat = latRaw is num ? latRaw.toDouble() : null;
+                        final lon = lonRaw is num ? lonRaw.toDouble() : null;
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
@@ -9849,7 +9851,12 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       if (last != null) {
         setState(() {
           _spacePoints.add(
-            {"lat": last.latitude, "lng": last.longitude},
+            {
+              "lat": last.latitude,
+              "lng": last.longitude,
+              "latitude": last.latitude,
+              "longitude": last.longitude,
+            },
           );
           addedIndex = _spacePoints.length - 1;
         });
@@ -9863,10 +9870,17 @@ class _AttendanceTabState extends State<_AttendanceTab> {
           _spacePoints[index] = {
             "lat": pos.latitude,
             "lng": pos.longitude,
+            "latitude": pos.latitude,
+            "longitude": pos.longitude,
           };
         } else {
           _spacePoints.add(
-            {"lat": pos.latitude, "lng": pos.longitude},
+            {
+              "lat": pos.latitude,
+              "lng": pos.longitude,
+              "latitude": pos.latitude,
+              "longitude": pos.longitude,
+            },
           );
         }
       });
@@ -9897,12 +9911,14 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     }
     final hasPolygon = _spacePoints.length >= 3;
     final lats = _spacePoints
-        .map((p) => p["lat"])
-        .whereType<double>()
+        .map((p) => p["lat"] ?? p["latitude"])
+        .whereType<num>()
+        .map((v) => v.toDouble())
         .toList();
     final lons = _spacePoints
-        .map((p) => p["lng"])
-        .whereType<double>()
+        .map((p) => p["lng"] ?? p["longitude"])
+        .whereType<num>()
+        .map((v) => v.toDouble())
         .toList();
     if (lats.isEmpty || lons.isEmpty) {
       _toast("Invalid points recorded");
@@ -9915,7 +9931,14 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     setState(() => _loading = true);
     final res = await _api.createClassroom(
       name: name,
-      points: hasPolygon ? _spacePoints : null,
+      points: hasPolygon
+          ? _spacePoints
+              .map((p) => {
+                    "lat": (p["lat"] ?? p["latitude"] as num).toDouble(),
+                    "lng": (p["lng"] ?? p["longitude"] as num).toDouble(),
+                  })
+              .toList()
+          : null,
       latitudeMin: hasPolygon ? null : latitudeMin,
       latitudeMax: hasPolygon ? null : latitudeMax,
       longitudeMin: hasPolygon ? null : longitudeMin,
