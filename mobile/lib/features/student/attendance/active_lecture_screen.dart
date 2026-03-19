@@ -76,34 +76,18 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
   }
 
   bool _isInsideClassroom(Map<String, dynamic> classroom, Position position) {
-    const toleranceM = 8.0;
+    const toleranceM = 12.0;
     final polygon = classroom["polygon_points"] as List<dynamic>?;
     if (polygon != null && polygon.isNotEmpty) {
-      final points = <List<double>>[];
-      for (final point in polygon) {
-        if (point is Map<String, dynamic>) {
-          final lat = point["latitude"] as num?;
-          final lon = point["longitude"] as num?;
-          if (lat != null && lon != null) {
-            points.add([lat.toDouble(), lon.toDouble()]);
-          }
-        } else if (point is List && point.length >= 2) {
-          final lat = point[0] as num?;
-          final lon = point[1] as num?;
-          if (lat != null && lon != null) {
-            points.add([lat.toDouble(), lon.toDouble()]);
-          }
-        }
-      }
-      if (points.length >= 3) {
-        return GeoUtils.isInsidePolygon(
-          latitude: position.latitude,
-          longitude: position.longitude,
-          points: points,
-          gpsAccuracyM: position.accuracy,
-          toleranceM: toleranceM,
-        );
-      }
+      return GeoUtils.checkPointInsidePolygon(
+        point: {
+          "lat": position.latitude,
+          "lng": position.longitude,
+        },
+        polygon: polygon,
+        gpsAccuracyM: position.accuracy,
+        toleranceM: toleranceM,
+      );
     }
 
     final latMin = (classroom["latitude_min"] as num?)?.toDouble();
@@ -130,7 +114,8 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
       setState(() => _loading = true);
     }
     try {
-      final position = await _locationService.getFreshPosition();
+      // GEO: collect multiple samples and use majority vote.
+      final samples = await _locationService.getStableSamples();
       final classroom = await _getClassroom(classroomId);
       if (classroom == null) {
         if (!mounted) return;
@@ -142,7 +127,13 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
-      final inside = _isInsideClassroom(classroom, position);
+      var insideCount = 0;
+      for (final sample in samples) {
+        if (_isInsideClassroom(classroom, sample)) {
+          insideCount += 1;
+        }
+      }
+      final inside = insideCount >= (samples.length / 2).ceil();
       if (!inside) {
         if (!mounted) return;
         if (!silent) {
@@ -153,6 +144,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         }
         return;
       }
+      final position = samples.last;
       final response = await _api.submitCheckpoint(
         lectureId: lectureId,
         latitude: position.latitude,
@@ -168,6 +160,20 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
             response.body,
             fallback: _success ? "Checkpoint submitted" : "Checkpoint failed",
           );
+        });
+      }
+    } on LocationServiceException catch (e) {
+      if (!mounted) return;
+      if (!silent) {
+        setState(() {
+          _success = false;
+          _message = switch (e.type) {
+            LocationErrorType.mocked => "Mock location detected.",
+            LocationErrorType.unstable => "Unstable GPS. Please retry.",
+            LocationErrorType.denied => "Location permission denied.",
+            LocationErrorType.deniedForever => "Location permission permanently denied.",
+            LocationErrorType.gpsDisabled => "Enable GPS to mark attendance.",
+          };
         });
       }
     } catch (e) {

@@ -9849,7 +9849,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       if (last != null) {
         setState(() {
           _spacePoints.add(
-            {"latitude": last.latitude, "longitude": last.longitude},
+            {"lat": last.latitude, "lng": last.longitude},
           );
           addedIndex = _spacePoints.length - 1;
         });
@@ -9861,12 +9861,12 @@ class _AttendanceTabState extends State<_AttendanceTab> {
         final index = addedIndex;
         if (index != null && index >= 0 && index < _spacePoints.length) {
           _spacePoints[index] = {
-            "latitude": pos.latitude,
-            "longitude": pos.longitude,
+            "lat": pos.latitude,
+            "lng": pos.longitude,
           };
         } else {
           _spacePoints.add(
-            {"latitude": pos.latitude, "longitude": pos.longitude},
+            {"lat": pos.latitude, "lng": pos.longitude},
           );
         }
       });
@@ -9897,11 +9897,11 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     }
     final hasPolygon = _spacePoints.length >= 3;
     final lats = _spacePoints
-        .map((p) => p["latitude"])
+        .map((p) => p["lat"])
         .whereType<double>()
         .toList();
     final lons = _spacePoints
-        .map((p) => p["longitude"])
+        .map((p) => p["lng"])
         .whereType<double>()
         .toList();
     if (lats.isEmpty || lons.isEmpty) {

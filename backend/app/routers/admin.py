@@ -151,7 +151,7 @@ def create_classroom(
     else:
         latitude_min, latitude_max, longitude_min, longitude_max = bounds_from_points(points)
         point_fields = {
-            "polygon_points": [{"latitude": lat, "longitude": lon} for lat, lon in points],
+            "polygon_points": [{"lat": lat, "lng": lon} for lat, lon in points],
             "point1_lat": points[0][0] if len(points) > 0 else None,
             "point1_lon": points[0][1] if len(points) > 0 else None,
             "point2_lat": points[1][0] if len(points) > 1 else None,
@@ -226,7 +226,7 @@ def update_boundary(
     else:
         latitude_min, latitude_max, longitude_min, longitude_max = bounds_from_points(points)
         point_fields = {
-            "polygon_points": [{"latitude": lat, "longitude": lon} for lat, lon in points],
+            "polygon_points": [{"lat": lat, "lng": lon} for lat, lon in points],
             "point1_lat": points[0][0] if len(points) > 0 else None,
             "point1_lon": points[0][1] if len(points) > 0 else None,
             "point2_lat": points[1][0] if len(points) > 1 else None,

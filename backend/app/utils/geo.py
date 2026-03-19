@@ -1,4 +1,5 @@
 from math import cos, radians
+from typing import Iterable
 
 
 def validate_coordinates(latitude: float, longitude: float) -> None:
@@ -36,47 +37,92 @@ def _point_in_polygon(latitude: float, longitude: float, points: list[tuple[floa
     return inside
 
 
+def _polygon_area(points: list[tuple[float, float]]) -> float:
+    area = 0.0
+    for i in range(len(points) - 1):
+        lat1, lon1 = points[i]
+        lat2, lon2 = points[i + 1]
+        area += (lon1 * lat2) - (lon2 * lat1)
+    return area * 0.5
+
+
+def _close_polygon(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if len(points) >= 2 and points[0] == points[-1]:
+        return points
+    return points + [points[0]]
+
+
+def _clean_duplicates(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    cleaned: list[tuple[float, float]] = []
+    for lat, lon in points:
+        if not cleaned or cleaned[-1] != (lat, lon):
+            cleaned.append((lat, lon))
+    if len(cleaned) > 1 and cleaned[0] == cleaned[-1]:
+        cleaned = cleaned[:-1]
+    return cleaned
+
+
+def _segments_intersect(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float], d: tuple[float, float]) -> bool:
+    def orient(p, q, r) -> float:
+        return (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+
+    def on_segment(p, q, r) -> bool:
+        return min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and min(p[1], r[1]) <= q[1] <= max(p[1], r[1])
+
+    o1 = orient(a, b, c)
+    o2 = orient(a, b, d)
+    o3 = orient(c, d, a)
+    o4 = orient(c, d, b)
+
+    if o1 == 0 and on_segment(a, c, b):
+        return True
+    if o2 == 0 and on_segment(a, d, b):
+        return True
+    if o3 == 0 and on_segment(c, a, d):
+        return True
+    if o4 == 0 and on_segment(c, b, d):
+        return True
+
+    return (o1 > 0) != (o2 > 0) and (o3 > 0) != (o4 > 0)
+
+
+def _validate_simple_polygon(points: list[tuple[float, float]]) -> None:
+    # Reject self-intersecting polygons.
+    n = len(points)
+    if n < 4:
+        return
+    # Use open polygon for intersection checks.
+    open_points = points[:-1] if points[0] == points[-1] else points
+    n = len(open_points)
+    for i in range(n):
+        a1 = open_points[i]
+        a2 = open_points[(i + 1) % n]
+        for j in range(i + 1, n):
+            if abs(i - j) <= 1 or (i == 0 and j == n - 1):
+                continue
+            b1 = open_points[j]
+            b2 = open_points[(j + 1) % n]
+            if _segments_intersect(a1, a2, b1, b2):
+                raise ValueError("Polygon self-intersects. Adjust points to form a valid boundary.")
+
+
 def normalize_polygon_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    # GEO: Normalize, validate, and close polygon for geofencing.
     if len(points) < 3:
         raise ValueError("At least 3 points are required for classroom geofence")
     normalized: list[tuple[float, float]] = []
     for lat, lon in points:
         validate_coordinates(lat, lon)
         normalized.append((lat, lon))
-    if len(normalized) >= 2 and normalized[0] == normalized[-1]:
-        normalized = normalized[:-1]
-    # Drop duplicate points before building hull.
-    unique = list(dict.fromkeys(normalized))
-    if len(unique) < 3:
+    normalized = _clean_duplicates(normalized)
+    if len(normalized) < 3:
         raise ValueError("At least 3 unique points are required for classroom geofence")
-    return convex_hull(unique)
-
-
-def _cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
-    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-
-def convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    # Monotonic chain on (lon, lat) for stable hull that encloses all points.
-    pts = sorted({(lon, lat) for lat, lon in points})
-    if len(pts) < 3:
-        raise ValueError("At least 3 unique points are required for classroom geofence")
-
-    lower: list[tuple[float, float]] = []
-    for p in pts:
-        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-
-    upper: list[tuple[float, float]] = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-
-    hull = lower[:-1] + upper[:-1]
-    # Convert back to (lat, lon)
-    return [(lat, lon) for lon, lat in hull]
+    # Normalize orientation (clockwise) and close polygon.
+    closed = _close_polygon(normalized)
+    if _polygon_area(closed) > 0:
+        closed = list(reversed(closed))
+    _validate_simple_polygon(closed)
+    return closed
 
 
 def bounds_from_points(points: list[tuple[float, float]]) -> tuple[float, float, float, float]:

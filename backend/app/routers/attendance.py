@@ -1,4 +1,5 @@
 ﻿from datetime import datetime
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,7 @@ from app.schemas.attendance import CheckpointRequest, CheckpointOut, AttendanceR
 from app.utils.geo import is_inside_polygon, is_inside_rectangle
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/checkpoint", response_model=CheckpointOut)
@@ -38,7 +40,9 @@ def create_checkpoint(
             points = []
             for point in classroom.polygon_points:
                 if isinstance(point, dict):
-                    points.append((point.get("latitude"), point.get("longitude")))
+                    lat = point.get("lat", point.get("latitude"))
+                    lng = point.get("lng", point.get("longitude"))
+                    points.append((lat, lng))
                 elif isinstance(point, (list, tuple)) and len(point) >= 2:
                     points.append((point[0], point[1]))
             points = [(lat, lon) for lat, lon in points if lat is not None and lon is not None]
@@ -59,15 +63,18 @@ def create_checkpoint(
                 (classroom.point4_lat, classroom.point4_lon),
             ]
 
+        # GEO: Polygon check with buffer tolerance.
         if points:
             inside = is_inside_polygon(
                 latitude=payload.latitude,
                 longitude=payload.longitude,
                 points=points,
                 gps_accuracy_m=payload.gps_accuracy_m,
-                tolerance_m=8.0,
+                tolerance_m=12.0,
             )
         else:
+            if classroom.latitude_min is None or classroom.latitude_max is None:
+                raise HTTPException(status_code=400, detail="Classroom polygon is missing")
             inside = is_inside_rectangle(
                 latitude=payload.latitude,
                 longitude=payload.longitude,
@@ -76,10 +83,20 @@ def create_checkpoint(
                 longitude_min=classroom.longitude_min,
                 longitude_max=classroom.longitude_max,
                 gps_accuracy_m=payload.gps_accuracy_m,
-                tolerance_m=8.0,
+                tolerance_m=12.0,
             )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    # GEO: Log evaluation for debugging.
+    logger.info(
+        "checkpoint: user=%s lecture=%s lat=%s lon=%s inside=%s",
+        current_user.id,
+        payload.lecture_id,
+        payload.latitude,
+        payload.longitude,
+        inside,
+    )
     record = (
         db.query(AttendanceRecord)
         .filter(AttendanceRecord.lecture_id == payload.lecture_id, AttendanceRecord.student_id == current_user.id)

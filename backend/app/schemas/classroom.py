@@ -1,9 +1,14 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, AliasChoices
 
 
 class GeoPoint(BaseModel):
-    latitude: float
-    longitude: float
+    # GEO: Accept both {lat,lng} and {latitude,longitude} inputs.
+    latitude: float = Field(validation_alias=AliasChoices("latitude", "lat"))
+    longitude: float = Field(validation_alias=AliasChoices("longitude", "lng"))
+
+    model_config = {
+        "populate_by_name": True,
+    }
 
 
 class ClassroomCreate(BaseModel):

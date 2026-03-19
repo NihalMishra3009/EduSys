@@ -48,6 +48,27 @@ class GeoUtils {
     return normalized;
   }
 
+  // GEO: Normalize points provided as {lat,lng} or {latitude,longitude}.
+  static List<List<double>> normalizePolygonFromMaps(List<dynamic> raw) {
+    final points = <List<double>>[];
+    for (final entry in raw) {
+      if (entry is Map<String, dynamic>) {
+        final lat = entry["lat"] ?? entry["latitude"];
+        final lng = entry["lng"] ?? entry["longitude"];
+        if (lat is num && lng is num) {
+          points.add([lat.toDouble(), lng.toDouble()]);
+        }
+      } else if (entry is List && entry.length >= 2) {
+        final lat = entry[0];
+        final lng = entry[1];
+        if (lat is num && lng is num) {
+          points.add([lat.toDouble(), lng.toDouble()]);
+        }
+      }
+    }
+    return normalizePolygonPoints(points);
+  }
+
   static bool _pointInPolygon(double latitude, double longitude, List<List<double>> points) {
     var inside = false;
     var j = points.length - 1;
@@ -101,6 +122,28 @@ class GeoUtils {
       }
     }
     return false;
+  }
+
+  // GEO: Reusable point-in-polygon check for app-level geofencing.
+  static bool checkPointInsidePolygon({
+    required Map<String, double> point,
+    required List<dynamic> polygon,
+    double? gpsAccuracyM,
+    double toleranceM = 0.0,
+  }) {
+    final lat = point["lat"];
+    final lng = point["lng"];
+    if (lat == null || lng == null) {
+      return false;
+    }
+    final normalized = normalizePolygonFromMaps(polygon);
+    return isInsidePolygon(
+      latitude: lat,
+      longitude: lng,
+      points: normalized,
+      gpsAccuracyM: gpsAccuracyM,
+      toleranceM: toleranceM,
+    );
   }
 
   static bool isInsideRectangle({
