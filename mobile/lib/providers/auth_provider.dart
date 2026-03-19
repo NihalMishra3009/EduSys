@@ -195,6 +195,9 @@ class AuthProvider extends ChangeNotifier {
     _error = null;
 
     try {
+      // Avoid stale persisted backend URLs from previous runs/environments.
+      await _apiService.setBaseUrl(ApiConfig.baseUrl);
+
       final deviceId = await _deviceBindingService.getDeviceId();
       final simSerial = await _deviceBindingService.getSimSerial();
 
