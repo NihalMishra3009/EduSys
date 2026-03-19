@@ -6,6 +6,7 @@ import "dart:io";
 
 import "package:edusys_mobile/core/animations/app_transitions.dart";
 import "package:edusys_mobile/core/constants/app_colors.dart";
+import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:edusys_mobile/core/utils/time_format.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/providers/theme_provider.dart";
@@ -121,6 +122,7 @@ class _AppShellState extends State<AppShell> {
     final hasSidebar = role == "STUDENT" || role == "PROFESSOR";
     final theme = context.read<ThemeProvider>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final lowEnd = PerfConfig.lowEnd(context);
     final pages = role == "ADMIN"
         ? [
             const _AdminHomeTab(),
@@ -277,13 +279,15 @@ class _AppShellState extends State<AppShell> {
                         .onSurface
                         .withValues(alpha: 0.14),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.12),
-                      blurRadius: 14,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
+                  boxShadow: lowEnd
+                      ? null
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.12),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
                 ),
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -2806,6 +2810,7 @@ class _BottomTabSectionState extends State<_BottomTabSection> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final lowEnd = PerfConfig.lowEnd(context);
     final pageCount = _pageCount();
     return SafeArea(
       top: false,
@@ -2813,27 +2818,18 @@ class _BottomTabSectionState extends State<_BottomTabSection> {
         padding: const EdgeInsets.symmetric(horizontal: 6),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(22),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(
-                sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
-            child: Container(
-              height: 76,
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-              decoration: BoxDecoration(
-                color: scheme.surface,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(
-                  color: Colors.black.withValues(alpha: dark ? 0.20 : 0.08),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: dark ? 0.22 : 0.08),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
+          child: lowEnd
+              ? Container(
+                  height: 76,
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: scheme.surface,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: dark ? 0.20 : 0.08),
+                    ),
                   ),
-                ],
-              ),
-              child: LayoutBuilder(
+                  child: LayoutBuilder(
                 builder: (context, constraints) {
                   const itemGap = 4.0;
                   final itemWidth =
@@ -2870,8 +2866,8 @@ class _BottomTabSectionState extends State<_BottomTabSection> {
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(14),
                                 onTap: () => widget.onTap(tabIndex),
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 220),
+                              child: AnimatedContainer(
+                                  duration: lowEnd ? Duration.zero : const Duration(milliseconds: 220),
                                   curve: Curves.easeOutCubic,
                                   width: itemWidth,
                                   height: 60,
@@ -2901,15 +2897,17 @@ class _BottomTabSectionState extends State<_BottomTabSection> {
                                           : scheme.onSurface.withValues(
                                               alpha: dark ? 0.18 : 0.12),
                                     ),
-                                    boxShadow: [
-                                      if (selected)
-                                        BoxShadow(
-                                          color: scheme.primary.withValues(
-                                              alpha: dark ? 0.36 : 0.24),
-                                          blurRadius: 14,
-                                          offset: const Offset(0, 4),
-                                        ),
-                                    ],
+                                    boxShadow: lowEnd
+                                        ? null
+                                        : [
+                                            if (selected)
+                                              BoxShadow(
+                                                color: scheme.primary.withValues(
+                                                    alpha: dark ? 0.36 : 0.24),
+                                                blurRadius: 14,
+                                                offset: const Offset(0, 4),
+                                              ),
+                                          ],
                                   ),
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
@@ -2950,8 +2948,146 @@ class _BottomTabSectionState extends State<_BottomTabSection> {
                   );
                 },
               ),
-            ),
-          ),
+                )
+              : BackdropFilter(
+                  filter: ImageFilter.blur(
+                      sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
+                  child: Container(
+                    height: 76,
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: scheme.surface,
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: Colors.black.withValues(alpha: dark ? 0.20 : 0.08),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: dark ? 0.22 : 0.08),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        const itemGap = 4.0;
+                        final itemWidth =
+                            (constraints.maxWidth - (itemGap * (_visibleTabs - 1))) /
+                                _visibleTabs;
+
+                        return PageView.builder(
+                          controller: _pageController,
+                          padEnds: false,
+                          itemCount: pageCount,
+                          itemBuilder: (context, pageIndex) {
+                            final start = pageIndex;
+                            return Row(
+                              children: List.generate(_visibleTabs, (slot) {
+                                final tabIndex = start + slot;
+                                final isLastSlot = slot == _visibleTabs - 1;
+                                if (tabIndex >= _BottomTabSection._tabs.length) {
+                                  return Expanded(
+                                    child: Padding(
+                                      padding: EdgeInsets.only(
+                                          right: isLastSlot ? 0 : itemGap),
+                                      child: const SizedBox(height: 60),
+                                    ),
+                                  );
+                                }
+
+                                final tab = _BottomTabSection._tabs[tabIndex];
+                                final selected = tabIndex == widget.selectedIndex;
+
+                                return Expanded(
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                        right: isLastSlot ? 0 : itemGap),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(14),
+                                      onTap: () => widget.onTap(tabIndex),
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 220),
+                                        curve: Curves.easeOutCubic,
+                                        width: itemWidth,
+                                        height: 60,
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topCenter,
+                                            end: Alignment.bottomCenter,
+                                            colors: selected
+                                                ? [
+                                                    scheme.primary.withValues(
+                                                        alpha: dark ? 0.34 : 0.24),
+                                                    scheme.primary.withValues(
+                                                        alpha: dark ? 0.18 : 0.12),
+                                                  ]
+                                                : [
+                                                    scheme.onSurface.withValues(
+                                                        alpha: dark ? 0.10 : 0.05),
+                                                    scheme.onSurface.withValues(
+                                                        alpha: dark ? 0.06 : 0.02),
+                                                  ],
+                                          ),
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(
+                                            color: selected
+                                                ? scheme.primary.withValues(
+                                                    alpha: dark ? 0.78 : 0.52)
+                                                : scheme.onSurface.withValues(
+                                                    alpha: dark ? 0.18 : 0.12),
+                                          ),
+                                          boxShadow: [
+                                            if (selected)
+                                              BoxShadow(
+                                                color: scheme.primary.withValues(
+                                                    alpha: dark ? 0.36 : 0.24),
+                                                blurRadius: 14,
+                                                offset: const Offset(0, 4),
+                                              ),
+                                          ],
+                                        ),
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              tab.icon,
+                                              size: 18,
+                                              color: selected
+                                                  ? scheme.primary
+                                                  : scheme.onSurface.withValues(
+                                                      alpha: dark ? 0.78 : 0.68),
+                                            ),
+                                            const SizedBox(height: 5),
+                                            Text(
+                                              tab.label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: selected
+                                                    ? FontWeight.w700
+                                                    : FontWeight.w600,
+                                                color: selected
+                                                    ? scheme.primary
+                                                    : scheme.onSurface.withValues(
+                                                        alpha: dark ? 0.80 : 0.70),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ),
         ),
       ),
     );

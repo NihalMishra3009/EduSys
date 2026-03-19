@@ -2,6 +2,7 @@ import "dart:ui";
 
 import "package:edusys_mobile/core/constants/app_colors.dart";
 import "package:edusys_mobile/core/theme/skeuomorphic.dart";
+import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:flutter/material.dart";
 
 class AppCard extends StatelessWidget {
@@ -19,28 +20,47 @@ class AppCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final lowEnd = PerfConfig.lowEnd(context);
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
-        child: Material(
-          type: MaterialType.transparency,
-          child: Container(
-            padding: padding,
-            decoration: gradient == null
-                ? SkeuoDecor.liquidGlass(
-                    tint: dark ? AppColors.darkSurface : AppColors.lightSurface,
-                    dark: dark,
-                    borderRadius: BorderRadius.circular(14),
-                  )
-                : BoxDecoration(
-                    gradient: gradient,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-            child: child,
-          ),
-        ),
-      ),
+      child: lowEnd
+          ? Material(
+              type: MaterialType.transparency,
+              child: Container(
+                padding: padding,
+                decoration: gradient == null
+                    ? SkeuoDecor.liquidGlass(
+                        tint: dark ? AppColors.darkSurface : AppColors.lightSurface,
+                        dark: dark,
+                        borderRadius: BorderRadius.circular(14),
+                      )
+                    : BoxDecoration(
+                        gradient: gradient,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                child: child,
+              ),
+            )
+          : BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
+              child: Material(
+                type: MaterialType.transparency,
+                child: Container(
+                  padding: padding,
+                  decoration: gradient == null
+                      ? SkeuoDecor.liquidGlass(
+                          tint: dark ? AppColors.darkSurface : AppColors.lightSurface,
+                          dark: dark,
+                          borderRadius: BorderRadius.circular(14),
+                        )
+                      : BoxDecoration(
+                          gradient: gradient,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                  child: child,
+                ),
+              ),
+            ),
     );
   }
 }

@@ -1,6 +1,7 @@
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/features/auth/otp_verify_screen.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
+import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 
@@ -63,6 +64,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final auth = context.watch<AuthProvider>();
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
+    final lowEnd = PerfConfig.lowEnd(context);
     return Scaffold(
       appBar: AppBar(title: const Text("Create Account")),
       body: Container(
@@ -86,15 +88,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   decoration: BoxDecoration(
                     color: theme.cardColor,
                     borderRadius: BorderRadius.circular(18),
-                    boxShadow: dark
+                    boxShadow: (dark || lowEnd)
                         ? null
                         : const [
-                      BoxShadow(
-                        color: Color(0x1A0C4A6E),
-                        blurRadius: 22,
-                        offset: Offset(0, 10),
-                      ),
-                    ],
+                            BoxShadow(
+                              color: Color(0x1A0C4A6E),
+                              blurRadius: 22,
+                              offset: Offset(0, 10),
+                            ),
+                          ],
                   ),
                   child: Form(
                     key: _formKey,

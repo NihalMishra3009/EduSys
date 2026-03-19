@@ -1,4 +1,5 @@
 import "package:edusys_mobile/core/constants/app_colors.dart";
+import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:flutter/material.dart";
 
 class SkeuoDecor {
@@ -9,6 +10,7 @@ class SkeuoDecor {
   }) {
     final useLightPrimary = !dark && base.value == AppColors.lightPrimary.value;
     final useDarkPrimary = dark && base.value == AppColors.darkPrimary.value;
+    final lowEnd = PerfConfig.lowEndGlobal;
     final topTint = useLightPrimary
         ? AppColors.lightPrimary
         : useDarkPrimary
@@ -38,14 +40,15 @@ class SkeuoDecor {
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: dark ? 0.35 : 0.08),
-          blurRadius: dark ? 30 : 18,
+          blurRadius: lowEnd ? (dark ? 16 : 10) : (dark ? 30 : 18),
           offset: const Offset(0, 10),
         ),
-        BoxShadow(
-          color: Colors.white.withValues(alpha: dark ? 0.06 : 0.70),
-          blurRadius: dark ? 16 : 16,
-          offset: const Offset(0, -4),
-        ),
+        if (!lowEnd)
+          BoxShadow(
+            color: Colors.white.withValues(alpha: dark ? 0.06 : 0.70),
+            blurRadius: dark ? 16 : 16,
+            offset: const Offset(0, -4),
+          ),
       ],
     );
   }
@@ -64,16 +67,17 @@ class SkeuoDecor {
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: dark ? 0.40 : 0.12),
-          blurRadius: 12,
+          blurRadius: PerfConfig.lowEndGlobal ? 6 : 12,
           offset: const Offset(0, 5),
           spreadRadius: -1,
         ),
-        BoxShadow(
-          color: Colors.white.withValues(alpha: dark ? 0.03 : 0.58),
-          blurRadius: 6,
-          offset: const Offset(0, -2),
-          spreadRadius: -2,
-        ),
+        if (!PerfConfig.lowEndGlobal)
+          BoxShadow(
+            color: Colors.white.withValues(alpha: dark ? 0.03 : 0.58),
+            blurRadius: 6,
+            offset: const Offset(0, -2),
+            spreadRadius: -2,
+          ),
       ],
     );
   }
@@ -89,14 +93,15 @@ class SkeuoDecor {
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: dark ? 0.28 : 0.10),
-          blurRadius: dark ? 26 : 18,
+          blurRadius: PerfConfig.lowEndGlobal ? (dark ? 14 : 10) : (dark ? 26 : 18),
           offset: const Offset(0, 10),
         ),
-        BoxShadow(
-          color: Colors.white.withValues(alpha: dark ? 0.04 : 0.50),
-          blurRadius: 12,
-          offset: const Offset(-4, -4),
-        ),
+        if (!PerfConfig.lowEndGlobal)
+          BoxShadow(
+            color: Colors.white.withValues(alpha: dark ? 0.04 : 0.50),
+            blurRadius: 12,
+            offset: const Offset(-4, -4),
+          ),
       ],
     );
   }

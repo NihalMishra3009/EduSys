@@ -1,6 +1,7 @@
 import "package:edusys_mobile/app_entry.dart";
 import "package:edusys_mobile/core/constants/app_colors.dart";
 import "package:edusys_mobile/core/theme/skeuomorphic.dart";
+import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
@@ -96,6 +97,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final auth = context.watch<AuthProvider>();
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
+    final lowEnd = PerfConfig.lowEnd(context);
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -105,117 +107,226 @@ class _LoginScreenState extends State<LoginScreen> {
               constraints: const BoxConstraints(maxWidth: 440),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(24),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
-                  child: Container(
-                    padding: const EdgeInsets.all(22),
-                    decoration: SkeuoDecor.liquidGlass(
-                      tint: dark ? AppColors.darkSurface : AppColors.lightSurface,
-                      dark: dark,
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Icon(Icons.school_rounded, size: 54, color: AppColors.lightPrimary),
-                          const SizedBox(height: 10),
-                          const Text(
-                            "EduSys",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            "Secure online login",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.lightTextSecondary,
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          _InputField(
-                            controller: _emailController,
-                            hint: "Email",
-                            icon: Icons.email_outlined,
-                            keyboardType: TextInputType.emailAddress,
-                            validator: _validateCollegeEmail,
-                          ),
-                          const SizedBox(height: 12),
-                          _InputField(
-                            controller: _passwordController,
-                            hint: "Password",
-                            icon: Icons.lock_outline_rounded,
-                            obscure: _obscurePassword,
-                            suffix: IconButton(
-                              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                              icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          DropdownButtonFormField<String>(
-                            initialValue: _selectedRole,
-                            decoration: InputDecoration(
-                              prefixIcon: Icon(Icons.badge_outlined, color: theme.colorScheme.primary),
-                              hintText: "Select role",
-                              filled: true,
-                              fillColor: dark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide.none,
+                child: lowEnd
+                    ? Container(
+                        padding: const EdgeInsets.all(22),
+                        decoration: SkeuoDecor.liquidGlass(
+                          tint: dark ? AppColors.darkSurface : AppColors.lightSurface,
+                          dark: dark,
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Icon(Icons.school_rounded, size: 54, color: AppColors.lightPrimary),
+                              const SizedBox(height: 10),
+                              const Text(
+                                "EduSys",
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
                               ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide(
-                                  color: dark
-                                      ? AppColors.darkBorder.withValues(alpha: 0.68)
-                                      : AppColors.lightBorder,
+                              const SizedBox(height: 4),
+                              const Text(
+                                "Secure online login",
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.lightTextSecondary,
                                 ),
                               ),
-                            ),
-                            items: const [
-                              DropdownMenuItem(value: "PROFESSOR", child: Text("Professor")),
-                              DropdownMenuItem(value: "STUDENT", child: Text("Student")),
+                              const SizedBox(height: 18),
+                              _InputField(
+                                controller: _emailController,
+                                hint: "Email",
+                                icon: Icons.email_outlined,
+                                keyboardType: TextInputType.emailAddress,
+                                validator: _validateCollegeEmail,
+                              ),
+                              const SizedBox(height: 12),
+                              _InputField(
+                                controller: _passwordController,
+                                hint: "Password",
+                                icon: Icons.lock_outline_rounded,
+                                obscure: _obscurePassword,
+                                suffix: IconButton(
+                                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                                  icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              DropdownButtonFormField<String>(
+                                initialValue: _selectedRole,
+                                decoration: InputDecoration(
+                                  prefixIcon: Icon(Icons.badge_outlined, color: theme.colorScheme.primary),
+                                  hintText: "Select role",
+                                  filled: true,
+                                  fillColor: dark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide(
+                                      color: dark
+                                          ? AppColors.darkBorder.withValues(alpha: 0.68)
+                                          : AppColors.lightBorder,
+                                    ),
+                                  ),
+                                ),
+                                items: const [
+                                  DropdownMenuItem(value: "PROFESSOR", child: Text("Professor")),
+                                  DropdownMenuItem(value: "STUDENT", child: Text("Student")),
+                                ],
+                                onChanged: (value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  setState(() => _selectedRole = value);
+                                },
+                              ),
+                              if (auth.error != null && auth.error!.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                Text(auth.error!, style: TextStyle(color: theme.colorScheme.error)),
+                              ],
+                              const SizedBox(height: 16),
+                              SizedBox(
+                                height: 52,
+                                child: DecoratedBox(
+                                  decoration: SkeuoDecor.surface(
+                                    base: dark ? AppColors.darkPrimary : AppColors.lightPrimary,
+                                    dark: dark,
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: FilledButton(
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: Colors.transparent,
+                                      foregroundColor: Colors.white,
+                                      shadowColor: Colors.transparent,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                    ),
+                                    onPressed: auth.isLoading ? null : _submit,
+                                    child: Text(auth.isLoading ? "Please wait..." : "Login"),
+                                  ),
+                                ),
+                              ),
                             ],
-                            onChanged: (value) {
-                              if (value == null) {
-                                return;
-                              }
-                              setState(() => _selectedRole = value);
-                            },
                           ),
-                          if (auth.error != null && auth.error!.isNotEmpty) ...[
-                            const SizedBox(height: 10),
-                            Text(auth.error!, style: TextStyle(color: theme.colorScheme.error)),
-                          ],
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            height: 52,
-                            child: DecoratedBox(
-                              decoration: SkeuoDecor.surface(
-                                base: dark ? AppColors.darkPrimary : AppColors.lightPrimary,
-                                dark: dark,
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: FilledButton(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: Colors.transparent,
-                                  foregroundColor: Colors.white,
-                                  shadowColor: Colors.transparent,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      )
+                    : BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: dark ? 2 : 0, sigmaY: dark ? 2 : 0),
+                        child: Container(
+                          padding: const EdgeInsets.all(22),
+                          decoration: SkeuoDecor.liquidGlass(
+                            tint: dark ? AppColors.darkSurface : AppColors.lightSurface,
+                            dark: dark,
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: Form(
+                            key: _formKey,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const Icon(Icons.school_rounded, size: 54, color: AppColors.lightPrimary),
+                                const SizedBox(height: 10),
+                                const Text(
+                                  "EduSys",
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
                                 ),
-                                onPressed: auth.isLoading ? null : _submit,
-                                child: Text(auth.isLoading ? "Please wait..." : "Login"),
-                              ),
+                                const SizedBox(height: 4),
+                                const Text(
+                                  "Secure online login",
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.lightTextSecondary,
+                                  ),
+                                ),
+                                const SizedBox(height: 18),
+                                _InputField(
+                                  controller: _emailController,
+                                  hint: "Email",
+                                  icon: Icons.email_outlined,
+                                  keyboardType: TextInputType.emailAddress,
+                                  validator: _validateCollegeEmail,
+                                ),
+                                const SizedBox(height: 12),
+                                _InputField(
+                                  controller: _passwordController,
+                                  hint: "Password",
+                                  icon: Icons.lock_outline_rounded,
+                                  obscure: _obscurePassword,
+                                  suffix: IconButton(
+                                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                                    icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                DropdownButtonFormField<String>(
+                                  initialValue: _selectedRole,
+                                  decoration: InputDecoration(
+                                    prefixIcon: Icon(Icons.badge_outlined, color: theme.colorScheme.primary),
+                                    hintText: "Select role",
+                                    filled: true,
+                                    fillColor: dark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      borderSide: BorderSide(
+                                        color: dark
+                                            ? AppColors.darkBorder.withValues(alpha: 0.68)
+                                            : AppColors.lightBorder,
+                                      ),
+                                    ),
+                                  ),
+                                  items: const [
+                                    DropdownMenuItem(value: "PROFESSOR", child: Text("Professor")),
+                                    DropdownMenuItem(value: "STUDENT", child: Text("Student")),
+                                  ],
+                                  onChanged: (value) {
+                                    if (value == null) {
+                                      return;
+                                    }
+                                    setState(() => _selectedRole = value);
+                                  },
+                                ),
+                                if (auth.error != null && auth.error!.isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  Text(auth.error!, style: TextStyle(color: theme.colorScheme.error)),
+                                ],
+                                const SizedBox(height: 16),
+                                SizedBox(
+                                  height: 52,
+                                  child: DecoratedBox(
+                                    decoration: SkeuoDecor.surface(
+                                      base: dark ? AppColors.darkPrimary : AppColors.lightPrimary,
+                                      dark: dark,
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: FilledButton(
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: Colors.transparent,
+                                        foregroundColor: Colors.white,
+                                        shadowColor: Colors.transparent,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                      ),
+                                      onPressed: auth.isLoading ? null : _submit,
+                                      child: Text(auth.isLoading ? "Please wait..." : "Login"),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                ),
               ),
             ),
           ),

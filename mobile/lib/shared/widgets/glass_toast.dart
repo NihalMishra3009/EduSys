@@ -2,6 +2,7 @@ import "dart:async";
 import "dart:ui";
 
 import "package:edusys_mobile/core/constants/app_colors.dart";
+import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:flutter/material.dart";
 
 class GlassToast {
@@ -50,15 +51,16 @@ class _ToastEntryState extends State<_ToastEntry>
   @override
   void initState() {
     super.initState();
+    final lowEnd = PerfConfig.lowEnd(context);
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 180),
-      reverseDuration: const Duration(milliseconds: 140),
+      duration: lowEnd ? const Duration(milliseconds: 80) : const Duration(milliseconds: 180),
+      reverseDuration: lowEnd ? const Duration(milliseconds: 60) : const Duration(milliseconds: 140),
     );
     _slide = Tween(begin: const Offset(0, 0.35), end: Offset.zero)
         .chain(CurveTween(curve: Curves.easeOutCubic))
         .animate(_controller);
-    _fade = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+    _fade = CurvedAnimation(parent: _controller, curve: lowEnd ? Curves.easeOut : Curves.easeOut);
 
     _controller.forward();
     Timer(widget.duration, () {
@@ -78,6 +80,7 @@ class _ToastEntryState extends State<_ToastEntry>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
+    final lowEnd = PerfConfig.lowEnd(context);
     final safeBottom = MediaQuery.of(context).padding.bottom;
 
     final borderColor = dark
@@ -101,52 +104,84 @@ class _ToastEntryState extends State<_ToastEntry>
               constraints: const BoxConstraints(maxWidth: 320),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(14),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: base.withValues(alpha: dark ? 0.78 : 0.92),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: borderColor),
-                      boxShadow: [
-                        BoxShadow(
-                          color: shadowColor,
-                          blurRadius: 14,
-                          offset: const Offset(0, 8),
+                child: lowEnd
+                    ? Container(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: base.withValues(alpha: dark ? 0.82 : 0.94),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: borderColor),
                         ),
-                        BoxShadow(
-                          color: highlightColor,
-                          blurRadius: 10,
-                          offset: const Offset(0, -3),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (widget.icon != null) ...[
-                          Icon(widget.icon,
-                              size: 16, color: AppColors.darkPrimary),
-                          const SizedBox(width: 6),
-                        ],
-                        Flexible(
-                          child: Text(
-                            widget.message,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: dark
-                                  ? AppColors.darkTextSecondary
-                                  : AppColors.lightTextPrimary,
-                              fontWeight: FontWeight.w600,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (widget.icon != null) ...[
+                              Icon(widget.icon,
+                                  size: 16, color: AppColors.darkPrimary),
+                              const SizedBox(width: 6),
+                            ],
+                            Flexible(
+                              child: Text(
+                                widget.message,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: dark
+                                      ? AppColors.darkTextSecondary
+                                      : AppColors.lightTextPrimary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ),
+                          ],
+                        ),
+                      )
+                    : BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Container(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: base.withValues(alpha: dark ? 0.78 : 0.92),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: borderColor),
+                            boxShadow: [
+                              BoxShadow(
+                                color: shadowColor,
+                                blurRadius: 14,
+                                offset: const Offset(0, 8),
+                              ),
+                              BoxShadow(
+                                color: highlightColor,
+                                blurRadius: 10,
+                                offset: const Offset(0, -3),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (widget.icon != null) ...[
+                                Icon(widget.icon,
+                                    size: 16, color: AppColors.darkPrimary),
+                                const SizedBox(width: 6),
+                              ],
+                              Flexible(
+                                child: Text(
+                                  widget.message,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: dark
+                                        ? AppColors.darkTextSecondary
+                                        : AppColors.lightTextPrimary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                ),
+                      ),
               ),
             ),
           ),

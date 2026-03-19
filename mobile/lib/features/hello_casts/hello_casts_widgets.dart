@@ -1,4 +1,5 @@
 import "package:edusys_mobile/shared/widgets/app_card.dart";
+import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
 
@@ -114,6 +115,7 @@ class HelloCastsActionPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final lowEnd = PerfConfig.lowEnd(context);
     return Material(
       type: MaterialType.transparency,
       child: InkWell(
@@ -127,13 +129,15 @@ class HelloCastsActionPill extends StatelessWidget {
             border: Border.all(
               color: tone.withValues(alpha: 0.2),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: tone.withValues(alpha: 0.18),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
-            ],
+            boxShadow: lowEnd
+                ? null
+                : [
+                    BoxShadow(
+                      color: tone.withValues(alpha: 0.18),
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
           ),
           child: Row(
             children: [
@@ -181,6 +185,7 @@ class HelloCastsSegmentedTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final lowEnd = PerfConfig.lowEnd(context);
     return Container(
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
@@ -197,7 +202,7 @@ class HelloCastsSegmentedTabs extends StatelessWidget {
             child: GestureDetector(
               onTap: () => onChanged(i),
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
+                duration: lowEnd ? Duration.zero : const Duration(milliseconds: 220),
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
                   color: selected
