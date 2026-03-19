@@ -155,7 +155,22 @@ def log_scan_event(
         raise HTTPException(status_code=403, detail="Student mismatch")
     session = db.get(LectureSession, payload.session_token)
     if not session or session.status != "active":
-        raise HTTPException(status_code=400, detail="Session not active")
+        lecture = db.get(Lecture, payload.lecture_id)
+        if not lecture or lecture.status != "ACTIVE":
+            raise HTTPException(status_code=400, detail="Session not active")
+        min_pct = int(round((lecture.required_presence_ratio or 0.75) * 100))
+        session = LectureSession(
+            session_token=payload.session_token,
+            lecture_id=payload.lecture_id,
+            room_id=lecture.classroom_id,
+            professor_id=lecture.professor_id,
+            scheduled_duration_ms=60 * 60 * 1000,
+            min_attendance_percent=min_pct,
+            actual_start=int(datetime.utcnow().timestamp() * 1000),
+            status="active",
+        )
+        db.merge(session)
+        db.commit()
     existing = db.get(ScanEvent, payload.scan_id)
     if existing:
         return {"status": "ok"}

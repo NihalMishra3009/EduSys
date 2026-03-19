@@ -239,20 +239,25 @@ class SmartAttendanceService {
       if (session == null) {
         session = await _fetchActiveSession(lectureId: lectureId);
       }
-      if (session == null) {
-        return const SmartAttendanceResult(
-          success: false,
-          message: "No active lecture session",
-        );
+      String? sessionToken = session?["session_token"]?.toString();
+      if (session == null || sessionToken == null || sessionToken.isEmpty) {
+        final beacon = await _scanForAnyBeacon();
+        if (beacon == null) {
+          return const SmartAttendanceResult(
+            success: false,
+            message: "No active lecture session or BLE beacon",
+          );
+        }
+        final beaconLecture = beacon["lectureId"] as int?;
+        if (beaconLecture != null && beaconLecture != lectureId) {
+          return SmartAttendanceResult(
+            success: false,
+            message:
+                "Beacon belongs to Lecture #$beaconLecture. Switch to that lecture.",
+          );
+        }
+        sessionToken = beacon["sessionToken"]?.toString();
       }
-      final sessionLectureId = (session["lecture_id"] as num?)?.toInt();
-      if (sessionLectureId != null && sessionLectureId != lectureId) {
-        return const SmartAttendanceResult(
-          success: false,
-          message: "Active session mismatch",
-        );
-      }
-      final sessionToken = session["session_token"]?.toString();
       if (sessionToken == null || sessionToken.isEmpty) {
         return const SmartAttendanceResult(
           success: false,
@@ -272,9 +277,10 @@ class SmartAttendanceService {
         );
       }
 
+      final token = sessionToken;
       final state = _sessionStates.putIfAbsent(
-        sessionToken,
-        () => _SessionState(sessionToken: sessionToken),
+        token,
+        () => _SessionState(sessionToken: token),
       );
 
       final scanResult = await _scanBleWindow(sessionToken);
@@ -382,6 +388,40 @@ class SmartAttendanceService {
     }
     final avg = results.reduce((a, b) => a + b) / results.length;
     return _BleScanWindow(avgRssi: avg, hitCount: results.length);
+  }
+
+  Future<Map<String, dynamic>?> _scanForAnyBeacon() async {
+    final hits = <Map<String, dynamic>>[];
+    try {
+      final scanStatus = await Permission.bluetoothScan.request();
+      if (!scanStatus.isGranted) return null;
+      final state = await FlutterBluePlus.adapterState.first;
+      if (state != BluetoothAdapterState.on) return null;
+      final subscription = FlutterBluePlus.scanResults.listen((list) {
+        for (final result in list) {
+          final payload = _decodeManufacturerPayload(result);
+          if (payload == null) continue;
+          if (payload["sessionToken"] == null) continue;
+          hits.add(payload);
+        }
+      });
+      await FlutterBluePlus.startScan(
+        withServices: [Guid(bleServiceUuid)],
+        timeout: const Duration(seconds: 6),
+      );
+      await Future.delayed(const Duration(seconds: 6));
+      await FlutterBluePlus.stopScan();
+      await subscription.cancel();
+    } catch (_) {
+      return null;
+    }
+    if (hits.isEmpty) return null;
+    final first = hits.first;
+    return {
+      "sessionToken": first["sessionToken"],
+      "lectureId": first["lectureId"] is num ? (first["lectureId"] as num).toInt() : null,
+      "roomId": first["roomId"] is num ? (first["roomId"] as num).toInt() : null,
+    };
   }
 
   Map<String, dynamic>? _decodeManufacturerPayload(ScanResult result) {
