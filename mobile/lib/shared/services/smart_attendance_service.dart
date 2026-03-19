@@ -208,8 +208,11 @@ class SmartAttendanceService {
     }
   }
 
-  Future<Map<String, dynamic>?> _fetchActiveSession({int? roomId}) async {
-    final response = await _api.getActiveAttendanceSession(roomId: roomId);
+  Future<Map<String, dynamic>?> _fetchActiveSession({int? roomId, int? lectureId}) async {
+    final response = await _api.getActiveAttendanceSession(
+      roomId: roomId,
+      lectureId: lectureId,
+    );
     if (response.statusCode >= 200 && response.statusCode < 300) {
       if (response.body.isEmpty) return null;
       final decoded = jsonDecode(response.body);
@@ -233,7 +236,10 @@ class SmartAttendanceService {
     }
     _scanning = true;
     try {
-      session ??= await _fetchActiveSession(roomId: roomId);
+      session ??= await _fetchActiveSession(roomId: roomId, lectureId: lectureId);
+      if (session == null) {
+        session = await _fetchActiveSession(lectureId: lectureId);
+      }
       if (session == null) {
         return const SmartAttendanceResult(
           success: false,
