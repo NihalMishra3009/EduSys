@@ -11,13 +11,11 @@ import "package:edusys_mobile/core/utils/time_format.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/providers/theme_provider.dart";
 import "package:edusys_mobile/features/admin/dashboard/admin_dashboard_screen.dart";
-import "package:edusys_mobile/features/common/permission_denied_screen.dart";
 import "package:edusys_mobile/features/hello_casts/hello_casts_screen.dart";
 import "package:edusys_mobile/features/student/railway/railway_concession_screen.dart";
 import "package:edusys_mobile/features/student/profile/profile_screen.dart";
 import "package:edusys_mobile/features/student/attendance/active_lecture_screen.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
-import "package:edusys_mobile/shared/services/crash_log_service.dart";
 import "package:edusys_mobile/shared/services/device_binding_service.dart";
 import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
 import "package:edusys_mobile/shared/widgets/app_button.dart";
@@ -121,8 +119,6 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     final role = context.watch<AuthProvider>().role ?? "STUDENT";
     final hasSidebar = role == "STUDENT" || role == "PROFESSOR";
-    final theme = context.read<ThemeProvider>();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final lowEnd = PerfConfig.lowEnd(context);
     final pages = role == "ADMIN"
         ? [
@@ -3229,7 +3225,6 @@ List<_CalendarEntry> _timetableEntriesForRange(DateTime start, DateTime end) {
 
 class _HomeTabState extends State<_HomeTab> {
   final ApiService _api = ApiService();
-  final SmartAttendanceService _smartAttendance = SmartAttendanceService();
   bool _loading = false;
   bool _offline = false;
   List<dynamic> _active = [];
@@ -3242,8 +3237,6 @@ class _HomeTabState extends State<_HomeTab> {
   Map<int, String> _studentNames = {};
   String _departmentName = "-";
   int _studentCount = 0;
-  Timer? _clockTimer;
-  DateTime _now = DateTime.now();
   Timer? _demoSyncTimer;
   int? _demoActiveLectureId;
   Timer? _activeSyncTimer;
@@ -3348,41 +3341,6 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   static const List<Map<String, dynamic>> _demoActiveLectures = [];
-
-  List<_TimetableSlot> _todayTimetableSlots() {
-    final now = TimeFormat.nowIst();
-    return _weeklyTimetable[now.weekday] ?? const <_TimetableSlot>[];
-  }
-
-  _TimetableSlot? _currentTimetableSlot() {
-    final now = TimeFormat.nowIst();
-    final minutes = (now.hour * 60) + now.minute;
-    for (final slot in _todayTimetableSlots()) {
-      if (minutes >= slot.startMinutes && minutes < slot.endMinutes) {
-        return slot;
-      }
-    }
-    return null;
-  }
-
-  List<_TimetableSlot> _upcomingTimetableSlots({int limit = 2}) {
-    final now = TimeFormat.nowIst();
-    final minutes = (now.hour * 60) + now.minute;
-    final list = _todayTimetableSlots()
-        .where((slot) => slot.startMinutes > minutes)
-        .toList()
-      ..sort((a, b) => a.startMinutes.compareTo(b.startMinutes));
-    if (list.length <= limit) {
-      return list;
-    }
-    return list.take(limit).toList();
-  }
-
-  String _slotLabel(_TimetableSlot slot) {
-    final start = TimeFormat.formatMinutes12h(slot.startMinutes);
-    final end = TimeFormat.formatMinutes12h(slot.endMinutes);
-    return "${slot.title} ($start - $end)";
-  }
   static const List<Map<String, dynamic>> _demoProfessorHistory = [
     {
       "id": 896,
@@ -3457,12 +3415,6 @@ class _HomeTabState extends State<_HomeTab> {
   @override
   void initState() {
     super.initState();
-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() => _now = DateTime.now());
-    });
     _demoSyncTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (!mounted || !kUseDemoDataEverywhere) {
         return;
@@ -3510,7 +3462,6 @@ class _HomeTabState extends State<_HomeTab> {
 
   @override
   void dispose() {
-    _clockTimer?.cancel();
     _demoSyncTimer?.cancel();
     _activeSyncTimer?.cancel();
     super.dispose();
@@ -3530,254 +3481,6 @@ class _HomeTabState extends State<_HomeTab> {
     } catch (_) {
       // Ignore transient failures.
     }
-  }
-
-  String _activeLectureDurationLabel(dynamic lecture) {
-    if (lecture is! Map<String, dynamic>) {
-      return "--:--";
-    }
-    final startRaw = lecture["start_time"]?.toString();
-    final start = TimeFormat.parseToIst(startRaw) ??
-        DateTime.tryParse(startRaw ?? "");
-    if (start == null) {
-      return "--:--";
-    }
-    final diff = _now.difference(start).abs();
-    final hours = diff.inHours;
-    final minutes = diff.inMinutes.remainder(60).toString().padLeft(2, "0");
-    final seconds = diff.inSeconds.remainder(60).toString().padLeft(2, "0");
-    return hours > 0 ? "${hours}h ${minutes}m" : "$minutes:$seconds";
-  }
-
-  Future<void> _showQuickStartLectureSheet() async {
-    final createdSpaces = <Map<String, dynamic>>[];
-    try {
-      final res = await _api.listClassrooms();
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final decoded = jsonDecode(res.body) as List<dynamic>;
-        createdSpaces.addAll(decoded.whereType<Map<String, dynamic>>());
-      }
-    } catch (_) {
-      // Ignore fetch failures here.
-    }
-    if (createdSpaces.isEmpty) {
-      final prefs = await SharedPreferences.getInstance();
-      final rawSpaces = prefs.getString("professor_created_spaces");
-      if (rawSpaces != null && rawSpaces.isNotEmpty) {
-        try {
-          createdSpaces.addAll(
-            (jsonDecode(rawSpaces) as List<dynamic>)
-                .whereType<Map<String, dynamic>>(),
-          );
-        } catch (_) {}
-      }
-    }
-    final selectedClasses = <int>{};
-    final selectedStudents = <int>{};
-    int? selectedSpaceId;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(builder: (context, setSheetState) {
-          List<Map<String, dynamic>> visibleStudents() {
-            if (selectedClasses.isEmpty) {
-              return const [];
-            }
-            final rows = <Map<String, dynamic>>[];
-            for (final classId in selectedClasses) {
-              final list = _demoClassStudents[classId] ?? const [];
-              rows.addAll(list);
-            }
-            return rows;
-          }
-
-          void toggleClass(int id, bool selected) {
-            setSheetState(() {
-              if (selected) {
-                selectedClasses.add(id);
-              } else {
-                selectedClasses.remove(id);
-                final list = _demoClassStudents[id] ?? const [];
-                for (final s in list) {
-                  selectedStudents.remove(s["id"] as int);
-                }
-              }
-            });
-          }
-
-          void toggleStudent(int id, bool selected) {
-            setSheetState(() {
-              if (selected) {
-                selectedStudents.add(id);
-              } else {
-                selectedStudents.remove(id);
-              }
-            });
-          }
-
-          Future<void> startLecture() async {
-            if (createdSpaces.isNotEmpty && selectedSpaceId == null) {
-              GlassToast.show(context, "Select a space",
-                  icon: Icons.info_outline);
-              return;
-            }
-            if (selectedClasses.isEmpty) {
-              GlassToast.show(context, "Select at least one class",
-                  icon: Icons.info_outline);
-              return;
-            }
-            if (selectedStudents.isEmpty) {
-              GlassToast.show(context, "Select at least one student",
-                  icon: Icons.info_outline);
-              return;
-            }
-            final firstClass = _demoProfessorClasses
-                .firstWhere((c) => selectedClasses.contains(c["id"] as int));
-            final classroomId = selectedSpaceId ?? (firstClass["id"] as int);
-            final title = "Lecture - ${firstClass["name"]}";
-            final nowUtc = DateTime.now().toUtc().toIso8601String();
-            if (kUseDemoDataEverywhere) {
-              final lectureId = DateTime.now().millisecondsSinceEpoch % 100000;
-              setState(() {
-                _active = [
-                  {
-                    "id": lectureId,
-                    "title": title,
-                    "classroom_id": classroomId,
-                    "status": "ACTIVE",
-                    "start_time": nowUtc,
-                  },
-                ];
-                _nearbyStudents = selectedStudents.map((id) {
-                  final name = _demoClassStudents.values
-                          .expand((e) => e)
-                          .firstWhere((s) => s["id"] == id)["name"]
-                          .toString();
-                  return {
-                    "student_id": id,
-                    "student_name": name,
-                    "lecture_id": lectureId,
-                  };
-                }).toList();
-              });
-            } else {
-              final res = await _api.startLecture(classroomId);
-              if (res.statusCode >= 200 && res.statusCode < 300) {
-                try {
-                  final payload = jsonDecode(res.body) as Map<String, dynamic>;
-                  final lectureId = (payload["id"] as num).toInt();
-                  final durationMs =
-                      ((payload["scheduled_duration_ms"] as num?)?.toInt() ?? 60) *
-                          60 *
-                          1000;
-                  await _smartAttendance.startProfessorSession(
-                    lectureId: lectureId,
-                    roomId: classroomId,
-                    scheduledDurationMs: durationMs,
-                    minAttendancePercent: 75,
-                    scheduledStart: payload["scheduled_start"] as int?,
-                  );
-                } catch (_) {}
-              }
-              await _handleLectureStarted({
-                "title": title,
-                "classroom_id": classroomId,
-              });
-            }
-            if (context.mounted) {
-              Navigator.of(context).pop();
-            }
-          }
-
-          final students = visibleStudents();
-          return SafeArea(
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SectionTitle("Start Lecture"),
-                    const SizedBox(height: 8),
-                    const Text("Select space"),
-                    const SizedBox(height: 6),
-                    if (createdSpaces.isEmpty)
-                      const Text("No spaces created yet.")
-                    else
-                      ...createdSpaces.map((space) {
-                        final id = (space["id"] as num?)?.toInt();
-                        final name =
-                            (space["name"] ?? "Space #$id").toString();
-                        return RadioListTile<int>(
-                          dense: true,
-                          value: id ?? -1,
-                          groupValue: selectedSpaceId,
-                          onChanged: id == null
-                              ? null
-                              : (value) => setSheetState(
-                                  () => selectedSpaceId = value,
-                                ),
-                          title: Text(name),
-                        );
-                      }),
-                    const SizedBox(height: 12),
-                    const Text("Select classes"),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _demoProfessorClasses.map((c) {
-                        final id = c["id"] as int;
-                        return FilterChip(
-                          label: Text(c["name"].toString()),
-                          selected: selectedClasses.contains(id),
-                          onSelected: (value) => toggleClass(id, value),
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text("Select students"),
-                    const SizedBox(height: 6),
-                    if (students.isEmpty)
-                      const Text("Select a class to load students.")
-                    else
-                      ...students.map((s) {
-                        final id = s["id"] as int;
-                        final name = s["name"].toString();
-                        return CheckboxListTile(
-                          dense: true,
-                          value: selectedStudents.contains(id),
-                          onChanged: (value) =>
-                              toggleStudent(id, value ?? false),
-                          title: Text(name),
-                        );
-                      }),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: AppButton(
-                            label: "Start lecture",
-                            icon: Icons.play_circle_fill_rounded,
-                            onPressed: startLecture,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        });
-      },
-    );
   }
 
   Future<void> _load() async {
@@ -4420,6 +4123,7 @@ class _ProfessorDashboard extends StatefulWidget {
 
 class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   final ApiService _api = ApiService();
+  final SmartAttendanceService _smartAttendance = SmartAttendanceService();
   bool _endingLecture = false;
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
@@ -4603,6 +4307,18 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
             if (res.statusCode >= 200 && res.statusCode < 300) {
               try {
                 payload = jsonDecode(res.body) as Map<String, dynamic>;
+                final lectureId = (payload["id"] as num).toInt();
+                final durationMs =
+                    ((payload["scheduled_duration_ms"] as num?)?.toInt() ?? 60) *
+                        60 *
+                        1000;
+                await _smartAttendance.startProfessorSession(
+                  lectureId: lectureId,
+                  roomId: classroomId,
+                  scheduledDurationMs: durationMs,
+                  minAttendancePercent: 75,
+                  scheduledStart: payload["scheduled_start"] as int?,
+                );
               } catch (_) {}
             } else {
               GlassToast.show(
@@ -5333,6 +5049,10 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                           return;
                         }
                         var startedCount = 0;
+                        int? firstLectureId;
+                        int? firstRoomId;
+                        int? firstDurationMs;
+                        int? firstScheduledStart;
                         if (!kUseDemoDataEverywhere) {
                           for (final className in selectedClasses) {
                             final classRoomId = classMeta[className];
@@ -5340,6 +5060,23 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                                 await _api.startLecture(classRoomId ?? roomNo);
                             if (res.statusCode >= 200 && res.statusCode < 300) {
                               startedCount += 1;
+                              if (firstLectureId == null) {
+                                try {
+                                  final p =
+                                      jsonDecode(res.body) as Map<String, dynamic>;
+                                  firstLectureId =
+                                      (p["id"] as num?)?.toInt();
+                                  firstRoomId = classRoomId ?? roomNo;
+                                  firstDurationMs =
+                                      ((p["scheduled_duration_ms"] as num?)
+                                                  ?.toInt() ??
+                                              60) *
+                                          60 *
+                                          1000;
+                                  firstScheduledStart =
+                                      p["scheduled_start"] as int?;
+                                } catch (_) {}
+                              }
                             }
                           }
                         } else {
@@ -5349,6 +5086,18 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                           return;
                         }
                         if (startedCount > 0) {
+                          if (firstLectureId != null && firstRoomId != null) {
+                            try {
+                              await _smartAttendance.startProfessorSession(
+                                lectureId: firstLectureId,
+                                roomId: firstRoomId,
+                                scheduledDurationMs:
+                                    firstDurationMs ?? 3600000,
+                                minAttendancePercent: 75,
+                                scheduledStart: firstScheduledStart,
+                              );
+                            } catch (_) {}
+                          }
                           final firstClass = selectedClasses.isEmpty
                               ? "Class A"
                               : selectedClasses.first;
@@ -9896,14 +9645,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     }
   }
 
-  void _clearSpacePoints() {
-    setState(() {
-      _ceilingHeightController.clear();
-      _bleRssiController.clear();
-      _bleRssiAuto = true;
-    });
-  }
-
   Future<void> _createSpace() async {
     final name = _spaceNameController.text.trim();
     if (name.isEmpty) {
@@ -9969,7 +9710,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
           "ble_rssi_threshold_auto": _bleRssiAuto,
         };
         await _api.setRoomCalibration(
-          roomId: roomId!,
+          roomId: roomId,
           payload: calibrationPayload,
         );
       }

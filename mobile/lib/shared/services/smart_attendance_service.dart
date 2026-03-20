@@ -10,7 +10,6 @@ import "package:flutter/widgets.dart";
 import "package:flutter/services.dart";
 import "package:flutter_blue_plus/flutter_blue_plus.dart";
 import "package:flutter_background_service/flutter_background_service.dart";
-import "package:flutter_background_service_android/flutter_background_service_android.dart";
 import "package:permission_handler/permission_handler.dart";
 import "package:sensors_plus/sensors_plus.dart";
 import "package:shared_preferences/shared_preferences.dart";
@@ -45,7 +44,7 @@ class SmartAttendanceService {
   static const int manufacturerId = 0x0001;
   static const String _bleChannelName = "edusys/ble_advertise";
   static const double _motionThreshold = 2.5;
-  static const Duration _motionCooldown = Duration(seconds: 12);
+  static const Duration _motionCooldown = Duration(seconds: 5);
   static const Duration _scanWindow = Duration(seconds: 10);
   static const Duration _autoScanInterval = Duration(seconds: 60);
   static const String _bgTrackingPrefKey = "attendance_background_enabled";
@@ -230,7 +229,7 @@ class SmartAttendanceService {
     final permissions = <Permission>[
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
-      Permission.bluetoothAdvertise,
+      // bluetoothAdvertise is not needed for students — only professors advertise
       Permission.activityRecognition,
       if (Platform.isAndroid) Permission.notification,
     ];
@@ -496,9 +495,8 @@ class SmartAttendanceService {
 
       final roomConfig = await _getRoomConfig(roomId);
       if (roomConfig == null) {
-        CrashLogService.log("SCAN", "Room config missing roomId=$roomId");
-        return const SmartAttendanceResult(
-            success: false, message: "Room config missing");
+        CrashLogService.log(
+            "SCAN", "Room config missing roomId=$roomId — using default threshold");
       }
 
       final state = _sessionStates.putIfAbsent(
@@ -518,7 +516,7 @@ class SmartAttendanceService {
       }
 
       final threshold =
-          (roomConfig["ble_rssi_threshold"] as num?)?.toDouble() ?? -85;
+          (roomConfig?["ble_rssi_threshold"] as num?)?.toDouble() ?? -75;
       final inside = scanResult.avgRssi! >= threshold;
       final newState = inside ? _PresenceState.inside : _PresenceState.outside;
 
@@ -563,9 +561,12 @@ class SmartAttendanceService {
 
       state.pendingState = newState;
       CrashLogService.log("SCAN", "Pending ${newState.name} confirmation");
+      final pendingLabel = newState == _PresenceState.inside
+          ? "Almost there — stay near the beacon and tap again to confirm entry."
+          : "Move away from the classroom and tap again to confirm exit.";
       return SmartAttendanceResult(
         success: true,
-        message: "Pending ${newState.name} confirmation",
+        message: pendingLabel,
       );
     } catch (e, s) {
       CrashLogService.log("SCAN_ERROR", e.toString(), stack: s);
@@ -804,7 +805,6 @@ void smartAttendanceBackgroundStart(ServiceInstance service) async {
 
 class _BackgroundSensorState {
   static AccelerometerEvent? _last;
-  static StreamSubscription<AccelerometerEvent>? _sub;
 
   static void start(ServiceInstance service) {
     _trySubscribe(service, attempt: 0);
@@ -812,7 +812,7 @@ class _BackgroundSensorState {
 
   static void _trySubscribe(ServiceInstance service, {required int attempt}) {
     try {
-      _sub = SensorsPlatform.instance.accelerometerEvents.listen(
+      SensorsPlatform.instance.accelerometerEvents.listen(
         (event) {
           final last = _last;
           if (last != null) {
@@ -829,7 +829,6 @@ class _BackgroundSensorState {
         },
         onError: (e) {
           service.invoke("bgs_error", {"error": e.toString()});
-          _sub = null;
           if (attempt < 4) {
             Future.delayed(const Duration(seconds: 3), () {
               _trySubscribe(service, attempt: attempt + 1);
