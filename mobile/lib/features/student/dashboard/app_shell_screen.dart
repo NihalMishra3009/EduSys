@@ -17,6 +17,7 @@ import "package:edusys_mobile/features/student/railway/railway_concession_screen
 import "package:edusys_mobile/features/student/profile/profile_screen.dart";
 import "package:edusys_mobile/features/student/attendance/active_lecture_screen.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/services/crash_log_service.dart";
 import "package:edusys_mobile/shared/services/device_binding_service.dart";
 import "package:edusys_mobile/shared/services/location_service.dart";
 import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
@@ -8994,11 +8995,34 @@ class _LecturesTabState extends State<_LecturesTab> {
         longitude: pos.longitude,
         gpsAccuracyM: pos.accuracy,
       );
-      _show(_detail(res.body, "Checkpoint submitted"));
-    } on LocationServiceException {
       if (!mounted) return;
-      Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const PermissionDeniedScreen()));
+      _show(_detail(res.body, "Checkpoint submitted"));
+    } on LocationServiceException catch (e, s) {
+      CrashLogService.log(
+        "MARK_PRESENCE_LOCATION",
+        "lectureId=$lectureId type=${e.type.name}",
+        stack: s,
+      );
+      if (!mounted) return;
+      if (e.type == LocationErrorType.denied ||
+          e.type == LocationErrorType.deniedForever ||
+          e.type == LocationErrorType.gpsDisabled) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const PermissionDeniedScreen(),
+          ),
+        );
+        return;
+      }
+      _show("Unable to read a stable location. Please try again.");
+    } catch (e, s) {
+      CrashLogService.log(
+        "MARK_PRESENCE_ERROR",
+        "lectureId=$lectureId error=$e",
+        stack: s,
+      );
+      if (!mounted) return;
+      _show("Unable to mark presence right now. Please try again.");
     }
   }
 

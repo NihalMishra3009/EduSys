@@ -1,3 +1,4 @@
+import "dart:async";
 import "dart:math" as math;
 
 import "package:geolocator/geolocator.dart";
@@ -62,9 +63,17 @@ class LocationService {
 
   Future<Position> getCurrentPosition() async {
     await _ensurePermission();
-    return Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.best),
-    );
+    try {
+      return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best,
+        ),
+      ).timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      throw LocationServiceException(LocationErrorType.unstable);
+    } catch (_) {
+      throw LocationServiceException(LocationErrorType.unstable);
+    }
   }
 
   Future<Position> getFreshPosition({Duration maxAge = const Duration(seconds: 8)}) async {
