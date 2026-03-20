@@ -72,7 +72,14 @@ class SmartAttendanceService {
         return;
       }
       await _loadBackgroundPreference();
-      await _ensureNotificationChannel();
+      final channelOk = await _ensureNotificationChannel();
+      if (!channelOk) {
+        _backgroundEnabled = false;
+        await _saveBackgroundPreference(false);
+        await _setBackgroundReceiversEnabled(false);
+        _startForegroundMotionListener();
+        return;
+      }
       await _setBackgroundReceiversEnabled(_backgroundEnabled);
       if (Platform.isAndroid) {
         if (_backgroundEnabled) {
@@ -110,7 +117,14 @@ class SmartAttendanceService {
     await _saveBackgroundPreference(_backgroundEnabled);
     if (!_monitoring) return _backgroundEnabled;
     if (_backgroundEnabled) {
-      await _ensureNotificationChannel();
+      final channelOk = await _ensureNotificationChannel();
+      if (!channelOk) {
+        _backgroundEnabled = false;
+        await _saveBackgroundPreference(false);
+        await _setBackgroundReceiversEnabled(false);
+        _startForegroundMotionListener();
+        return _backgroundEnabled;
+      }
       await _setBackgroundReceiversEnabled(true);
       await _ensureBackgroundService();
     } else {
@@ -135,11 +149,16 @@ class SmartAttendanceService {
     } catch (_) {}
   }
 
-  Future<void> _ensureNotificationChannel() async {
-    if (!Platform.isAndroid) return;
+  Future<bool> _ensureNotificationChannel() async {
+    if (!Platform.isAndroid) return true;
     try {
-      await _attendanceNativeChannel.invokeMethod("ensureChannel");
-    } catch (_) {}
+      final result = await _attendanceNativeChannel.invokeMethod("ensureChannel");
+      if (result is bool) return result;
+      return false;
+    } catch (e, s) {
+      CrashLogService.log("CHANNEL_ERROR", e.toString(), stack: s);
+      return false;
+    }
   }
 
   Future<void> _setBackgroundReceiversEnabled(bool enabled) async {
@@ -238,7 +257,15 @@ class SmartAttendanceService {
         await _setBackgroundReceiversEnabled(false);
         return;
       }
-      await _ensureNotificationChannel();
+      final channelOk = await _ensureNotificationChannel();
+      if (!channelOk) {
+        CrashLogService.log("BGS", "Channel missing — using foreground listener");
+        _startForegroundMotionListener();
+        _backgroundEnabled = false;
+        await _saveBackgroundPreference(false);
+        await _setBackgroundReceiversEnabled(false);
+        return;
+      }
       final service = FlutterBackgroundService();
       final isRunning = await service.isRunning();
       CrashLogService.log("BGS", "Running: $isRunning");
