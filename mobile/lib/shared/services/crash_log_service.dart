@@ -41,6 +41,21 @@ class CrashLogService {
         mode: FileMode.append,
         flush: true,
       );
+      await _writeToDownloads(entry);
+    } catch (_) {}
+  }
+
+  static Future<void> _writeToDownloads(String entry) async {
+    if (!Platform.isAndroid) return;
+    try {
+      final downloadsDir = Directory("/storage/emulated/0/Download");
+      if (!await downloadsDir.exists()) return;
+      final file = File("${downloadsDir.path}/crash_log.txt");
+      await file.writeAsString(
+        "$entry\n",
+        mode: FileMode.append,
+        flush: true,
+      );
     } catch (_) {}
   }
 
@@ -56,6 +71,15 @@ class CrashLogService {
         dir = await getApplicationDocumentsDirectory();
       }
       final file = File("${dir.path}/crash_log.txt");
+      if (await file.exists()) await file.delete();
+      await _clearDownloads();
+    } catch (_) {}
+  }
+
+  static Future<void> _clearDownloads() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final file = File("/storage/emulated/0/Download/crash_log.txt");
       if (await file.exists()) await file.delete();
     } catch (_) {}
   }

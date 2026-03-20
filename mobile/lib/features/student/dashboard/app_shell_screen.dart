@@ -3485,7 +3485,7 @@ class _HomeTabState extends State<_HomeTab> {
       try {
         final payload = jsonDecode(raw) as Map<String, dynamic>;
         final id = (payload["id"] as num?)?.toInt();
-        if (id != null && id != _demoActiveLectureId) {
+        if (id != null && id != _demoActiveLectureId && mounted) {
           setState(() {
             _active = [payload];
             _demoActiveLectureId = id;
@@ -3495,7 +3495,7 @@ class _HomeTabState extends State<_HomeTab> {
         // Ignore malformed cache.
       }
     });
-    _activeSyncTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+    _activeSyncTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       if (!mounted || kUseDemoDataEverywhere) {
         return;
       }
@@ -3517,13 +3517,16 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   Future<void> _syncActiveLecturesFromApi() async {
+    if (!mounted) return;
     try {
       final res = await _api.listActiveLectures();
       if (!mounted || res.statusCode < 200 || res.statusCode >= 300) {
         return;
       }
       final rows = jsonDecode(res.body) as List<dynamic>;
-      setState(() => _active = rows);
+      if (mounted) {
+        setState(() => _active = rows);
+      }
     } catch (_) {
       // Ignore transient failures.
     }
