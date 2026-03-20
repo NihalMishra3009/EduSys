@@ -49,6 +49,8 @@ class SmartAttendanceService {
   static const Duration _scanWindow = Duration(seconds: 10);
   static const Duration _autoScanInterval = Duration(seconds: 60);
   static const String _bgTrackingPrefKey = "attendance_background_enabled";
+  static const MethodChannel _attendanceNativeChannel =
+      MethodChannel("edusys/attendance_native");
 
   AccelerometerEvent? _lastAccel;
 
@@ -70,6 +72,8 @@ class SmartAttendanceService {
         return;
       }
       await _loadBackgroundPreference();
+      await _ensureNotificationChannel();
+      await _setBackgroundReceiversEnabled(_backgroundEnabled);
       if (Platform.isAndroid) {
         if (_backgroundEnabled) {
           await _ensureBackgroundService();
@@ -93,6 +97,7 @@ class SmartAttendanceService {
     await _backgroundMotionSub?.cancel();
     _backgroundMotionSub = null;
     await _stopBackgroundService();
+    await _setBackgroundReceiversEnabled(false);
     _autoScanTimer?.cancel();
     _autoScanTimer = null;
     _monitoring = false;
@@ -105,9 +110,12 @@ class SmartAttendanceService {
     await _saveBackgroundPreference(_backgroundEnabled);
     if (!_monitoring) return _backgroundEnabled;
     if (_backgroundEnabled) {
+      await _ensureNotificationChannel();
+      await _setBackgroundReceiversEnabled(true);
       await _ensureBackgroundService();
     } else {
       await _stopBackgroundService();
+      await _setBackgroundReceiversEnabled(false);
       _startForegroundMotionListener();
     }
     return _backgroundEnabled;
@@ -124,6 +132,21 @@ class SmartAttendanceService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_bgTrackingPrefKey, enabled);
+    } catch (_) {}
+  }
+
+  Future<void> _ensureNotificationChannel() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _attendanceNativeChannel.invokeMethod("ensureChannel");
+    } catch (_) {}
+  }
+
+  Future<void> _setBackgroundReceiversEnabled(bool enabled) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _attendanceNativeChannel
+          .invokeMethod("setBackgroundReceivers", {"enabled": enabled});
     } catch (_) {}
   }
 
@@ -212,8 +235,10 @@ class SmartAttendanceService {
         _startForegroundMotionListener();
         _backgroundEnabled = false;
         await _saveBackgroundPreference(false);
+        await _setBackgroundReceiversEnabled(false);
         return;
       }
+      await _ensureNotificationChannel();
       final service = FlutterBackgroundService();
       final isRunning = await service.isRunning();
       CrashLogService.log("BGS", "Running: $isRunning");
@@ -260,6 +285,7 @@ class SmartAttendanceService {
       _startForegroundMotionListener();
       _backgroundEnabled = false;
       await _saveBackgroundPreference(false);
+      await _setBackgroundReceiversEnabled(false);
     }
   }
 

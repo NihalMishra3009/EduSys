@@ -34,6 +34,18 @@
             android:foregroundServiceType="dataSync"
             android:exported="false"
             tools:replace="android:exported" />
+        <receiver
+            android:name="id.flutter.flutter_background_service.WatchdogReceiver"
+            android:enabled="false"
+            android:exported="false"
+            tools:node="merge"
+            tools:replace="android:enabled,android:exported" />
+        <receiver
+            android:name="id.flutter.flutter_background_service.BootReceiver"
+            android:enabled="false"
+            android:exported="false"
+            tools:node="merge"
+            tools:replace="android:enabled,android:exported" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

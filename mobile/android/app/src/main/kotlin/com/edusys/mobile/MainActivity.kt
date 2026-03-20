@@ -6,7 +6,11 @@ import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
+import android.content.ComponentName
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.ParcelUuid
 import android.telephony.SubscriptionManager
@@ -23,6 +27,8 @@ import java.util.UUID
 class MainActivity : FlutterActivity() {
     private val channelName = "edusys/device"
     private val bleChannelName = "edusys/ble_advertise"
+    private val attendanceNativeChannel = "edusys/attendance_native"
+    private val attendanceChannelId = "edusys_attendance"
     private var advertiser: BluetoothLeAdvertiser? = null
     private var advertiseCallback: AdvertiseCallback? = null
     private var pendingAdvertiseResult: MethodChannel.Result? = null
@@ -61,6 +67,22 @@ class MainActivity : FlutterActivity() {
                     }
                     "stopAdvertising" -> {
                         stopAdvertising()
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, attendanceNativeChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "ensureChannel" -> {
+                        createAttendanceChannel()
+                        result.success(true)
+                    }
+                    "setBackgroundReceivers" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        setBackgroundReceiversEnabled(enabled)
                         result.success(true)
                     }
                     else -> result.notImplemented()
@@ -149,6 +171,40 @@ class MainActivity : FlutterActivity() {
         }
 
         bleAdvertiser.startAdvertising(settings, data, advertiseCallback)
+    }
+
+    private fun createAttendanceChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        val existing = manager.getNotificationChannel(attendanceChannelId)
+        if (existing != null) return
+        val channel = NotificationChannel(
+            attendanceChannelId,
+            "EduSys Attendance",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Foreground service notifications for attendance tracking"
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun setBackgroundReceiversEnabled(enabled: Boolean) {
+        val pm = packageManager ?: return
+        val watchdog = ComponentName(
+            this,
+            "id.flutter.flutter_background_service.WatchdogReceiver"
+        )
+        val boot = ComponentName(
+            this,
+            "id.flutter.flutter_background_service.BootReceiver"
+        )
+        val state = if (enabled) {
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        } else {
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        }
+        pm.setComponentEnabledSetting(watchdog, state, PackageManager.DONT_KILL_APP)
+        pm.setComponentEnabledSetting(boot, state, PackageManager.DONT_KILL_APP)
     }
 
     private fun stopAdvertising() {
