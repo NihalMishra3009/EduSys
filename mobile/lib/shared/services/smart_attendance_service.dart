@@ -2,6 +2,7 @@ import "dart:async";
 import "dart:convert";
 import "dart:io";
 import "dart:math" as math;
+import "dart:typed_data";
 import "dart:ui" as ui;
 
 import "package:edusys_mobile/shared/services/api_service.dart";
@@ -703,6 +704,19 @@ class SmartAttendanceService {
     final bytes = result.advertisementData.manufacturerData[manufacturerId];
     if (bytes == null || bytes.isEmpty) return null;
     try {
+      // Binary payload path (versioned)
+      if (bytes.length >= 9 && bytes[0] == 1) {
+        final data = ByteData.sublistView(Uint8List.fromList(bytes));
+        final roomId = data.getUint32(1, Endian.big);
+        final compactSessionId = data.getUint32(5, Endian.big);
+        return {
+          "roomId": roomId,
+          "compactSessionId": compactSessionId,
+          "r": roomId,
+          "s": compactSessionId,
+        };
+      }
+      // Legacy JSON payload path
       final decoded = jsonDecode(utf8.decode(bytes));
       if (decoded is! Map<String, dynamic>) return null;
       if (decoded.containsKey("r") && decoded.containsKey("s")) {
@@ -749,11 +763,16 @@ class SmartAttendanceService {
       sessionToken.replaceAll("-", "").substring(0, 8),
       radix: 16,
     );
-    final payload = jsonEncode({"r": roomId, "s": compactSessionId});
+    // Binary payload to keep BLE advertising small:
+    // [version=1][roomId u32][sessionId u32]
+    final payloadBytes = ByteData(9)
+      ..setUint8(0, 1)
+      ..setUint32(1, roomId, Endian.big)
+      ..setUint32(5, compactSessionId, Endian.big);
     final args = {
       "serviceUuid": bleServiceUuid,
       "manufacturerId": manufacturerId,
-      "payloadBase64": base64Encode(utf8.encode(payload)),
+      "payloadBase64": base64Encode(payloadBytes.buffer.asUint8List()),
     };
     try {
       CrashLogService.log("BLE_ADV", "Starting roomId=$roomId");
