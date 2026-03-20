@@ -1,19 +1,39 @@
 package com.edusys.mobile
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
 import android.util.Log
 import java.io.File
 import java.io.FileWriter
 
 class EduSysApp : Application() {
     private val tag = "EduSysApp"
+    private val attendanceChannelId = "edusys_attendance"
 
     override fun onCreate() {
         super.onCreate()
         logNative("Application.onCreate")
+        createAttendanceChannel()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             logNative("Uncaught exception on ${t.name}: ${e.message}", e)
         }
+    }
+
+    private fun createAttendanceChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        val existing = manager.getNotificationChannel(attendanceChannelId)
+        if (existing != null) return
+        val channel = NotificationChannel(
+            attendanceChannelId,
+            "EduSys Attendance",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Foreground service notifications for attendance tracking"
+        }
+        manager.createNotificationChannel(channel)
     }
 
     private fun logNative(message: String, error: Throwable? = null) {

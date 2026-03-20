@@ -10618,8 +10618,12 @@ class _SettingsTab extends StatefulWidget {
 
 class _SettingsTabState extends State<_SettingsTab> {
   final DeviceBindingService _bindingService = DeviceBindingService();
+  final SmartAttendanceService _smartAttendance = SmartAttendanceService();
   String _deviceId = "Loading...";
   String _sim = "Loading...";
+  bool _backgroundTracking = false;
+  bool _updatingBackgroundTracking = false;
+  static const String _bgTrackingPrefKey = "attendance_background_enabled";
   final List<Map<String, dynamic>> _complaints = [
     {
       "id": 1,
@@ -10641,6 +10645,7 @@ class _SettingsTabState extends State<_SettingsTab> {
   void initState() {
     super.initState();
     _loadDevice();
+    _loadAttendancePrefs();
   }
 
   Future<void> _loadDevice() async {
@@ -10650,6 +10655,28 @@ class _SettingsTabState extends State<_SettingsTab> {
     setState(() {
       _deviceId = device;
       _sim = sim;
+    });
+  }
+
+  Future<void> _loadAttendancePrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool(_bgTrackingPrefKey) ?? false;
+    if (!mounted) return;
+    setState(() {
+      _backgroundTracking = enabled;
+    });
+  }
+
+  Future<void> _toggleBackgroundTracking(bool enabled) async {
+    setState(() => _updatingBackgroundTracking = true);
+    final actualEnabled =
+        await _smartAttendance.setBackgroundTrackingEnabled(enabled);
+    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_bgTrackingPrefKey, actualEnabled);
+    setState(() {
+      _backgroundTracking = actualEnabled;
+      _updatingBackgroundTracking = false;
     });
   }
 
@@ -10787,6 +10814,48 @@ class _SettingsTabState extends State<_SettingsTab> {
                     },
                   ),
                 ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _IconSectionTitle(
+                icon: Icons.bluetooth_connected_rounded,
+                title: "Attendance",
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      "Background tracking",
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Switch.adaptive(
+                    value: _backgroundTracking,
+                    onChanged: _updatingBackgroundTracking
+                        ? null
+                        : (value) => _toggleBackgroundTracking(value),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _backgroundTracking
+                    ? "Keeps scanning while the app is not open (shows a notification)."
+                    : "Scans automatically while the app is open.",
+                style: TextStyle(
+                  color: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.color
+                      ?.withValues(alpha: 0.72),
+                ),
               ),
             ],
           ),

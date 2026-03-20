@@ -13,6 +13,7 @@ import "package:flutter_background_service/flutter_background_service.dart";
 import "package:flutter_background_service_android/flutter_background_service_android.dart";
 import "package:permission_handler/permission_handler.dart";
 import "package:sensors_plus/sensors_plus.dart";
+import "package:shared_preferences/shared_preferences.dart";
 import "package:uuid/uuid.dart";
 import "package:wakelock_plus/wakelock_plus.dart";
 
@@ -37,6 +38,8 @@ class SmartAttendanceService {
   bool _scanning = false;
   int? _cachedUserId;
   String? _currentSessionToken;
+  bool _backgroundEnabled = false;
+  Timer? _autoScanTimer;
 
   static const String bleServiceUuid = "7c8a2f5e-0d20-4c49-8b31-3f4b8f9c6a55";
   static const int manufacturerId = 0x0001;
@@ -44,6 +47,8 @@ class SmartAttendanceService {
   static const double _motionThreshold = 2.5;
   static const Duration _motionCooldown = Duration(seconds: 12);
   static const Duration _scanWindow = Duration(seconds: 10);
+  static const Duration _autoScanInterval = Duration(seconds: 60);
+  static const String _bgTrackingPrefKey = "attendance_background_enabled";
 
   AccelerometerEvent? _lastAccel;
 
@@ -51,6 +56,7 @@ class SmartAttendanceService {
     _activeRoomIds
       ..clear()
       ..addAll(roomIds);
+    _refreshAutoScanTimer();
   }
 
   Future<void> startStudentMonitoring() async {
@@ -63,11 +69,17 @@ class SmartAttendanceService {
         CrashLogService.log("MONITORING", "Permissions denied");
         return;
       }
+      await _loadBackgroundPreference();
       if (Platform.isAndroid) {
-        await _ensureBackgroundService();
+        if (_backgroundEnabled) {
+          await _ensureBackgroundService();
+        } else {
+          _startForegroundMotionListener();
+        }
       } else {
         _startForegroundMotionListener();
       }
+      _refreshAutoScanTimer();
       CrashLogService.log("MONITORING", "Student monitoring started");
     } catch (e, s) {
       _monitoring = false;
@@ -80,7 +92,39 @@ class SmartAttendanceService {
     _accelSub = null;
     await _backgroundMotionSub?.cancel();
     _backgroundMotionSub = null;
+    await _stopBackgroundService();
+    _autoScanTimer?.cancel();
+    _autoScanTimer = null;
     _monitoring = false;
+  }
+
+  bool get backgroundTrackingEnabled => _backgroundEnabled;
+
+  Future<bool> setBackgroundTrackingEnabled(bool enabled) async {
+    _backgroundEnabled = enabled;
+    await _saveBackgroundPreference(_backgroundEnabled);
+    if (!_monitoring) return _backgroundEnabled;
+    if (_backgroundEnabled) {
+      await _ensureBackgroundService();
+    } else {
+      await _stopBackgroundService();
+      _startForegroundMotionListener();
+    }
+    return _backgroundEnabled;
+  }
+
+  Future<void> _loadBackgroundPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _backgroundEnabled = prefs.getBool(_bgTrackingPrefKey) ?? false;
+    } catch (_) {}
+  }
+
+  Future<void> _saveBackgroundPreference(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_bgTrackingPrefKey, enabled);
+    } catch (_) {}
   }
 
   Future<void> startProfessorSession({
@@ -162,6 +206,14 @@ class SmartAttendanceService {
   Future<void> _ensureBackgroundService() async {
     if (!Platform.isAndroid) return;
     try {
+      final notificationGranted = await Permission.notification.isGranted;
+      if (!notificationGranted) {
+        CrashLogService.log("BGS", "Notifications disabled — using foreground listener");
+        _startForegroundMotionListener();
+        _backgroundEnabled = false;
+        await _saveBackgroundPreference(false);
+        return;
+      }
       final service = FlutterBackgroundService();
       final isRunning = await service.isRunning();
       CrashLogService.log("BGS", "Running: $isRunning");
@@ -170,8 +222,8 @@ class SmartAttendanceService {
           androidConfiguration: AndroidConfiguration(
             onStart: smartAttendanceBackgroundStart,
             isForegroundMode: true,
-            autoStart: true,
-            autoStartOnBoot: true,
+            autoStart: false,
+            autoStartOnBoot: false,
             notificationChannelId: "edusys_attendance",
             initialNotificationTitle: "EduSys Attendance",
             initialNotificationContent: "Attendance tracking active",
@@ -206,7 +258,21 @@ class SmartAttendanceService {
     } catch (e, s) {
       CrashLogService.log("BGS_FAILED", e.toString(), stack: s);
       _startForegroundMotionListener();
+      _backgroundEnabled = false;
+      await _saveBackgroundPreference(false);
     }
+  }
+
+  Future<void> _stopBackgroundService() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final service = FlutterBackgroundService();
+      service.invoke("stopService");
+    } catch (e) {
+      CrashLogService.log("BGS_STOP_ERROR", e.toString());
+    }
+    await _backgroundMotionSub?.cancel();
+    _backgroundMotionSub = null;
   }
 
   @pragma("vm:entry-point")
@@ -265,6 +331,31 @@ class SmartAttendanceService {
       }
     } catch (e, s) {
       CrashLogService.log("MOTION_HANDLER_ERROR", e.toString(), stack: s);
+    }
+  }
+
+  void _refreshAutoScanTimer() {
+    _autoScanTimer?.cancel();
+    _autoScanTimer = null;
+    if (!_monitoring || _activeRoomIds.isEmpty) return;
+    _autoScanTimer = Timer.periodic(_autoScanInterval, (_) {
+      _autoScanActiveRooms();
+    });
+  }
+
+  Future<void> _autoScanActiveRooms() async {
+    if (_scanning || _activeRoomIds.isEmpty) return;
+    for (final roomId in _activeRoomIds) {
+      final session = await _fetchActiveSession(roomId: roomId);
+      if (session == null) continue;
+      final lectureId = (session["lecture_id"] as num?)?.toInt();
+      if (lectureId == null) continue;
+      await _runAttendanceScan(
+        lectureId: lectureId,
+        roomId: roomId,
+        session: session,
+      );
+      break;
     }
   }
 
