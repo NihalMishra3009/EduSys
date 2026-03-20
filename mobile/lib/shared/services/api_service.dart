@@ -6,6 +6,7 @@ import "package:edusys_mobile/app_entry.dart";
 import "package:edusys_mobile/config/api_config.dart";
 import "package:edusys_mobile/core/utils/app_navigator.dart";
 import "package:edusys_mobile/core/utils/session_guard.dart";
+import "package:edusys_mobile/shared/services/crash_log_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
@@ -16,6 +17,7 @@ class ApiService {
       : _storage = storage ?? const FlutterSecureStorage();
 
   final FlutterSecureStorage _storage;
+  static final http.Client _sharedClient = http.Client();
   static const String _baseUrlKey = "api_base_url";
   static const String _tokenKey = "jwt";
   static const String _roleKey = "user_role";
@@ -27,25 +29,72 @@ class ApiService {
   static const String _cachePrefix = "cache_";
   static const Duration _timeout = Duration(seconds: 12);
 
-  Future<String?> getToken() => _storage.read(key: _tokenKey);
-  Future<String?> getSavedRole() => _storage.read(key: _roleKey);
-  Future<String?> getSavedName() => _storage.read(key: _nameKey);
-  Future<String?> getSavedEmail() => _storage.read(key: _emailKey);
+  String? _cachedBaseUrl;
+  bool _baseUrlLoaded = false;
+  String? _cachedToken;
+  bool _tokenLoaded = false;
+  String? _cachedRole;
+  bool _roleLoaded = false;
+  String? _cachedName;
+  bool _nameLoaded = false;
+  String? _cachedEmail;
+  bool _emailLoaded = false;
 
-  Future<void> saveToken(String token) =>
-      _storage.write(key: _tokenKey, value: token);
+  Future<String?> getToken() async {
+    if (_tokenLoaded) return _cachedToken;
+    _cachedToken = await _storage.read(key: _tokenKey);
+    _tokenLoaded = true;
+    return _cachedToken;
+  }
+
+  Future<String?> getSavedRole() async {
+    if (_roleLoaded) return _cachedRole;
+    _cachedRole = await _storage.read(key: _roleKey);
+    _roleLoaded = true;
+    return _cachedRole;
+  }
+
+  Future<String?> getSavedName() async {
+    if (_nameLoaded) return _cachedName;
+    _cachedName = await _storage.read(key: _nameKey);
+    _nameLoaded = true;
+    return _cachedName;
+  }
+
+  Future<String?> getSavedEmail() async {
+    if (_emailLoaded) return _cachedEmail;
+    _cachedEmail = await _storage.read(key: _emailKey);
+    _emailLoaded = true;
+    return _cachedEmail;
+  }
+
+  Future<void> saveToken(String token) async {
+    _cachedToken = token;
+    _tokenLoaded = true;
+    await _storage.write(key: _tokenKey, value: token);
+  }
 
   Future<void> saveUserContext({
     required String role,
     required String name,
     required String email,
   }) async {
+    _cachedRole = role;
+    _cachedName = name;
+    _cachedEmail = email;
+    _roleLoaded = true;
+    _nameLoaded = true;
+    _emailLoaded = true;
     await _storage.write(key: _roleKey, value: role);
     await _storage.write(key: _nameKey, value: name);
     await _storage.write(key: _emailKey, value: email);
   }
 
-  Future<void> clearToken() => _storage.delete(key: _tokenKey);
+  Future<void> clearToken() async {
+    _cachedToken = null;
+    _tokenLoaded = true;
+    await _storage.delete(key: _tokenKey);
+  }
 
   Future<bool> hasKnownAccount() async {
     final value = await _storage.read(key: _hasAccountKey);
@@ -58,6 +107,12 @@ class ApiService {
   Future<void> clearKnownAccount() => _storage.delete(key: _hasAccountKey);
 
   Future<void> clearUserContext() async {
+    _cachedRole = null;
+    _cachedName = null;
+    _cachedEmail = null;
+    _roleLoaded = true;
+    _nameLoaded = true;
+    _emailLoaded = true;
     await _storage.delete(key: _roleKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _emailKey);
@@ -92,11 +147,18 @@ class ApiService {
   }
 
   Future<String> getBaseUrl() async {
+    if (_baseUrlLoaded && _cachedBaseUrl != null) {
+      return _cachedBaseUrl!;
+    }
     final saved = await _storage.read(key: _baseUrlKey);
     if (saved != null && saved.trim().isNotEmpty) {
-      return saved.trim();
+      _cachedBaseUrl = saved.trim();
+      _baseUrlLoaded = true;
+      return _cachedBaseUrl!;
     }
-    return ApiConfig.baseUrl;
+    _cachedBaseUrl = ApiConfig.baseUrl;
+    _baseUrlLoaded = true;
+    return _cachedBaseUrl!;
   }
 
   Future<void> setBaseUrl(String value) async {
@@ -104,6 +166,8 @@ class ApiService {
     if (normalized.endsWith("/")) {
       normalized = normalized.substring(0, normalized.length - 1);
     }
+    _cachedBaseUrl = normalized;
+    _baseUrlLoaded = true;
     await _storage.write(key: _baseUrlKey, value: normalized);
   }
 
@@ -120,13 +184,34 @@ class ApiService {
 
   Uri _uri(String baseUrl, String path) => Uri.parse("$baseUrl$path");
 
+  void _logTiming({
+    required String path,
+    required DateTime startedAt,
+    required int statusCode,
+    required String base,
+  }) {
+    final elapsed = DateTime.now().difference(startedAt).inMilliseconds;
+    if (elapsed >= 800) {
+      CrashLogService.log(
+        "API_TIMING",
+        "$path ${elapsed}ms status=$statusCode base=$base",
+      );
+    }
+  }
+
   Future<http.Response> _sendWithFallback({
     required String path,
     required Future<http.Response> Function(Uri uri) sender,
   }) async {
     final primaryBase = await getBaseUrl();
+    final startedAt = DateTime.now();
     try {
       final response = await sender(_uri(primaryBase, path)).timeout(_timeout);
+      _logTiming(
+          path: path,
+          startedAt: startedAt,
+          statusCode: response.statusCode,
+          base: primaryBase);
       return _handleResponse(response);
     } on TimeoutException {
       final fallbackBase = ApiConfig.baseUrl;
@@ -135,25 +220,55 @@ class ApiService {
           final response =
               await sender(_uri(fallbackBase, path)).timeout(_timeout);
           await setBaseUrl(fallbackBase);
+          _logTiming(
+              path: path,
+              startedAt: startedAt,
+              statusCode: response.statusCode,
+              base: fallbackBase);
           return _handleResponse(response);
         } on TimeoutException {
+          _logTiming(
+              path: path,
+              startedAt: startedAt,
+              statusCode: 504,
+              base: fallbackBase);
           return http.Response(
               jsonEncode({"detail": "Request timed out. Please retry."}), 504);
         } on SocketException {
+          _logTiming(
+              path: path,
+              startedAt: startedAt,
+              statusCode: 503,
+              base: fallbackBase);
           return http.Response(
               jsonEncode(
                   {"detail": "No internet connection or backend unreachable."}),
               503);
         } on http.ClientException {
+          _logTiming(
+              path: path,
+              startedAt: startedAt,
+              statusCode: 503,
+              base: fallbackBase);
           return http.Response(
               jsonEncode({"detail": "Backend unreachable."}), 503);
         }
       }
+      _logTiming(
+          path: path,
+          startedAt: startedAt,
+          statusCode: 504,
+          base: primaryBase);
       return http.Response(
           jsonEncode({"detail": "Request timed out. Please retry."}), 504);
     } on SocketException {
       final fallbackBase = ApiConfig.baseUrl;
       if (fallbackBase == primaryBase) {
+        _logTiming(
+            path: path,
+            startedAt: startedAt,
+            statusCode: 503,
+            base: primaryBase);
         return http.Response(
             jsonEncode(
                 {"detail": "No internet connection or backend unreachable."}),
@@ -163,20 +278,45 @@ class ApiService {
         final response =
             await sender(_uri(fallbackBase, path)).timeout(_timeout);
         await setBaseUrl(fallbackBase);
+        _logTiming(
+            path: path,
+            startedAt: startedAt,
+            statusCode: response.statusCode,
+            base: fallbackBase);
         return _handleResponse(response);
       } on TimeoutException {
+        _logTiming(
+            path: path,
+            startedAt: startedAt,
+            statusCode: 504,
+            base: fallbackBase);
         return http.Response(
             jsonEncode({"detail": "Request timed out. Please retry."}), 504);
       } on SocketException {
+        _logTiming(
+            path: path,
+            startedAt: startedAt,
+            statusCode: 503,
+            base: fallbackBase);
         return http.Response(
             jsonEncode(
                 {"detail": "No internet connection or backend unreachable."}),
             503);
       } on http.ClientException {
+        _logTiming(
+            path: path,
+            startedAt: startedAt,
+            statusCode: 503,
+            base: fallbackBase);
         return http.Response(
             jsonEncode({"detail": "Backend unreachable."}), 503);
       }
     } on http.ClientException {
+      _logTiming(
+          path: path,
+          startedAt: startedAt,
+          statusCode: 503,
+          base: primaryBase);
       return http.Response(jsonEncode({"detail": "Backend unreachable."}), 503);
     }
   }
@@ -238,7 +378,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/auth/register",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -253,7 +393,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/auth/verify-otp",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -262,7 +402,7 @@ class ApiService {
     final body = jsonEncode({"email": email});
     return _sendWithFallback(
       path: "/auth/resend-otp",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -283,7 +423,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/auth/login",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -304,7 +444,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/auth/google-login",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -312,7 +452,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/auth/me",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -321,7 +461,7 @@ class ApiService {
     final body = jsonEncode({"name": name});
     return _sendWithFallback(
       path: "/auth/profile",
-      sender: (uri) => http.patch(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.patch(uri, headers: headers, body: body),
     );
   }
 
@@ -336,7 +476,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/auth/change-password",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -345,7 +485,7 @@ class ApiService {
     final body = jsonEncode({"password": password});
     return _sendWithFallback(
       path: "/auth/delete-account",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -359,7 +499,7 @@ class ApiService {
     final body = jsonEncode(payload);
     return _sendWithFallback(
       path: "/lecture/start",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -368,7 +508,7 @@ class ApiService {
     final body = jsonEncode({"lecture_id": lectureId});
     return _sendWithFallback(
       path: "/lecture/end",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -382,7 +522,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/lecture/$lectureId/threshold",
-      sender: (uri) => http.put(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.put(uri, headers: headers, body: body),
     );
   }
 
@@ -390,7 +530,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/lecture/active",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -402,7 +542,7 @@ class ApiService {
     final body = jsonEncode({"lecture_id": lectureId});
     return _sendWithFallback(
       path: "/attendance/checkpoint",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -410,7 +550,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/attendance/rooms/$roomId",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -422,7 +562,7 @@ class ApiService {
     final body = jsonEncode(payload);
     return _sendWithFallback(
       path: "/attendance/rooms/$roomId",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -445,7 +585,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/attendance/sessions/start",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -462,7 +602,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/attendance/sessions/end",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -480,7 +620,7 @@ class ApiService {
         : "/attendance/sessions/active?$query";
     return _sendWithFallback(
       path: path,
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -511,7 +651,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/attendance/scan",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -519,7 +659,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/attendance/history",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -531,14 +671,14 @@ class ApiService {
     final m = month ?? now.month;
     return _sendWithFallback(
       path: "/attendance/monthly-summary?year=$y&month=$m",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
   Future<http.Response> healthCheck() async {
     return _sendWithFallback(
       path: "/health",
-      sender: (uri) => http.get(uri),
+      sender: (uri) => _sharedClient.get(uri),
     );
   }
 
@@ -546,7 +686,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/attendance/my-records",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -554,7 +694,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/lecture/history",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -562,7 +702,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/lecture/student-summary",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -574,7 +714,7 @@ class ApiService {
     return _sendWithFallback(
       path:
           "/lecture/student-subject-attendance?lecture_id=$lectureId&student_id=$studentId",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -582,7 +722,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/lecture/$lectureId/attendance-details",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -590,7 +730,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/users/students",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -598,7 +738,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/admin/all-attendance",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -606,7 +746,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/admin/logs",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -615,7 +755,7 @@ class ApiService {
     return _sendWithFallback(
       path: "/admin/create-user",
       sender: (uri) =>
-          http.post(uri, headers: headers, body: jsonEncode(payload)),
+          _sharedClient.post(uri, headers: headers, body: jsonEncode(payload)),
     );
   }
 
@@ -626,7 +766,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/admin/reset-device",
-      sender: (uri) => http.post(
+      sender: (uri) => _sharedClient.post(
         uri,
         headers: headers,
         body: jsonEncode({"user_id": userId, "device_id": deviceId}),
@@ -641,7 +781,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/admin/reset-sim",
-      sender: (uri) => http.post(
+      sender: (uri) => _sharedClient.post(
         uri,
         headers: headers,
         body: jsonEncode({"user_id": userId, "sim_serial": simSerial}),
@@ -655,7 +795,7 @@ class ApiService {
     return _sendWithFallback(
       path: "/admin/create-classroom",
       sender: (uri) =>
-          http.post(uri, headers: headers, body: jsonEncode(payload)),
+          _sharedClient.post(uri, headers: headers, body: jsonEncode(payload)),
     );
   }
 
@@ -680,7 +820,7 @@ class ApiService {
     final body = jsonEncode(bodyMap);
     return _sendWithFallback(
       path: "/classroom",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -688,7 +828,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/classroom",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -702,7 +842,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/admin/update-boundary/$classroomId",
-      sender: (uri) => http.put(
+      sender: (uri) => _sharedClient.put(
         uri,
         headers: headers,
         body: jsonEncode({
@@ -724,7 +864,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/admin/override-attendance",
-      sender: (uri) => http.put(
+      sender: (uri) => _sharedClient.put(
         uri,
         headers: headers,
         body: jsonEncode({
@@ -741,7 +881,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/notifications/my",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -749,7 +889,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/departments/my",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -761,7 +901,7 @@ class ApiService {
     final body = jsonEncode({"subject": subject, "description": description});
     return _sendWithFallback(
       path: "/complaints",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -769,7 +909,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/complaints/my",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -786,7 +926,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/resources/notes",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -794,7 +934,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/notes",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -815,7 +955,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/resources/assignments",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -826,7 +966,7 @@ class ApiService {
         : "?subject=${Uri.encodeComponent(subject.trim())}";
     return _sendWithFallback(
       path: "/resources/assignments$query",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -842,7 +982,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/resources/assignments/$assignmentId/submit",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -851,7 +991,7 @@ class ApiService {
     final query = assignmentId == null ? "" : "?assignment_id=$assignmentId";
     return _sendWithFallback(
       path: "/resources/submissions$query",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -867,7 +1007,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/resources/submissions/$submissionId/grade",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -912,7 +1052,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/resources/rooms",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -920,7 +1060,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/rooms",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -928,7 +1068,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/sample-lectures",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -940,7 +1080,7 @@ class ApiService {
     final body = jsonEncode({"title": title, "scheduled_at": scheduledAt});
     return _sendWithFallback(
       path: "/resources/schedule",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -948,7 +1088,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/schedule",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -956,7 +1096,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/student-count",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -964,7 +1104,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/geofence-status",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -973,7 +1113,7 @@ class ApiService {
     final body = jsonEncode({"enabled": enabled});
     return _sendWithFallback(
       path: "/resources/geofence-toggle",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -981,7 +1121,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/classroom/$classroomId",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -989,7 +1129,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/students",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -997,7 +1137,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/nearby-students",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -1014,7 +1154,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/resources/manual-attendance",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -1022,7 +1162,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/manual-attendance",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -1045,7 +1185,7 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/resources/share-it/appointments",
-      sender: (uri) => http.post(uri, headers: headers, body: body),
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -1053,7 +1193,7 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/share-it/appointments",
-      sender: (uri) => http.get(uri, headers: headers),
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
 
@@ -1061,7 +1201,8 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/resources/share-it/appointments/$appointmentId/collect",
-      sender: (uri) => http.patch(uri, headers: headers),
+      sender: (uri) => _sharedClient.patch(uri, headers: headers),
     );
   }
 }
+
