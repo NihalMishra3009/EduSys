@@ -276,7 +276,6 @@ class SmartAttendanceService {
             isForegroundMode: true,
             autoStart: false,
             autoStartOnBoot: false,
-            notificationChannelId: "edusys_attendance",
             initialNotificationTitle: "EduSys Attendance",
             initialNotificationContent: "Attendance tracking active",
             foregroundServiceTypes: const [AndroidForegroundType.dataSync],
