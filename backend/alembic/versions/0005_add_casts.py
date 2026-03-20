@@ -51,7 +51,7 @@ def upgrade() -> None:
         sa.Column("message", sa.Text(), nullable=True),
         sa.Column("schedule_at", sa.DateTime(), nullable=False),
         sa.Column("interval_minutes", sa.Integer(), nullable=True),
-        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=False, index=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
     )
