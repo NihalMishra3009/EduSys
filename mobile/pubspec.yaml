@@ -25,6 +25,7 @@ dependencies:
   wakelock_plus: ^1.2.8
   permission_handler: ^11.3.1
   uuid: ^4.5.2
+  path_provider: ^2.1.4
 
 dev_dependencies:
   flutter_test:
@@ -42,4 +43,3 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
-

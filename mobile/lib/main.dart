@@ -1,19 +1,38 @@
+import "dart:async";
+
 import "package:edusys_mobile/app_entry.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/providers/theme_provider.dart";
 import "package:edusys_mobile/core/theme/liquid_glass_shell.dart";
 import "package:edusys_mobile/core/theme/app_theme.dart";
 import "package:edusys_mobile/core/utils/app_navigator.dart";
+import "package:edusys_mobile/shared/services/crash_log_service.dart";
 import "package:flutter/material.dart";
 import "package:flutter/rendering.dart";
 import "package:provider/provider.dart";
 
 void main() {
-  debugPaintBaselinesEnabled = false;
-  debugPaintSizeEnabled = false;
-  debugPaintPointersEnabled = false;
-  debugRepaintRainbowEnabled = false;
-  runApp(const EduSysApp());
+  FlutterError.onError = (FlutterErrorDetails details) {
+    CrashLogService.log(
+      "FLUTTER_ERROR",
+      details.exceptionAsString(),
+      stack: details.stack,
+    );
+    FlutterError.presentError(details);
+  };
+
+  runZonedGuarded(
+    () {
+      debugPaintBaselinesEnabled = false;
+      debugPaintSizeEnabled = false;
+      debugPaintPointersEnabled = false;
+      debugRepaintRainbowEnabled = false;
+      runApp(const EduSysApp());
+    },
+    (error, stack) {
+      CrashLogService.log("UNCAUGHT_ASYNC", error.toString(), stack: stack);
+    },
+  );
 }
 
 class EduSysApp extends StatelessWidget {

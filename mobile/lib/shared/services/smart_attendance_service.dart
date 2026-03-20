@@ -5,6 +5,7 @@ import "dart:math" as math;
 import "dart:ui" as ui;
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/services/crash_log_service.dart";
 import "package:flutter/widgets.dart";
 import "package:flutter/services.dart";
 import "package:flutter_blue_plus/flutter_blue_plus.dart";
@@ -18,7 +19,8 @@ import "package:wakelock_plus/wakelock_plus.dart";
 class SmartAttendanceService {
   SmartAttendanceService._internal();
 
-  static final SmartAttendanceService _instance = SmartAttendanceService._internal();
+  static final SmartAttendanceService _instance =
+      SmartAttendanceService._internal();
 
   factory SmartAttendanceService() => _instance;
 
@@ -58,6 +60,7 @@ class SmartAttendanceService {
       final ok = await _requestStudentPermissions();
       if (!ok) {
         _monitoring = false;
+        CrashLogService.log("MONITORING", "Permissions denied");
         return;
       }
       if (Platform.isAndroid) {
@@ -65,8 +68,10 @@ class SmartAttendanceService {
       } else {
         _startForegroundMotionListener();
       }
-    } catch (_) {
+      CrashLogService.log("MONITORING", "Student monitoring started");
+    } catch (e, s) {
       _monitoring = false;
+      CrashLogService.log("MONITORING_ERROR", e.toString(), stack: s);
     }
   }
 
@@ -85,6 +90,7 @@ class SmartAttendanceService {
     required int minAttendancePercent,
     int? scheduledStart,
   }) async {
+    CrashLogService.log("PROFESSOR", "Starting session lectureId=$lectureId roomId=$roomId");
     final advertiseStatus = await Permission.bluetoothAdvertise.request();
     final connectStatus = await Permission.bluetoothConnect.request();
     if (!advertiseStatus.isGranted || !connectStatus.isGranted) {
@@ -109,15 +115,12 @@ class SmartAttendanceService {
       scheduledDurationMs: scheduledDurationMs,
       minAttendancePercent: minAttendancePercent,
     );
+    CrashLogService.log("PROFESSOR", "Session started token=$token");
   }
 
-  Future<void> endProfessorSession({
-    required int lectureId,
-  }) async {
+  Future<void> endProfessorSession({required int lectureId}) async {
     final token = _currentSessionToken;
-    if (token == null) {
-      return;
-    }
+    if (token == null) return;
     await _stopBleAdvertising();
     await WakelockPlus.disable();
     await _api.endAttendanceSession(
@@ -126,12 +129,14 @@ class SmartAttendanceService {
       endTime: DateTime.now().millisecondsSinceEpoch,
     );
     _currentSessionToken = null;
+    CrashLogService.log("PROFESSOR", "Session ended lectureId=$lectureId");
   }
 
   Future<SmartAttendanceResult> manualScan({
     required int lectureId,
     required int roomId,
   }) async {
+    CrashLogService.log("SCAN", "Manual scan lectureId=$lectureId roomId=$roomId");
     return _runAttendanceScan(lectureId: lectureId, roomId: roomId);
   }
 
@@ -144,8 +149,14 @@ class SmartAttendanceService {
       if (Platform.isAndroid) Permission.notification,
     ];
     final results = await permissions.request();
-    final denied = results.values.any((status) => status.isDenied || status.isPermanentlyDenied);
-    return !denied;
+    final denied = results.entries
+        .where((e) => e.value.isDenied || e.value.isPermanentlyDenied)
+        .map((e) => e.key.toString())
+        .toList();
+    if (denied.isNotEmpty) {
+      CrashLogService.log("PERMISSIONS", "Denied: ${denied.join(', ')}");
+    }
+    return denied.isEmpty;
   }
 
   Future<void> _ensureBackgroundService() async {
@@ -153,6 +164,7 @@ class SmartAttendanceService {
     try {
       final service = FlutterBackgroundService();
       final isRunning = await service.isRunning();
+      CrashLogService.log("BGS", "Running: $isRunning");
       if (!isRunning) {
         await service.configure(
           androidConfiguration: AndroidConfiguration(
@@ -163,9 +175,7 @@ class SmartAttendanceService {
             notificationChannelId: "edusys_attendance",
             initialNotificationTitle: "EduSys Attendance",
             initialNotificationContent: "Attendance tracking active",
-            foregroundServiceTypes: const [
-              AndroidForegroundType.dataSync,
-            ],
+            foregroundServiceTypes: const [AndroidForegroundType.dataSync],
           ),
           iosConfiguration: IosConfiguration(
             onForeground: smartAttendanceBackgroundStart,
@@ -174,18 +184,27 @@ class SmartAttendanceService {
           ),
         );
         await service.startService();
+        CrashLogService.log("BGS", "Started");
       }
 
       await _backgroundMotionSub?.cancel();
       _backgroundMotionSub = service.on("motion").listen((_) {
-        _handleMotionDetected().catchError((_) {});
+        _handleMotionDetected().catchError((e, s) {
+          CrashLogService.log("MOTION_ERROR", e.toString(),
+              stack: s as StackTrace?);
+        });
       });
 
       service.on("heartbeat").listen((_) {
         _accelSub?.cancel();
         _accelSub = null;
       });
-    } catch (_) {
+
+      service.on("bgs_error").listen((data) {
+        CrashLogService.log("BGS_ERROR", data.toString());
+      });
+    } catch (e, s) {
+      CrashLogService.log("BGS_FAILED", e.toString(), stack: s);
       _startForegroundMotionListener();
     }
   }
@@ -198,20 +217,32 @@ class SmartAttendanceService {
   }
 
   void _startForegroundMotionListener() {
-    _accelSub ??= SensorsPlatform.instance.accelerometerEvents.listen((event) {
-      final last = _lastAccel;
-      if (last != null) {
-        final delta = math.sqrt(
-          math.pow(event.x - last.x, 2) +
-              math.pow(event.y - last.y, 2) +
-              math.pow(event.z - last.z, 2),
-        );
-        if (delta > _motionThreshold) {
-          _handleMotionDetected().catchError((_) {});
+    CrashLogService.log("ACCEL", "Starting foreground listener");
+    _accelSub ??= SensorsPlatform.instance.accelerometerEvents.listen(
+      (event) {
+        final last = _lastAccel;
+        if (last != null) {
+          final delta = math.sqrt(
+            math.pow(event.x - last.x, 2) +
+                math.pow(event.y - last.y, 2) +
+                math.pow(event.z - last.z, 2),
+          );
+          if (delta > _motionThreshold) {
+            _handleMotionDetected().catchError((e, s) {
+              CrashLogService.log("MOTION_ERROR", e.toString(),
+                  stack: s as StackTrace?);
+            });
+          }
         }
-      }
-      _lastAccel = event;
-    });
+        _lastAccel = event;
+      },
+      onError: (e, s) {
+        CrashLogService.log("ACCEL_ERROR", e.toString(),
+            stack: s as StackTrace?);
+        Future.delayed(
+            const Duration(seconds: 3), _startForegroundMotionListener);
+      },
+    );
   }
 
   Future<void> _handleMotionDetected() async {
@@ -222,27 +253,23 @@ class SmartAttendanceService {
         return;
       }
       _lastMotionAt = now;
-      if (_scanning || _activeRoomIds.isEmpty) {
-        return;
-      }
+      if (_scanning || _activeRoomIds.isEmpty) return;
       for (final roomId in _activeRoomIds) {
         final session = await _fetchActiveSession(roomId: roomId);
-        if (session == null) {
-          continue;
-        }
+        if (session == null) continue;
         final lectureId = (session["lecture_id"] as num?)?.toInt();
-        if (lectureId == null) {
-          continue;
-        }
-        await _runAttendanceScan(lectureId: lectureId, roomId: roomId, session: session);
+        if (lectureId == null) continue;
+        await _runAttendanceScan(
+            lectureId: lectureId, roomId: roomId, session: session);
         break;
       }
-    } catch (_) {
-      // Swallow all errors — motion handler must never crash the app
+    } catch (e, s) {
+      CrashLogService.log("MOTION_HANDLER_ERROR", e.toString(), stack: s);
     }
   }
 
-  Future<Map<String, dynamic>?> _fetchActiveSession({int? roomId, int? lectureId}) async {
+  Future<Map<String, dynamic>?> _fetchActiveSession(
+      {int? roomId, int? lectureId}) async {
     for (int attempt = 0; attempt < 3; attempt++) {
       try {
         final response = await _api.getActiveAttendanceSession(
@@ -255,16 +282,15 @@ class SmartAttendanceService {
             continue;
           }
           final decoded = jsonDecode(response.body);
-          if (decoded is Map<String, dynamic>) {
-            return decoded;
-          }
+          if (decoded is Map<String, dynamic>) return decoded;
+        } else {
+          CrashLogService.log("SESSION_FETCH",
+              "HTTP ${response.statusCode} roomId=$roomId attempt=$attempt");
         }
-      } catch (_) {
-        // Network error — retry.
+      } catch (e) {
+        CrashLogService.log("SESSION_FETCH_ERROR", e.toString());
       }
-      if (attempt < 2) {
-        await Future.delayed(const Duration(seconds: 2));
-      }
+      if (attempt < 2) await Future.delayed(const Duration(seconds: 2));
     }
     return null;
   }
@@ -276,49 +302,50 @@ class SmartAttendanceService {
   }) async {
     if (_scanning) {
       return const SmartAttendanceResult(
-        success: false,
-        message: "Scan already in progress",
-      );
+          success: false, message: "Scan already in progress");
     }
     _scanning = true;
     try {
-      session ??= await _fetchActiveSession(roomId: roomId, lectureId: lectureId);
-      if (session == null) {
-        session = await _fetchActiveSession(lectureId: lectureId);
-      }
+      session ??=
+          await _fetchActiveSession(roomId: roomId, lectureId: lectureId);
+      session ??= await _fetchActiveSession(lectureId: lectureId);
+
       String? sessionToken = session?["session_token"]?.toString();
-        if (session == null || sessionToken == null || sessionToken.isEmpty) {
-          final beacon = await _scanForAnyBeacon();
-          if (beacon == null) {
-            return const SmartAttendanceResult(
-              success: false,
-              message: "No active lecture session or BLE beacon",
-            );
-          }
-          final beaconLecture = beacon["lectureId"] as int?;
-          if (beaconLecture != null && beaconLecture != lectureId) {
-            return SmartAttendanceResult(
-              success: false,
-              message:
-                  "Beacon belongs to Lecture #$beaconLecture. Switch to that lecture.",
-            );
-          }
-          sessionToken = beacon["sessionToken"]?.toString();
-          if (sessionToken == null || sessionToken.isEmpty) {
-            final beaconRoom = beacon["roomId"] as int?;
-            if (beaconRoom != null) {
-              final fallbackSession = await _fetchActiveSession(roomId: beaconRoom);
-              session = fallbackSession ?? session;
-              sessionToken = fallbackSession?["session_token"]?.toString();
-            }
+
+      if (session == null || sessionToken == null || sessionToken.isEmpty) {
+        CrashLogService.log("SCAN", "No server session — scanning for beacon");
+        final beacon = await _scanForAnyBeacon();
+        if (beacon == null) {
+          CrashLogService.log("SCAN", "No beacon found");
+          return const SmartAttendanceResult(
+            success: false,
+            message: "No active lecture session or BLE beacon",
+          );
+        }
+        final beaconLecture = beacon["lectureId"] as int?;
+        if (beaconLecture != null && beaconLecture != lectureId) {
+          return SmartAttendanceResult(
+            success: false,
+            message: "Beacon belongs to Lecture #$beaconLecture.",
+          );
+        }
+        sessionToken = beacon["sessionToken"]?.toString();
+        if (sessionToken == null || sessionToken.isEmpty) {
+          final beaconRoom = beacon["roomId"] as int?;
+          if (beaconRoom != null) {
+            final fb = await _fetchActiveSession(roomId: beaconRoom);
+            session = fb ?? session;
+            sessionToken = fb?["session_token"]?.toString();
           }
         }
-      if (sessionToken == null || sessionToken.isEmpty) {
-        return const SmartAttendanceResult(
-          success: false,
-          message: "Session token missing",
-        );
       }
+
+      if (sessionToken == null || sessionToken.isEmpty) {
+        CrashLogService.log("SCAN", "Session token missing");
+        return const SmartAttendanceResult(
+            success: false, message: "Session token missing");
+      }
+
       if (_currentSessionToken != sessionToken) {
         _currentSessionToken = sessionToken;
         _sessionStates.remove(sessionToken);
@@ -326,29 +353,34 @@ class SmartAttendanceService {
 
       final roomConfig = await _getRoomConfig(roomId);
       if (roomConfig == null) {
+        CrashLogService.log("SCAN", "Room config missing roomId=$roomId");
         return const SmartAttendanceResult(
-          success: false,
-          message: "Room config missing",
-        );
+            success: false, message: "Room config missing");
       }
 
-      final token = sessionToken;
       final state = _sessionStates.putIfAbsent(
-        token,
-        () => _SessionState(sessionToken: token),
+        sessionToken,
+        () => _SessionState(sessionToken: sessionToken!),
       );
 
-        final scanResult = await _scanBleWindow(sessionToken, roomId: roomId);
+      CrashLogService.log("SCAN", "BLE window starting token=$sessionToken");
+      final scanResult = await _scanBleWindow(sessionToken, roomId: roomId);
+
       if (scanResult.avgRssi == null) {
+        CrashLogService.log("SCAN", "BLE window no results");
         return const SmartAttendanceResult(
           success: false,
           message: "No BLE beacon detected. Turn on Bluetooth and retry.",
         );
       }
+
       final threshold =
           (roomConfig["ble_rssi_threshold"] as num?)?.toDouble() ?? -85;
       final inside = scanResult.avgRssi! >= threshold;
       final newState = inside ? _PresenceState.inside : _PresenceState.outside;
+
+      CrashLogService.log("SCAN",
+          "RSSI=${scanResult.avgRssi?.toStringAsFixed(1)} threshold=$threshold state=${newState.name}");
 
       if (newState == state.confirmedState) {
         return SmartAttendanceResult(
@@ -363,10 +395,9 @@ class SmartAttendanceService {
         state.scanIndex += 1;
         final studentId = await _getCurrentUserId();
         if (studentId == null) {
+          CrashLogService.log("SCAN", "Could not resolve student ID");
           return const SmartAttendanceResult(
-            success: false,
-            message: "Unable to resolve student profile",
-          );
+              success: false, message: "Unable to resolve student profile");
         }
         await _api.logAttendanceScan(
           scanId: _uuid.v4(),
@@ -378,18 +409,24 @@ class SmartAttendanceService {
           scanIndex: state.scanIndex,
           rssi: scanResult.avgRssi,
         );
+        final label = newState == _PresenceState.inside ? "Entry" : "Exit";
+        CrashLogService.log(
+            "SCAN", "$label recorded scanIndex=${state.scanIndex}");
         return SmartAttendanceResult(
           success: true,
-          message:
-              "${newState == _PresenceState.inside ? "Entry" : "Exit"} recorded (scan ${state.scanIndex})",
+          message: "$label recorded (scan ${state.scanIndex})",
         );
       }
 
       state.pendingState = newState;
+      CrashLogService.log("SCAN", "Pending ${newState.name} confirmation");
       return SmartAttendanceResult(
         success: true,
         message: "Pending ${newState.name} confirmation",
       );
+    } catch (e, s) {
+      CrashLogService.log("SCAN_ERROR", e.toString(), stack: s);
+      return SmartAttendanceResult(success: false, message: "Scan error: $e");
     } finally {
       _scanning = false;
     }
@@ -398,35 +435,38 @@ class SmartAttendanceService {
   Future<Map<String, dynamic>?> _getRoomConfig(int roomId) async {
     final cached = _roomConfigCache[roomId];
     if (cached != null) return cached;
-    final response = await _api.getRoomCalibration(roomId);
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic>) {
-        _roomConfigCache[roomId] = decoded;
-        return decoded;
+    try {
+      final response = await _api.getRoomCalibration(roomId);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          _roomConfigCache[roomId] = decoded;
+          return decoded;
+        }
       }
+      CrashLogService.log(
+          "ROOM_CONFIG", "HTTP ${response.statusCode} roomId=$roomId");
+    } catch (e) {
+      CrashLogService.log("ROOM_CONFIG_ERROR", e.toString());
     }
     return null;
   }
 
-  Future<_BleScanWindow> _scanBleWindow(String sessionToken, {int? roomId}) async {
+  Future<_BleScanWindow> _scanBleWindow(String sessionToken,
+      {int? roomId}) async {
     final results = <int>[];
     StreamSubscription? subscription;
     try {
-      final scanStatus = await Permission.bluetoothScan.request();
-      if (!scanStatus.isGranted) {
-        return const _BleScanWindow(avgRssi: null, hitCount: 0);
-      }
-      final adapterState = await FlutterBluePlus.adapterState.first;
+      final adapterState = await FlutterBluePlus.adapterState.first
+          .timeout(const Duration(seconds: 5));
       if (adapterState != BluetoothAdapterState.on) {
+        CrashLogService.log("BLE_SCAN", "Adapter not on: $adapterState");
         return const _BleScanWindow(avgRssi: null, hitCount: 0);
       }
-
       if (FlutterBluePlus.isScanningNow) {
         await FlutterBluePlus.stopScan();
-        await Future.delayed(const Duration(milliseconds: 300));
+        await Future.delayed(const Duration(milliseconds: 400));
       }
-
       subscription = FlutterBluePlus.onScanResults.listen((list) {
         for (final result in list) {
           final payload = _decodeManufacturerPayload(result);
@@ -444,21 +484,20 @@ class SmartAttendanceService {
           }
         }
       });
-
       await FlutterBluePlus.startScan(
         timeout: _scanWindow,
         androidUsesFineLocation: false,
       );
       await Future.delayed(_scanWindow);
-    } catch (_) {
-      // Scan failure — return empty, do not crash
+      CrashLogService.log("BLE_SCAN", "Done — ${results.length} hits");
+    } catch (e, s) {
+      CrashLogService.log("BLE_SCAN_ERROR", e.toString(), stack: s);
     } finally {
       try {
         await FlutterBluePlus.stopScan();
       } catch (_) {}
       await subscription?.cancel();
     }
-
     if (results.isEmpty) return const _BleScanWindow(avgRssi: null, hitCount: 0);
     final avg = results.reduce((a, b) => a + b) / results.length;
     return _BleScanWindow(avgRssi: avg, hitCount: results.length);
@@ -468,16 +507,13 @@ class SmartAttendanceService {
     final hits = <Map<String, dynamic>>[];
     StreamSubscription? subscription;
     try {
-      final scanStatus = await Permission.bluetoothScan.request();
-      if (!scanStatus.isGranted) return null;
-      final adapterState = await FlutterBluePlus.adapterState.first;
+      final adapterState = await FlutterBluePlus.adapterState.first
+          .timeout(const Duration(seconds: 5));
       if (adapterState != BluetoothAdapterState.on) return null;
-
       if (FlutterBluePlus.isScanningNow) {
         await FlutterBluePlus.stopScan();
-        await Future.delayed(const Duration(milliseconds: 300));
+        await Future.delayed(const Duration(milliseconds: 400));
       }
-
       subscription = FlutterBluePlus.onScanResults.listen((list) {
         for (final result in list) {
           final payload = _decodeManufacturerPayload(result);
@@ -486,13 +522,13 @@ class SmartAttendanceService {
           hits.add(payload);
         }
       });
-
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 8),
         androidUsesFineLocation: false,
       );
       await Future.delayed(const Duration(seconds: 8));
-    } catch (_) {
+    } catch (e, s) {
+      CrashLogService.log("BEACON_SCAN_ERROR", e.toString(), stack: s);
       return null;
     } finally {
       try {
@@ -500,7 +536,6 @@ class SmartAttendanceService {
       } catch (_) {}
       await subscription?.cancel();
     }
-
     if (hits.isEmpty) return null;
     final first = hits.first;
     if (first.containsKey("r")) {
@@ -542,16 +577,20 @@ class SmartAttendanceService {
 
   Future<int?> _getCurrentUserId() async {
     if (_cachedUserId != null) return _cachedUserId;
-    final response = await _api.me();
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final decoded = jsonDecode(response.body);
-      if (decoded is Map<String, dynamic>) {
-        final id = decoded["id"];
-        if (id is num) {
-          _cachedUserId = id.toInt();
-          return _cachedUserId;
+    try {
+      final response = await _api.me();
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          final id = decoded["id"];
+          if (id is num) {
+            _cachedUserId = id.toInt();
+            return _cachedUserId;
+          }
         }
       }
+    } catch (e) {
+      CrashLogService.log("USER_ID_ERROR", e.toString());
     }
     return null;
   }
@@ -566,18 +605,18 @@ class SmartAttendanceService {
       sessionToken.replaceAll("-", "").substring(0, 8),
       radix: 16,
     );
-    final payload = jsonEncode({
-      "r": roomId,
-      "s": compactSessionId,
-    });
+    final payload = jsonEncode({"r": roomId, "s": compactSessionId});
     final args = {
       "serviceUuid": bleServiceUuid,
       "manufacturerId": manufacturerId,
       "payloadBase64": base64Encode(utf8.encode(payload)),
     };
     try {
+      CrashLogService.log("BLE_ADV", "Starting roomId=$roomId");
       await channel.invokeMethod("startAdvertising", args);
+      CrashLogService.log("BLE_ADV", "Started successfully");
     } on PlatformException catch (e) {
+      CrashLogService.log("BLE_ADV_ERROR", "${e.code}: ${e.message}");
       throw Exception(
         "BLE advertising failed: ${e.message ?? e.code}. "
         "Ensure Bluetooth is on and the device supports BLE advertising.",
@@ -589,8 +628,8 @@ class SmartAttendanceService {
     final channel = const MethodChannel(_bleChannelName);
     try {
       await channel.invokeMethod("stopAdvertising");
-    } on PlatformException catch (_) {
-      // Ignore stop failures — BT may have been turned off
+    } on PlatformException catch (e) {
+      CrashLogService.log("BLE_ADV_STOP_ERROR", e.toString());
     }
   }
 }
@@ -612,6 +651,7 @@ void smartAttendanceBackgroundStart(ServiceInstance service) async {
     });
     await service.setAsForegroundService();
   }
+
   _BackgroundSensorState.start(service);
 
   Timer.periodic(const Duration(seconds: 60), (_) {
@@ -644,7 +684,8 @@ class _BackgroundSensorState {
           }
           _last = event;
         },
-        onError: (_) {
+        onError: (e) {
+          service.invoke("bgs_error", {"error": e.toString()});
           _sub = null;
           if (attempt < 4) {
             Future.delayed(const Duration(seconds: 3), () {
@@ -654,7 +695,8 @@ class _BackgroundSensorState {
         },
         cancelOnError: true,
       );
-    } catch (_) {
+    } catch (e) {
+      service.invoke("bgs_error", {"error": "subscribe_failed: $e"});
       if (attempt < 4) {
         Future.delayed(const Duration(seconds: 3), () {
           _trySubscribe(service, attempt: attempt + 1);
@@ -666,14 +708,12 @@ class _BackgroundSensorState {
 
 class _BleScanWindow {
   const _BleScanWindow({required this.avgRssi, required this.hitCount});
-
   final double? avgRssi;
   final int hitCount;
 }
 
 class _SessionState {
   _SessionState({required this.sessionToken});
-
   final String sessionToken;
   _PresenceState confirmedState = _PresenceState.outside;
   _PresenceState? pendingState;
@@ -684,7 +724,6 @@ enum _PresenceState { inside, outside }
 
 class SmartAttendanceResult {
   const SmartAttendanceResult({required this.success, required this.message});
-
   final bool success;
   final String message;
 }
