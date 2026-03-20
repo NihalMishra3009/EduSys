@@ -4312,13 +4312,23 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                     ((payload["scheduled_duration_ms"] as num?)?.toInt() ?? 60) *
                         60 *
                         1000;
-                await _smartAttendance.startProfessorSession(
-                  lectureId: lectureId,
-                  roomId: classroomId,
-                  scheduledDurationMs: durationMs,
-                  minAttendancePercent: 75,
-                  scheduledStart: payload["scheduled_start"] as int?,
-                );
+                try {
+                  await _smartAttendance.startProfessorSession(
+                    lectureId: lectureId,
+                    roomId: classroomId,
+                    scheduledDurationMs: durationMs,
+                    minAttendancePercent: 75,
+                    scheduledStart: payload["scheduled_start"] as int?,
+                  );
+                } catch (_) {
+                  if (!context.mounted) return;
+                  GlassToast.show(
+                    context,
+                    "BLE beacon not started. Enable Bluetooth and allow Advertise permission, then retry.",
+                    icon: Icons.error_outline,
+                  );
+                  return;
+                }
               } catch (_) {}
             } else {
               GlassToast.show(
@@ -5096,7 +5106,15 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                                 minAttendancePercent: 75,
                                 scheduledStart: firstScheduledStart,
                               );
-                            } catch (_) {}
+                            } catch (_) {
+                              if (!context.mounted) return;
+                              GlassToast.show(
+                                context,
+                                "BLE beacon not started. Enable Bluetooth and allow Advertise permission, then retry.",
+                                icon: Icons.error_outline,
+                              );
+                              return;
+                            }
                           }
                           final firstClass = selectedClasses.isEmpty
                               ? "Class A"
@@ -8710,14 +8728,25 @@ class _LecturesTabState extends State<_LecturesTab> {
             ((payload["scheduled_duration_ms"] as num?)?.toInt() ?? 60) *
                 60 *
                 1000;
-        await _smartAttendance.startProfessorSession(
-          lectureId: lectureId,
-          roomId: id,
-          scheduledDurationMs: durationMs,
-          minAttendancePercent: 75,
-          scheduledStart: payload["scheduled_start"] as int?,
-        );
-      } catch (_) {}
+        try {
+          await _smartAttendance.startProfessorSession(
+            lectureId: lectureId,
+            roomId: id,
+            scheduledDurationMs: durationMs,
+            minAttendancePercent: 75,
+            scheduledStart: payload["scheduled_start"] as int?,
+          );
+        } catch (_) {
+          if (mounted) {
+            _show(
+              "BLE beacon not started. Enable Bluetooth and allow Advertise permission, then retry.",
+            );
+          }
+          return;
+        }
+      } catch (_) {
+        // Keep lecture start flow alive even if parsing fails.
+      }
     }
     await _load();
   }
