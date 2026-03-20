@@ -31,6 +31,12 @@
             android:exported="false"
             android:stopWithTask="false"
             tools:replace="android:exported,android:name" />
+        <service
+            android:name="id.flutter.flutter_background_service.BackgroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            tools:node="merge"
+            tools:replace="android:exported,android:foregroundServiceType" />
         <receiver
             android:name="id.flutter.flutter_background_service.WatchdogReceiver"
             android:enabled="false"
