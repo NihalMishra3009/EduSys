@@ -7,13 +7,17 @@ import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.pm.PackageManager
+import android.os.Bundle
 import android.os.ParcelUuid
 import android.telephony.SubscriptionManager
 import android.util.Base64
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.io.FileWriter
 import java.util.UUID
 
 class MainActivity : FlutterActivity() {
@@ -22,6 +26,15 @@ class MainActivity : FlutterActivity() {
     private var advertiser: BluetoothLeAdvertiser? = null
     private var advertiseCallback: AdvertiseCallback? = null
     private var pendingAdvertiseResult: MethodChannel.Result? = null
+    private val tag = "EduSysNative"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        logNative("MainActivity.onCreate")
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            logNative("Uncaught exception on ${t.name}: ${e.message}", e)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -148,5 +161,25 @@ class MainActivity : FlutterActivity() {
         }
         advertiser = null
         advertiseCallback = null
+    }
+
+    private fun logNative(message: String, error: Throwable? = null) {
+        if (error != null) {
+            Log.e(tag, message, error)
+        } else {
+            Log.i(tag, message)
+        }
+        try {
+            val dir = getExternalFilesDir(null) ?: filesDir
+            val file = File(dir, "native_crash_log.txt")
+            FileWriter(file, true).use { writer ->
+                writer.appendLine("[${System.currentTimeMillis()}] $message")
+                if (error != null) {
+                    writer.appendLine(Log.getStackTraceString(error))
+                }
+            }
+        } catch (_: Exception) {
+            // Ignore logging failures
+        }
     }
 }
