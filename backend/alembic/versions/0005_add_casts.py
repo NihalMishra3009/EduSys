@@ -32,6 +32,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False, index=True),
         sa.Column("role", sa.Enum("ADMIN", "MEMBER", name="cast_member_role", native_enum=False), nullable=False),
         sa.Column("joined_at", sa.DateTime(), nullable=False),
+        sa.Column("last_read_at", sa.DateTime(), nullable=True),
         sa.UniqueConstraint("cast_id", "user_id", name="ux_cast_member"),
     )
     op.create_table(

@@ -1283,5 +1283,44 @@ class ApiService {
       sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
+
+  Future<http.Response> markCastRead({required int castId}) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/$castId/read",
+      sender: (uri) => _sharedClient.post(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> listCastMembers({required int castId}) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/$castId/members",
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> addCastMembers({
+    required int castId,
+    required List<int> memberIds,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"member_ids": memberIds});
+    return _sendWithFallback(
+      path: "/casts/$castId/members",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> removeCastMember({
+    required int castId,
+    required int memberId,
+  }) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/$castId/members/$memberId",
+      sender: (uri) => _sharedClient.delete(uri, headers: headers),
+    );
+  }
 }
 

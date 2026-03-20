@@ -1,14 +1,18 @@
 from collections import defaultdict
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from jose import JWTError, jwt
 from fastapi.staticfiles import StaticFiles
 from app.core.database import Base, SessionLocal, engine
 from app.core.security import hash_password
+from app.core.config import settings
 from app import models as _models  # Register metadata for all tables.
 from app.models.user import User, UserRole
 from app.models.classroom import Classroom
+from app.models.cast import CastMember, CastMemberRole, CastMessage, Cast
 from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, lecture, notification, resources, users, casts
 
 app = FastAPI(title="EduSys API", version="1.0.0")
@@ -116,6 +120,50 @@ class _MeetingSignalingHub:
 
 
 _meeting_hub = _MeetingSignalingHub()
+
+
+class _CastChatHub:
+    def __init__(self) -> None:
+        self._rooms: dict[str, dict[str, WebSocket]] = defaultdict(dict)
+        self._lock = asyncio.Lock()
+
+    async def join(self, room_id: str, peer_id: str, socket: WebSocket) -> None:
+        await socket.accept()
+        async with self._lock:
+            self._rooms[room_id][peer_id] = socket
+
+    async def leave(self, room_id: str, peer_id: str) -> None:
+        async with self._lock:
+            room = self._rooms.get(room_id, {})
+            room.pop(peer_id, None)
+            if not room and room_id in self._rooms:
+                self._rooms.pop(room_id, None)
+
+    async def broadcast(self, room_id: str, payload: dict) -> None:
+        peers = self._rooms.get(room_id, {})
+        tasks = []
+        for _, socket in peers.items():
+            tasks.append(socket.send_text(json.dumps(payload)))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+_cast_hub = _CastChatHub()
+
+
+def _auth_ws_user(token: str):
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+    except JWTError:
+        return None
+    db = SessionLocal()
+    try:
+        return db.get(User, int(user_id))
+    finally:
+        db.close()
 
 
 @app.on_event("startup")
@@ -314,3 +362,77 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
     finally:
         await _meeting_hub.leave(room_key, peer_id)
         await _meeting_hub.broadcast_except(room_key, peer_id, {"type": "peer_left", "peer_id": peer_id})
+
+
+@app.websocket("/ws/casts/{cast_id}")
+async def cast_chat_socket(websocket: WebSocket, cast_id: int):
+    token = websocket.query_params.get("token", "").strip()
+    peer_id = websocket.query_params.get("peer_id", "").strip() or f"peer-{id(websocket)}"
+    if not token:
+        await websocket.close(code=1008)
+        return
+    user = _auth_ws_user(token)
+    if user is None:
+        await websocket.close(code=1008)
+        return
+
+    db = SessionLocal()
+    try:
+        member = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == cast_id, CastMember.user_id == user.id)
+            .first()
+        )
+        if member is None:
+            await websocket.close(code=1008)
+            return
+        await _cast_hub.join(str(cast_id), peer_id, websocket)
+
+        while True:
+            message_text = await websocket.receive_text()
+            try:
+                payload = json.loads(message_text)
+            except json.JSONDecodeError:
+                continue
+            msg_type = str(payload.get("type", ""))
+            if msg_type == "message":
+                text = str(payload.get("message", "")).strip()
+                if not text:
+                    continue
+                client_id = str(payload.get("client_id", "")).strip() or None
+                item = CastMessage(
+                    cast_id=cast_id,
+                    sender_id=user.id,
+                    message=text,
+                    created_at=datetime.utcnow(),
+                )
+                db.add(item)
+                cast = db.get(Cast, cast_id)
+                if cast:
+                    cast.updated_at = datetime.utcnow()
+                member.last_read_at = datetime.utcnow()
+                db.commit()
+                db.refresh(item)
+                await _cast_hub.broadcast(
+                    str(cast_id),
+                    {
+                        "type": "message",
+                        "message": {
+                            "id": item.id,
+                            "cast_id": cast_id,
+                            "sender_id": user.id,
+                            "sender_name": user.name,
+                            "message": item.message,
+                            "created_at": item.created_at.isoformat(),
+                            "client_id": client_id,
+                        },
+                    },
+                )
+            elif msg_type == "read":
+                member.last_read_at = datetime.utcnow()
+                db.commit()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await _cast_hub.leave(str(cast_id), peer_id)
+        db.close()

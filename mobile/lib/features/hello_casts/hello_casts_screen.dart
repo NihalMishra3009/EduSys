@@ -59,13 +59,14 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
           final lastAtRaw = row["last_message_at"]?.toString();
           final lastAt = lastAtRaw != null ? DateTime.tryParse(lastAtRaw) : null;
           final membersCount = (row["members_count"] as num?)?.toInt() ?? 0;
+          final unreadCount = (row["unread_count"] as num?)?.toInt() ?? 0;
           chats.add({
             "id": row["id"],
             "name": name,
             "type": type,
             "subtitle": lastMessage ?? "No messages yet",
             "time": _formatTime(lastAt),
-            "unread": 0,
+            "unread": unreadCount,
           });
           if (type == "Community") {
             communities.add({

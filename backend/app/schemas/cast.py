@@ -15,6 +15,7 @@ class CastOut(BaseModel):
     members_count: int
     last_message: str | None
     last_message_at: datetime | None
+    unread_count: int = 0
 
     class Config:
         from_attributes = True
@@ -57,3 +58,17 @@ class CastAlertOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CastMemberOut(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
+class CastMemberUpdateRequest(BaseModel):
+    member_ids: list[int] = Field(default_factory=list)

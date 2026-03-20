@@ -37,6 +37,7 @@ class CastMember(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     role = Column(Enum(CastMemberRole, name="cast_member_role", native_enum=False), nullable=False, default=CastMemberRole.MEMBER)
     joined_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_read_at = Column(DateTime, nullable=True)
 
 
 class CastMessage(Base):

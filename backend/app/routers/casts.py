@@ -11,6 +11,8 @@ from app.schemas.cast import (
     CastAlertCreateRequest,
     CastAlertOut,
     CastCreateRequest,
+    CastMemberOut,
+    CastMemberUpdateRequest,
     CastMessageCreateRequest,
     CastMessageOut,
     CastOut,
@@ -45,6 +47,11 @@ def list_casts(
 
     results: list[CastOut] = []
     for cast in casts:
+        member = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == cast.id, CastMember.user_id == current_user.id)
+            .first()
+        )
         members_count = (
             db.query(func.count(CastMember.id))
             .filter(CastMember.cast_id == cast.id)
@@ -57,6 +64,26 @@ def list_casts(
             .order_by(CastMessage.created_at.desc())
             .first()
         )
+        unread_count = 0
+        if member is not None:
+            last_read_at = member.last_read_at
+            if last_read_at is None:
+                unread_count = (
+                    db.query(func.count(CastMessage.id))
+                    .filter(CastMessage.cast_id == cast.id)
+                    .scalar()
+                    or 0
+                )
+            else:
+                unread_count = (
+                    db.query(func.count(CastMessage.id))
+                    .filter(
+                        CastMessage.cast_id == cast.id,
+                        CastMessage.created_at > last_read_at,
+                    )
+                    .scalar()
+                    or 0
+                )
         results.append(
             CastOut(
                 id=cast.id,
@@ -65,6 +92,7 @@ def list_casts(
                 members_count=int(members_count),
                 last_message=last_msg.message if last_msg else None,
                 last_message_at=last_msg.created_at if last_msg else None,
+                unread_count=int(unread_count),
             )
         )
     return results
@@ -173,6 +201,13 @@ def send_message(
     cast = db.get(Cast, cast_id)
     if cast:
         cast.updated_at = datetime.utcnow()
+    member = (
+        db.query(CastMember)
+        .filter(CastMember.cast_id == cast_id, CastMember.user_id == current_user.id)
+        .first()
+    )
+    if member:
+        member.last_read_at = datetime.utcnow()
     db.commit()
     db.refresh(item)
     sender = db.get(User, current_user.id)
@@ -184,6 +219,105 @@ def send_message(
         message=item.message,
         created_at=item.created_at,
     )
+
+
+@router.post("/{cast_id}/read")
+def mark_read(
+    cast_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    member = _ensure_member(db, cast_id, current_user.id)
+    member.last_read_at = datetime.utcnow()
+    db.commit()
+    return {"detail": "Marked as read"}
+
+
+@router.get("/{cast_id}/members", response_model=list[CastMemberOut])
+def list_members(
+    cast_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_member(db, cast_id, current_user.id)
+    rows = (
+        db.query(CastMember, User)
+        .join(User, User.id == CastMember.user_id)
+        .filter(CastMember.cast_id == cast_id)
+        .all()
+    )
+    return [
+        CastMemberOut(
+            id=member.id,
+            user_id=member.user_id,
+            name=user.name,
+            role=member.role.value if isinstance(member.role, CastMemberRole) else str(member.role),
+        )
+        for member, user in rows
+    ]
+
+
+@router.post("/{cast_id}/members", response_model=list[CastMemberOut])
+def add_members(
+    cast_id: int,
+    payload: CastMemberUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    member = _ensure_member(db, cast_id, current_user.id)
+    if member.role != CastMemberRole.ADMIN and current_user.role not in (
+        UserRole.ADMIN,
+        UserRole.PROFESSOR,
+    ):
+        raise HTTPException(status_code=403, detail="Only cast admins can add members")
+
+    for member_id in payload.member_ids:
+        if member_id == current_user.id:
+            continue
+        exists = db.query(User).filter(User.id == member_id).first()
+        if not exists:
+            continue
+        already = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == cast_id, CastMember.user_id == member_id)
+            .first()
+        )
+        if already:
+            continue
+        db.add(
+            CastMember(
+                cast_id=cast_id,
+                user_id=member_id,
+                role=CastMemberRole.MEMBER,
+            )
+        )
+    db.commit()
+    return list_members(cast_id, db, current_user)
+
+
+@router.delete("/{cast_id}/members/{member_id}")
+def remove_member(
+    cast_id: int,
+    member_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    member = _ensure_member(db, cast_id, current_user.id)
+    if member.role != CastMemberRole.ADMIN and current_user.role not in (
+        UserRole.ADMIN,
+        UserRole.PROFESSOR,
+    ):
+        raise HTTPException(status_code=403, detail="Only cast admins can remove members")
+    target = (
+        db.query(CastMember)
+        .filter(CastMember.cast_id == cast_id, CastMember.user_id == member_id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Member not found")
+    db.delete(target)
+    db.commit()
+    return {"detail": "Member removed"}
 
 
 @router.get("/alerts", response_model=list[CastAlertOut])
