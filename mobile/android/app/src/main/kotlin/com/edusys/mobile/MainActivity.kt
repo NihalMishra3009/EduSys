@@ -12,7 +12,6 @@ import android.app.NotificationManager
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.ParcelUuid
 import android.telephony.SubscriptionManager
 import android.util.Base64
 import android.util.Log
@@ -22,7 +21,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileWriter
-import java.util.UUID
 
 class MainActivity : FlutterActivity() {
     private val channelName = "edusys/device"
@@ -142,7 +140,6 @@ class MainActivity : FlutterActivity() {
 
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
-            .addServiceUuid(ParcelUuid(UUID.fromString(serviceUuid)))
             .addManufacturerData(manufacturerId, safePayload)
             .build()
 
