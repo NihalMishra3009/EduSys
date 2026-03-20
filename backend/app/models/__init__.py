@@ -13,6 +13,7 @@ from app.models.assignment_submission import AssignmentSubmission
 from app.models.room_calibration import RoomCalibration
 from app.models.lecture_session import LectureSession
 from app.models.scan_event import ScanEvent
+from app.models.cast import Cast, CastAlert, CastMember, CastMemberRole, CastMessage, CastType
 
 __all__ = [
     "Base",
@@ -35,4 +36,10 @@ __all__ = [
     "RoomCalibration",
     "LectureSession",
     "ScanEvent",
+    "Cast",
+    "CastAlert",
+    "CastMember",
+    "CastMemberRole",
+    "CastMessage",
+    "CastType",
 ]

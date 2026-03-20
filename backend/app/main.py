@@ -9,7 +9,7 @@ from app.core.security import hash_password
 from app import models as _models  # Register metadata for all tables.
 from app.models.user import User, UserRole
 from app.models.classroom import Classroom
-from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, lecture, notification, resources, users
+from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, lecture, notification, resources, users, casts
 
 app = FastAPI(title="EduSys API", version="1.0.0")
 _media_dir = Path(__file__).resolve().parent.parent / "media"
@@ -44,6 +44,7 @@ app.include_router(department.router, prefix="/departments", tags=["departments"
 app.include_router(notification.router, prefix="/notifications", tags=["notifications"])
 app.include_router(complaint.router, prefix="/complaints", tags=["complaints"])
 app.include_router(resources.router, prefix="/resources", tags=["resources"])
+app.include_router(casts.router, prefix="/casts", tags=["casts"])
 
 
 class _MeetingSignalingHub:

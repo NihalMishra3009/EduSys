@@ -1,3 +1,7 @@
+import "dart:async";
+import "dart:convert";
+
+import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
 
@@ -8,10 +12,12 @@ class HelloCastsChatScreen extends StatefulWidget {
     super.key,
     required this.title,
     required this.castType,
+    required this.castId,
   });
 
   final String title;
   final String castType;
+  final int castId;
 
   @override
   State<HelloCastsChatScreen> createState() => _HelloCastsChatScreenState();
@@ -19,51 +25,101 @@ class HelloCastsChatScreen extends StatefulWidget {
 
 class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
   final TextEditingController _composer = TextEditingController();
-  final List<Map<String, dynamic>> _messages = [
-    {
-      "fromMe": false,
-      "sender": "Admin Cast",
-      "text": "Reminder: submit your lab report by 5 PM.",
-      "time": "09:12",
-    },
-    {
-      "fromMe": true,
-      "text": "Got it. Setting a reminder.",
-      "time": "09:13",
-    },
-    {
-      "fromMe": true,
-      "text": "Alert: Lab report due • Every 2 hours",
-      "time": "09:13",
-    },
-    {
-      "fromMe": false,
-      "sender": "Anita S.",
-      "text": "Voice note • 0:42",
-      "time": "09:18",
-    },
-  ];
+  final ApiService _api = ApiService();
+  final List<Map<String, dynamic>> _messages = [];
+  Timer? _pollTimer;
+  int? _currentUserId;
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _composer.dispose();
     super.dispose();
   }
 
-  void _sendMessage() {
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages();
+    _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      _loadMessages(silent: true);
+    });
+  }
+
+  Future<int?> _ensureUserId() async {
+    if (_currentUserId != null) return _currentUserId;
+    try {
+      final res = await _api.me();
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map<String, dynamic>) {
+          final id = decoded["id"];
+          if (id is num) {
+            _currentUserId = id.toInt();
+            return _currentUserId;
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _loadMessages({bool silent = false}) async {
+    if (widget.castId == 0) return;
+    try {
+      final userId = await _ensureUserId();
+      final res = await _api.listCastMessages(castId: widget.castId);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final list = jsonDecode(res.body) as List<dynamic>;
+        final items = <Map<String, dynamic>>[];
+        for (final row in list) {
+          if (row is! Map<String, dynamic>) continue;
+          final senderId = (row["sender_id"] as num?)?.toInt();
+          final createdRaw = row["created_at"]?.toString();
+          final createdAt =
+              createdRaw != null ? DateTime.tryParse(createdRaw) : null;
+          items.add({
+            "fromMe": userId != null && senderId == userId,
+            "sender": row["sender_name"]?.toString(),
+            "text": row["message"]?.toString() ?? "",
+            "time": _formatTime(createdAt),
+          });
+        }
+        if (mounted) {
+          setState(() {
+            _messages
+              ..clear()
+              ..addAll(items);
+          });
+        }
+      }
+    } catch (_) {
+      if (!silent) {
+        // ignore, keep existing messages
+      }
+    }
+  }
+
+  Future<void> _sendMessage() async {
     final text = _composer.text.trim();
     if (text.isEmpty) {
       return;
     }
-    setState(() {
-      _messages.add({
-        "fromMe": true,
-        "text": text,
-        "time":
-            "${TimeOfDay.now().hour.toString().padLeft(2, "0")}:${TimeOfDay.now().minute.toString().padLeft(2, "0")}",
-      });
-    });
+    try {
+      final res = await _api.sendCastMessage(
+        castId: widget.castId,
+        message: text,
+      );
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _loadMessages();
+      }
+    } catch (_) {}
     _composer.clear();
+  }
+
+  String _formatTime(DateTime? time) {
+    if (time == null) return "";
+    return "${time.hour.toString().padLeft(2, "0")}:${time.minute.toString().padLeft(2, "0")}";
   }
 
   @override

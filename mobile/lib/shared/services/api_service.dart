@@ -1204,5 +1204,84 @@ class ApiService {
       sender: (uri) => _sharedClient.patch(uri, headers: headers),
     );
   }
+
+  Future<http.Response> listCasts() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts",
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> createCast({
+    required String name,
+    required String castType,
+    List<int>? memberIds,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "name": name,
+      "cast_type": castType,
+      "member_ids": memberIds ?? [],
+    });
+    return _sendWithFallback(
+      path: "/casts",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listCastMessages({
+    required int castId,
+    int limit = 50,
+  }) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/$castId/messages?limit=$limit",
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> sendCastMessage({
+    required int castId,
+    required String message,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"message": message});
+    return _sendWithFallback(
+      path: "/casts/$castId/messages",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listCastAlerts() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/alerts",
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> createCastAlert({
+    required int castId,
+    required String title,
+    String? message,
+    required DateTime scheduleAt,
+    int? intervalMinutes,
+    bool active = true,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "cast_id": castId,
+      "title": title,
+      "message": message,
+      "schedule_at": scheduleAt.toIso8601String(),
+      "interval_minutes": intervalMinutes,
+      "active": active,
+    });
+    return _sendWithFallback(
+      path: "/casts/alerts",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
 }
 

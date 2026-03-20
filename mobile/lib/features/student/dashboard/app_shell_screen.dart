@@ -400,7 +400,7 @@ class _StudentMenuDrawer extends StatelessWidget {
                 },
               ),
               _DrawerItem(
-                title: "Hello Casts",
+                title: "Casts",
                 onTap: () {
                   Navigator.of(context).pop();
                   Navigator.of(context).push(

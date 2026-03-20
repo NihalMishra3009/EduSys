@@ -1,8 +1,12 @@
+import "dart:async";
+import "dart:convert";
+
+import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:flutter/material.dart";
 
 import "hello_casts_chat_screen.dart";
-import "hello_casts_widgets.dart";
 import "hello_casts_bottom_sheets.dart";
+import "hello_casts_widgets.dart";
 
 class HelloCastsScreen extends StatefulWidget {
   const HelloCastsScreen({super.key});
@@ -14,127 +18,124 @@ class HelloCastsScreen extends StatefulWidget {
 class _HelloCastsScreenState extends State<HelloCastsScreen> {
   int _tabIndex = 0;
   String _chatFilter = "All";
+  final ApiService _api = ApiService();
+  Timer? _refreshTimer;
 
   static const _tabs = ["Chats", "Communities", "Calls", "Alerts"];
   static const _filters = ["All", "Community", "Group", "Individual"];
 
-  final List<Map<String, dynamic>> _chats = [
-    {
-      "name": "CSE Community Board",
-      "type": "Community",
-      "subtitle": "3 new posts • Exam cell notice",
-      "time": "09:18",
-      "unread": 4,
-      "badge": "CAST",
-    },
-    {
-      "name": "DBMS Group Cast",
-      "type": "Group",
-      "subtitle": "Reminder: Lab at 2:00 PM",
-      "time": "08:41",
-      "unread": 2,
-      "badge": "ALERT",
-    },
-    {
-      "name": "Shreya Kapoor",
-      "type": "Individual",
-      "subtitle": "I shared the notes deck.",
-      "time": "08:20",
-      "unread": 0,
-    },
-    {
-      "name": "Hackathon Squad",
-      "type": "Group",
-      "subtitle": "Voice call scheduled at 6:30 PM",
-      "time": "Yesterday",
-      "unread": 1,
-      "badge": "CALL",
-    },
-    {
-      "name": "Placement Desk",
-      "type": "Community",
-      "subtitle": "New role: Data Analyst • 4 posts",
-      "time": "Yesterday",
-      "unread": 0,
-    },
-    {
-      "name": "Rohan Mehta",
-      "type": "Individual",
-      "subtitle": "Reminder set for tomorrow 9 AM.",
-      "time": "Mon",
-      "unread": 0,
-      "badge": "REMIND",
-    },
-  ];
+  List<Map<String, dynamic>> _chats = [];
+  List<Map<String, dynamic>> _communities = [];
+  List<Map<String, dynamic>> _calls = [];
+  List<Map<String, dynamic>> _alerts = [];
 
-  final List<Map<String, dynamic>> _communities = [
-    {
-      "name": "CSE Community",
-      "members": "1.2k members",
-      "groups": 6,
-      "highlight": "Exam circular shared",
-      "tone": "Academic",
-    },
-    {
-      "name": "Innovation Cell",
-      "members": "780 members",
-      "groups": 4,
-      "highlight": "Prototype sprint in 2 days",
-      "tone": "Projects",
-    },
-    {
-      "name": "Placement Hub",
-      "members": "2.4k members",
-      "groups": 8,
-      "highlight": "Resume clinic live",
-      "tone": "Career",
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _loadData(silent: true);
+    });
+  }
 
-  final List<Map<String, dynamic>> _calls = [
-    {
-      "name": "Hackathon Squad",
-      "time": "Today, 6:30 PM",
-      "type": "Group Call",
-      "status": "Scheduled",
-    },
-    {
-      "name": "Rohan Mehta",
-      "time": "Today, 11:20 AM",
-      "type": "Voice Call",
-      "status": "Missed",
-    },
-    {
-      "name": "DBMS Group Cast",
-      "time": "Yesterday, 4:05 PM",
-      "type": "Voice Call",
-      "status": "Completed",
-    },
-  ];
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
 
-  final List<Map<String, dynamic>> _alerts = [
-    {
-      "title": "Assignment submission",
-      "audience": "DBMS Group Cast",
-      "mode": "Every 4 hours",
-      "next": "Next at 12:00 PM",
-      "active": true,
-    },
-    {
-      "title": "Morning attendance",
-      "audience": "CSE Community",
-      "mode": "At 9:15 AM",
-      "next": "Tomorrow",
-      "active": true,
-    },
-    {
-      "title": "Team sync",
-      "audience": "Hackathon Squad",
-      "mode": "Every Monday 6:30 PM",
-      "next": "Next Mon",
-      "active": false,
-    },
-  ];
+  Future<void> _loadData({bool silent = false}) async {
+    try {
+      final castsRes = await _api.listCasts();
+      if (castsRes.statusCode >= 200 && castsRes.statusCode < 300) {
+        final list = jsonDecode(castsRes.body) as List<dynamic>;
+        final chats = <Map<String, dynamic>>[];
+        final communities = <Map<String, dynamic>>[];
+        for (final row in list) {
+          if (row is! Map<String, dynamic>) continue;
+          final name = row["name"]?.toString() ?? "Cast";
+          final type = row["cast_type"]?.toString() ?? "Group";
+          final lastMessage = row["last_message"]?.toString();
+          final lastAtRaw = row["last_message_at"]?.toString();
+          final lastAt = lastAtRaw != null ? DateTime.tryParse(lastAtRaw) : null;
+          final membersCount = (row["members_count"] as num?)?.toInt() ?? 0;
+          chats.add({
+            "id": row["id"],
+            "name": name,
+            "type": type,
+            "subtitle": lastMessage ?? "No messages yet",
+            "time": _formatTime(lastAt),
+            "unread": 0,
+          });
+          if (type == "Community") {
+            communities.add({
+              "name": name,
+              "members": "$membersCount members",
+              "groups": 0,
+              "highlight": lastMessage ?? "No updates yet",
+              "tone": "Community",
+            });
+          }
+        }
+        _chats = chats;
+        _communities = communities;
+      }
+
+      final alertsRes = await _api.listCastAlerts();
+      if (alertsRes.statusCode >= 200 && alertsRes.statusCode < 300) {
+        final list = jsonDecode(alertsRes.body) as List<dynamic>;
+        final alerts = <Map<String, dynamic>>[];
+        for (final row in list) {
+          if (row is! Map<String, dynamic>) continue;
+          final title = row["title"]?.toString() ?? "Alert";
+          final castId = row["cast_id"];
+          final scheduleRaw = row["schedule_at"]?.toString();
+          final scheduleAt =
+              scheduleRaw != null ? DateTime.tryParse(scheduleRaw) : null;
+          final interval = row["interval_minutes"];
+          final mode = interval is num
+              ? "Every ${interval.toInt()} min"
+              : "At ${_formatTime(scheduleAt)}";
+          alerts.add({
+            "title": title,
+            "audience": _castName(castId),
+            "mode": mode,
+            "next": scheduleAt != null
+                ? _formatDate(scheduleAt)
+                : "Scheduled",
+            "active": row["active"] == true,
+          });
+        }
+        _alerts = alerts;
+      }
+    } catch (_) {}
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  String _castName(dynamic id) {
+    final match = _chats.firstWhere(
+      (c) => c["id"] == id,
+      orElse: () => const {},
+    );
+    return match["name"]?.toString() ?? "Cast";
+  }
+
+  String _formatTime(DateTime? time) {
+    if (time == null) return "";
+    final now = DateTime.now();
+    final diff = now.difference(time);
+    if (diff.inDays >= 1) {
+      return diff.inDays == 1 ? "Yesterday" : "${diff.inDays}d";
+    }
+    return "${time.hour.toString().padLeft(2, "0")}:${time.minute.toString().padLeft(2, "0")}";
+  }
+
+  String _formatDate(DateTime time) {
+    return "${time.day.toString().padLeft(2, "0")}/"
+        "${time.month.toString().padLeft(2, "0")}";
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -185,7 +186,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 20 + 96),
             children: [
               const HelloCastsHeader(
-                title: "Hello Casts",
+                title: "Casts",
                 subtitle: "Community, group, and personal channels in one space.",
               ),
               const SizedBox(height: 12),
@@ -264,6 +265,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
               child: HelloCastsChatScreen(
                 title: chat["name"].toString(),
                 castType: chat["type"].toString(),
+                castId: (chat["id"] as num?)?.toInt() ?? 0,
               ),
             ),
           );
@@ -273,21 +275,11 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   }
 
   void _openCreateCast(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const HelloCastsCreateCastSheet(),
-    );
+    _showCreateCastDialog(context, "Group");
   }
 
   void _openCreateCommunity(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const HelloCastsCreateCommunitySheet(),
-    );
+    _showCreateCastDialog(context, "Community");
   }
 
   void _openCallStudio(BuildContext context) {
@@ -300,11 +292,153 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   }
 
   void _openAlertStudio(BuildContext context) {
-    showModalBottomSheet<void>(
+    _showCreateAlertDialog(context);
+  }
+
+  Future<void> _showCreateCastDialog(
+      BuildContext context, String initialType) async {
+    final nameController = TextEditingController();
+    String castType = initialType;
+    final created = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const HelloCastsAlertStudioSheet(),
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text("Create Cast"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: "Cast name"),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: castType,
+                items: const [
+                  DropdownMenuItem(value: "Community", child: Text("Community")),
+                  DropdownMenuItem(value: "Group", child: Text("Group")),
+                  DropdownMenuItem(value: "Individual", child: Text("Individual")),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  castType = value;
+                },
+                decoration: const InputDecoration(labelText: "Cast type"),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text("Create"),
+            ),
+          ],
+        );
+      },
     );
+    if (created != true) return;
+    final name = nameController.text.trim();
+    if (name.isEmpty) return;
+    try {
+      final res = await _api.createCast(name: name, castType: castType);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _loadData();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _showCreateAlertDialog(BuildContext context) async {
+    if (_chats.isEmpty) {
+      return;
+    }
+    final titleController = TextEditingController();
+    final messageController = TextEditingController();
+    final minutesController = TextEditingController(text: "10");
+    final intervalController = TextEditingController();
+    int castId = (_chats.first["id"] as num?)?.toInt() ?? 0;
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text("Schedule Alert"),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: castId,
+                  items: _chats
+                      .map((c) => DropdownMenuItem<int>(
+                            value: (c["id"] as num?)?.toInt() ?? 0,
+                            child: Text(c["name"]?.toString() ?? "Cast"),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) castId = value;
+                  },
+                  decoration: const InputDecoration(labelText: "Cast"),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: titleController,
+                  decoration: const InputDecoration(labelText: "Alert title"),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: messageController,
+                  decoration: const InputDecoration(labelText: "Message (optional)"),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: minutesController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: "Minutes from now"),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: intervalController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: "Repeat every (minutes, optional)"),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text("Schedule"),
+            ),
+          ],
+        );
+      },
+    );
+    if (created != true) return;
+    final title = titleController.text.trim();
+    if (title.isEmpty || castId == 0) return;
+    final minutes = int.tryParse(minutesController.text.trim()) ?? 10;
+    final interval = int.tryParse(intervalController.text.trim());
+    final scheduleAt = DateTime.now().add(Duration(minutes: minutes));
+    try {
+      final res = await _api.createCastAlert(
+        castId: castId,
+        title: title,
+        message: messageController.text.trim().isEmpty
+            ? null
+            : messageController.text.trim(),
+        scheduleAt: scheduleAt,
+        intervalMinutes: interval,
+      );
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _loadData();
+      }
+    } catch (_) {}
   }
 }
