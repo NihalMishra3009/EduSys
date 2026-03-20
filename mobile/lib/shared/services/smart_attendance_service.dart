@@ -525,6 +525,31 @@ class SmartAttendanceService {
           "RSSI=${scanResult.avgRssi?.toStringAsFixed(1)} threshold=$threshold state=${newState.name}");
 
       if (newState == state.confirmedState) {
+        if (state.scanIndex == 0 && newState == _PresenceState.inside) {
+          state.scanIndex += 1;
+          final studentId = await _getCurrentUserId();
+          if (studentId == null) {
+            CrashLogService.log("SCAN", "Could not resolve student ID");
+            return const SmartAttendanceResult(
+                success: false, message: "Unable to resolve student profile");
+          }
+          await _api.logAttendanceScan(
+            scanId: _uuid.v4(),
+            studentId: studentId,
+            lectureId: lectureId,
+            sessionToken: sessionToken,
+            type: "ENTRY",
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+            scanIndex: state.scanIndex,
+            rssi: scanResult.avgRssi,
+          );
+          CrashLogService.log(
+              "SCAN", "Entry recorded scanIndex=${state.scanIndex}");
+          return SmartAttendanceResult(
+            success: true,
+            message: "Entry recorded (scan ${state.scanIndex})",
+          );
+        }
         return SmartAttendanceResult(
           success: true,
           message: "No state change (still ${state.confirmedState.name})",
