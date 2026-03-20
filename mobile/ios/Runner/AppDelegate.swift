@@ -76,8 +76,7 @@ import CoreBluetooth
             CBAdvertisementDataLocalNameKey: "EduSys"
         ]
         peripheral.startAdvertising(advertisementData)
-        pendingResult?(true)
-        pendingResult = nil
+        // Do NOT resolve here — wait for didStartAdvertising confirmation
     }
 
     func peripheralManager(
@@ -90,8 +89,10 @@ import CoreBluetooth
                 message: error.localizedDescription,
                 details: nil
             ))
-            pendingResult = nil
+        } else {
+            pendingResult?(true)
         }
+        pendingResult = nil
     }
 
     private func stopAdvertising() {

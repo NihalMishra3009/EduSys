@@ -1,5 +1,5 @@
 import "package:flutter/material.dart";
-import "package:geolocator/geolocator.dart";
+import "package:permission_handler/permission_handler.dart";
 
 class PermissionDeniedScreen extends StatelessWidget {
   const PermissionDeniedScreen({super.key});
@@ -19,14 +19,14 @@ class PermissionDeniedScreen extends StatelessWidget {
             const SizedBox(height: 16),
             FilledButton(
               onPressed: () async {
-                await Geolocator.openAppSettings();
+                await openAppSettings();
               },
               child: const Text("Open App Settings"),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
               onPressed: () async {
-                await Geolocator.openLocationSettings();
+                await openAppSettings();
               },
               child: const Text("Open Location Settings"),
             ),

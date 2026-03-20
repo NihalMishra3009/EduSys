@@ -155,15 +155,20 @@ class MainActivity : FlutterActivity() {
             }
 
             override fun onStartFailure(errorCode: Int) {
-                val reason = when (errorCode) {
-                    ADVERTISE_FAILED_DATA_TOO_LARGE -> "Payload too large for BLE advertisement"
-                    ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "Too many concurrent advertisers"
-                    ADVERTISE_FAILED_ALREADY_STARTED -> "Already advertising"
-                    ADVERTISE_FAILED_INTERNAL_ERROR -> "Internal BLE error"
-                    ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "BLE advertising not supported on this device"
-                    else -> "Unknown error: $errorCode"
-                }
                 runOnUiThread {
+                    if (errorCode == ADVERTISE_FAILED_ALREADY_STARTED) {
+                        // Already advertising — treat as success, not failure
+                        pendingAdvertiseResult?.success(true)
+                        pendingAdvertiseResult = null
+                        return@runOnUiThread
+                    }
+                    val reason = when (errorCode) {
+                        ADVERTISE_FAILED_DATA_TOO_LARGE -> "Payload too large for BLE advertisement"
+                        ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "Too many concurrent advertisers"
+                        ADVERTISE_FAILED_INTERNAL_ERROR -> "Internal BLE error"
+                        ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "BLE advertising not supported on this device"
+                        else -> "Unknown error: $errorCode"
+                    }
                     pendingAdvertiseResult?.error("BLE_ADVERTISE_FAILED", reason, errorCode)
                     pendingAdvertiseResult = null
                 }

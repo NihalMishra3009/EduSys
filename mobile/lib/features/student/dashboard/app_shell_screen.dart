@@ -19,7 +19,6 @@ import "package:edusys_mobile/features/student/attendance/active_lecture_screen.
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/crash_log_service.dart";
 import "package:edusys_mobile/shared/services/device_binding_service.dart";
-import "package:edusys_mobile/shared/services/location_service.dart";
 import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
 import "package:edusys_mobile/shared/widgets/app_button.dart";
 import "package:edusys_mobile/shared/widgets/app_card.dart";
@@ -8891,7 +8890,6 @@ class _MeetingStateChip extends StatelessWidget {
 class _LecturesTabState extends State<_LecturesTab> {
   final ApiService _api = ApiService();
   final SmartAttendanceService _smartAttendance = SmartAttendanceService();
-  final LocationService _location = LocationService();
   final TextEditingController _classroomController = TextEditingController();
   final TextEditingController _lectureIdController = TextEditingController();
 
@@ -8988,41 +8986,12 @@ class _LecturesTabState extends State<_LecturesTab> {
 
   Future<void> _markPresence(int lectureId) async {
     try {
-      final pos = await _location.getCurrentPosition();
-      final res = await _api.submitCheckpoint(
-        lectureId: lectureId,
-        latitude: pos.latitude,
-        longitude: pos.longitude,
-        gpsAccuracyM: pos.accuracy,
-      );
+      final res = await _api.submitCheckpoint(lectureId: lectureId);
       if (!mounted) return;
       _show(_detail(res.body, "Checkpoint submitted"));
-    } on LocationServiceException catch (e, s) {
-      CrashLogService.log(
-        "MARK_PRESENCE_LOCATION",
-        "lectureId=$lectureId type=${e.type.name}",
-        stack: s,
-      );
+    } catch (e) {
       if (!mounted) return;
-      if (e.type == LocationErrorType.denied ||
-          e.type == LocationErrorType.deniedForever ||
-          e.type == LocationErrorType.gpsDisabled) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => const PermissionDeniedScreen(),
-          ),
-        );
-        return;
-      }
-      _show("Unable to read a stable location. Please try again.");
-    } catch (e, s) {
-      CrashLogService.log(
-        "MARK_PRESENCE_ERROR",
-        "lectureId=$lectureId error=$e",
-        stack: s,
-      );
-      if (!mounted) return;
-      _show("Unable to mark presence right now. Please try again.");
+      _show("Unable to mark presence. Please retry.");
     }
   }
 
@@ -9166,12 +9135,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   int _monthlyAbsent = 0;
   double _monthlyPercentage = 0;
   int? _selectedStudentId;
-  final LocationService _location = LocationService();
-  final List<Map<String, dynamic>> _spacePoints = [];
   final TextEditingController _ceilingHeightController = TextEditingController();
   final TextEditingController _bleRssiController = TextEditingController();
   bool _bleRssiAuto = true;
-  bool _recordingSpacePoint = false;
   List<Map<String, dynamic>> _createdSpaces = [];
   final TextEditingController _spaceNameController = TextEditingController();
   final TextEditingController _spaceThresholdController =
@@ -9930,38 +9896,8 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     }
   }
 
-  Future<void> _recordSpacePoint() async {
-    if (_recordingSpacePoint) {
-      return;
-    }
-    setState(() => _recordingSpacePoint = true);
-    try {
-      final fix = await _location.getVertexFix();
-      if (!mounted) return;
-      setState(() {
-        _spacePoints.add(
-          {
-            "lat": fix.latitude.toDouble(),
-            "lng": fix.longitude.toDouble(),
-            "latitude": fix.latitude.toDouble(),
-            "longitude": fix.longitude.toDouble(),
-          },
-        );
-      });
-    } on LocationServiceException {
-      if (!mounted) return;
-      Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const PermissionDeniedScreen()));
-    } finally {
-      if (mounted) {
-        setState(() => _recordingSpacePoint = false);
-      }
-    }
-  }
-
   void _clearSpacePoints() {
     setState(() {
-      _spacePoints.clear();
       _ceilingHeightController.clear();
       _bleRssiController.clear();
       _bleRssiAuto = true;
@@ -10009,7 +9945,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     _toast(feedback);
     if (res.statusCode >= 200 && res.statusCode < 300) {
       setState(() {
-        _spacePoints.clear();
         _spaceNameController.clear();
         _ceilingHeightController.clear();
         _bleRssiController.clear();
@@ -10259,9 +10194,8 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  const Text("Tap + to add a new space and record points."),
-                  const SizedBox(height: 6),
-                  Text("Points recorded: ${_spacePoints.length}"),
+                  const Text("Enter ceiling height and a BLE RSSI threshold to create a space."),
+                  // Space points recording removed — BLE+ceiling height only.
                   if (_createdSpaces.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     const SectionTitle("Created Spaces"),

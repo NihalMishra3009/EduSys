@@ -396,21 +396,10 @@ class ApiService {
 
   Future<http.Response> submitCheckpoint({
     required int lectureId,
-    required double latitude,
-    required double longitude,
-    double? gpsAccuracyM,
-    double? effectiveAccuracyM,
-    List<Map<String, double>>? rawSamples,
   }) async {
+    // GPS/location removed — attendance uses BLE + accelerometer only.
     final headers = await _headers(auth: true);
-    final body = jsonEncode({
-      "lecture_id": lectureId,
-      "latitude": latitude,
-      "longitude": longitude,
-      "gps_accuracy_m": gpsAccuracyM,
-      "effective_accuracy_m": effectiveAccuracyM,
-      "raw_samples": rawSamples,
-    });
+    final body = jsonEncode({"lecture_id": lectureId});
     return _sendWithFallback(
       path: "/attendance/checkpoint",
       sender: (uri) => http.post(uri, headers: headers, body: body),
