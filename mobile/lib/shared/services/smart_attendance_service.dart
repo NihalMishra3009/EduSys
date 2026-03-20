@@ -46,8 +46,16 @@ class SmartAttendanceService {
   static const String _bleChannelName = "edusys/ble_advertise";
   static const double _motionThreshold = 2.5;
   static const Duration _motionCooldown = Duration(seconds: 5);
-  static const Duration _scanWindow = Duration(seconds: 10);
-  static const Duration _autoScanInterval = Duration(seconds: 60);
+  static const Duration _scanWindow = Duration(minutes: 2);
+  static const Duration _scanPauseInterval = Duration(minutes: 2);
+  static const Duration _calibrationWindow = Duration(minutes: 5);
+  static const Duration _exitGraceDuration = Duration(minutes: 5);
+  static const Duration _entryConfirmWindow = Duration(minutes: 2);
+  static const int _entryConfirmScans = 2;
+  static const int _maxCalibrationSamples = 100;
+  static const int _minCalibrationSamples = 3;
+  static const double _defaultInsideThreshold = -80;
+  static const double _defaultOutsideThreshold = -92;
   static const String _bgTrackingPrefKey = "attendance_background_enabled";
   static const MethodChannel _attendanceNativeChannel =
       MethodChannel("edusys/attendance_native");
@@ -379,6 +387,7 @@ class SmartAttendanceService {
         if (lectureId == null) continue;
         await _runAttendanceScan(
             lectureId: lectureId, roomId: roomId, session: session);
+        _refreshAutoScanTimer();
         break;
       }
     } catch (e, s) {
@@ -390,7 +399,8 @@ class SmartAttendanceService {
     _autoScanTimer?.cancel();
     _autoScanTimer = null;
     if (!_monitoring || _activeRoomIds.isEmpty) return;
-    _autoScanTimer = Timer.periodic(_autoScanInterval, (_) {
+    final interval = _scanWindow + _scanPauseInterval;
+    _autoScanTimer = Timer.periodic(interval, (_) {
       _autoScanActiveRooms();
     });
   }
@@ -516,83 +526,150 @@ class SmartAttendanceService {
         );
       }
 
-      final threshold =
-          (roomConfig?["ble_rssi_threshold"] as num?)?.toDouble() ?? -75;
-      final inside = scanResult.avgRssi! >= threshold;
-      final newState = inside ? _PresenceState.inside : _PresenceState.outside;
+      final now = DateTime.now();
+      final baseInside =
+          (roomConfig?["ble_rssi_threshold"] as num?)?.toDouble() ??
+              _defaultInsideThreshold;
+      final baseOutside = math.min(baseInside - 12, _defaultOutsideThreshold);
 
-      CrashLogService.log("SCAN",
-          "RSSI=${scanResult.avgRssi?.toStringAsFixed(1)} threshold=$threshold state=${newState.name}");
+      state.calibrationStartAt ??= now;
+      if (now.difference(state.calibrationStartAt!) <= _calibrationWindow) {
+        state.calibrationSamples.add(scanResult.avgRssi!);
+        if (state.calibrationSamples.length > _maxCalibrationSamples) {
+          state.calibrationSamples.removeAt(0);
+        }
+      }
 
-      if (newState == state.confirmedState) {
-        if (state.scanIndex == 0 && newState == _PresenceState.inside) {
-          state.scanIndex += 1;
-          final studentId = await _getCurrentUserId();
-          if (studentId == null) {
-            CrashLogService.log("SCAN", "Could not resolve student ID");
-            return const SmartAttendanceResult(
-                success: false, message: "Unable to resolve student profile");
+      double insideThreshold = baseInside;
+      double outsideThreshold = baseOutside;
+      if (state.calibrationSamples.length >= _minCalibrationSamples) {
+        final sorted = List<double>.from(state.calibrationSamples)..sort();
+        final idx = ((sorted.length - 1) * 0.1).round();
+        final p10 = sorted[idx];
+        insideThreshold = p10 - 5;
+        outsideThreshold = p10 - 15;
+      }
+
+      insideThreshold = insideThreshold.clamp(-95, -60).toDouble();
+      outsideThreshold =
+          outsideThreshold.clamp(-100, insideThreshold - 5).toDouble();
+
+      final insideNow = scanResult.avgRssi! >= insideThreshold;
+      final outsideNow = scanResult.avgRssi! <= outsideThreshold;
+
+      CrashLogService.log(
+        "SCAN",
+        "RSSI=${scanResult.avgRssi?.toStringAsFixed(1)} insideT=$insideThreshold "
+            "outsideT=$outsideThreshold state=${state.confirmedState.name}",
+      );
+
+      if (state.confirmedState == _PresenceState.inside) {
+        if (outsideNow) {
+          state.weakSince ??= now;
+          final motionOk = _lastMotionAt != null &&
+              _lastMotionAt!.isAfter(state.weakSince!);
+          if (now.difference(state.weakSince!) >= _exitGraceDuration &&
+              motionOk) {
+            state.scanIndex += 1;
+            final studentId = await _getCurrentUserId();
+            if (studentId == null) {
+              CrashLogService.log("SCAN", "Could not resolve student ID");
+              return const SmartAttendanceResult(
+                  success: false, message: "Unable to resolve student profile");
+            }
+            await _api.logAttendanceScan(
+              scanId: _uuid.v4(),
+              studentId: studentId,
+              lectureId: lectureId,
+              sessionToken: sessionToken,
+              type: "EXIT",
+              timestamp: now.millisecondsSinceEpoch,
+              scanIndex: state.scanIndex,
+              rssi: scanResult.avgRssi,
+            );
+            state.confirmedState = _PresenceState.outside;
+            state.weakSince = null;
+            state.entryWindowStart = null;
+            state.entryScanCount = 0;
+            CrashLogService.log(
+                "SCAN", "Exit recorded scanIndex=${state.scanIndex}");
+            return SmartAttendanceResult(
+              success: true,
+              message: "Exit recorded (scan ${state.scanIndex})",
+            );
           }
-          await _api.logAttendanceScan(
-            scanId: _uuid.v4(),
-            studentId: studentId,
-            lectureId: lectureId,
-            sessionToken: sessionToken,
-            type: "ENTRY",
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            scanIndex: state.scanIndex,
-            rssi: scanResult.avgRssi,
-          );
-          CrashLogService.log(
-              "SCAN", "Entry recorded scanIndex=${state.scanIndex}");
-          return SmartAttendanceResult(
+          return const SmartAttendanceResult(
             success: true,
-            message: "Entry recorded (scan ${state.scanIndex})",
+            message: "Weak signal — monitoring before marking exit.",
           );
         }
+        state.weakSince = null;
         return SmartAttendanceResult(
           success: true,
           message: "No state change (still ${state.confirmedState.name})",
         );
       }
 
-      if (state.pendingState == newState) {
-        state.pendingState = null;
-        state.confirmedState = newState;
-        state.scanIndex += 1;
-        final studentId = await _getCurrentUserId();
-        if (studentId == null) {
-          CrashLogService.log("SCAN", "Could not resolve student ID");
+      if (state.confirmedState == _PresenceState.outside) {
+        if (insideNow) {
+          if (scanResult.hitCount >= _entryConfirmScans) {
+            state.entryWindowStart = null;
+            state.entryScanCount = _entryConfirmScans;
+          }
+          if (state.entryWindowStart == null ||
+              now.difference(state.entryWindowStart!) > _entryConfirmWindow) {
+            state.entryWindowStart = now;
+            if (state.entryScanCount == 0) {
+              state.entryScanCount = 1;
+            }
+          } else {
+            state.entryScanCount += 1;
+          }
+          if (state.entryScanCount >= _entryConfirmScans) {
+            state.scanIndex += 1;
+            final studentId = await _getCurrentUserId();
+            if (studentId == null) {
+              CrashLogService.log("SCAN", "Could not resolve student ID");
+              return const SmartAttendanceResult(
+                  success: false, message: "Unable to resolve student profile");
+            }
+            await _api.logAttendanceScan(
+              scanId: _uuid.v4(),
+              studentId: studentId,
+              lectureId: lectureId,
+              sessionToken: sessionToken,
+              type: "ENTRY",
+              timestamp: now.millisecondsSinceEpoch,
+              scanIndex: state.scanIndex,
+              rssi: scanResult.avgRssi,
+            );
+            state.confirmedState = _PresenceState.inside;
+            state.entryWindowStart = null;
+            state.entryScanCount = 0;
+            state.weakSince = null;
+            CrashLogService.log(
+                "SCAN", "Entry recorded scanIndex=${state.scanIndex}");
+            return SmartAttendanceResult(
+              success: true,
+              message: "Entry recorded (scan ${state.scanIndex})",
+            );
+          }
           return const SmartAttendanceResult(
-              success: false, message: "Unable to resolve student profile");
+            success: true,
+            message: "Entry pending — stay near the beacon and scan again.",
+          );
         }
-        await _api.logAttendanceScan(
-          scanId: _uuid.v4(),
-          studentId: studentId,
-          lectureId: lectureId,
-          sessionToken: sessionToken,
-          type: newState == _PresenceState.inside ? "ENTRY" : "EXIT",
-          timestamp: DateTime.now().millisecondsSinceEpoch,
-          scanIndex: state.scanIndex,
-          rssi: scanResult.avgRssi,
-        );
-        final label = newState == _PresenceState.inside ? "Entry" : "Exit";
-        CrashLogService.log(
-            "SCAN", "$label recorded scanIndex=${state.scanIndex}");
+        state.entryWindowStart = null;
+        state.entryScanCount = 0;
         return SmartAttendanceResult(
           success: true,
-          message: "$label recorded (scan ${state.scanIndex})",
+          message: "No state change (still ${state.confirmedState.name})",
         );
       }
 
-      state.pendingState = newState;
-      CrashLogService.log("SCAN", "Pending ${newState.name} confirmation");
-      final pendingLabel = newState == _PresenceState.inside
-          ? "Almost there — stay near the beacon and tap again to confirm entry."
-          : "Move away from the classroom and tap again to confirm exit.";
-      return SmartAttendanceResult(
+      return const SmartAttendanceResult(
         success: true,
-        message: pendingLabel,
+        message: "Scan completed.",
       );
     } catch (e, s) {
       CrashLogService.log("SCAN_ERROR", e.toString(), stack: s);
@@ -902,8 +979,12 @@ class _SessionState {
   _SessionState({required this.sessionToken});
   final String sessionToken;
   _PresenceState confirmedState = _PresenceState.outside;
-  _PresenceState? pendingState;
   int scanIndex = 0;
+  final List<double> calibrationSamples = [];
+  DateTime? calibrationStartAt;
+  DateTime? weakSince;
+  DateTime? entryWindowStart;
+  int entryScanCount = 0;
 }
 
 enum _PresenceState { inside, outside }
