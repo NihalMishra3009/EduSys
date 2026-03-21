@@ -934,24 +934,30 @@ class _FilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return Wrap(
-      spacing: 8,
-      children: filters.map((f) {
-        final active = f == current;
-        return ChoiceChip(
-          selected: active,
-          label: Text(f),
-          onSelected: (_) => onChanged(f),
-          selectedColor: const Color(0xFF25D366).withValues(alpha: 0.2),
-          backgroundColor: dark ? null : Colors.white,
-          labelStyle: TextStyle(
-            color: active
-                ? const Color(0xFF25D366)
-                : (dark ? null : Colors.black87),
-            fontWeight: FontWeight.w700,
-          ),
-        );
-      }).toList(),
+    return SizedBox(
+      height: 38,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: filters.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final f = filters[index];
+          final active = f == current;
+          return ChoiceChip(
+            selected: active,
+            label: Text(f),
+            onSelected: (_) => onChanged(f),
+            selectedColor: const Color(0xFF25D366).withValues(alpha: 0.2),
+            backgroundColor: dark ? null : Colors.white,
+            labelStyle: TextStyle(
+              color: active
+                  ? const Color(0xFF25D366)
+                  : (dark ? null : Colors.black87),
+              fontWeight: FontWeight.w700,
+            ),
+          );
+        },
+      ),
     );
   }
 }
