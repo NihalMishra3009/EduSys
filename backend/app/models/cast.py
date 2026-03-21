@@ -1,7 +1,7 @@
 from datetime import datetime
 import enum
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, Index
 
 from app.core.database import Base
 
@@ -30,7 +30,10 @@ class Cast(Base):
 
 class CastMember(Base):
     __tablename__ = "cast_members"
-    __table_args__ = (UniqueConstraint("cast_id", "user_id", name="ux_cast_member"),)
+    __table_args__ = (
+        UniqueConstraint("cast_id", "user_id", name="ux_cast_member"),
+        Index("ix_cast_members_cast_user", "cast_id", "user_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     cast_id = Column(Integer, ForeignKey("casts.id"), nullable=False, index=True)
@@ -42,6 +45,9 @@ class CastMember(Base):
 
 class CastMessage(Base):
     __tablename__ = "cast_messages"
+    __table_args__ = (
+        Index("ix_cast_messages_cast_created", "cast_id", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     cast_id = Column(Integer, ForeignKey("casts.id"), nullable=False, index=True)
@@ -79,10 +85,5 @@ class CastInvite(Base):
     cast_id = Column(Integer, ForeignKey("casts.id"), nullable=False, index=True)
     inviter_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     invitee_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    status = Column(
-        Enum(CastInviteStatus, name="cast_invite_status", native_enum=False),
-        nullable=False,
-        default=CastInviteStatus.PENDING,
-    )
+    status = Column(Enum(CastInviteStatus, name="cast_invite_status", native_enum=False), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    responded_at = Column(DateTime, nullable=True)

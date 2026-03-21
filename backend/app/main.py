@@ -8,6 +8,7 @@ import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.database import Base, SessionLocal, engine
 from app.core.security import hash_password
@@ -35,6 +36,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 _media_dir = Path(__file__).resolve().parent.parent / "media"
 _media_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(_media_dir)), name="media")

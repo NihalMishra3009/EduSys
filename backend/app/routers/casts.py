@@ -66,54 +66,82 @@ def list_casts(
         .all()
     )
 
+    if not casts:
+        return []
+
+    cast_ids = [cast.id for cast in casts]
+
+    member_rows = (
+        db.query(CastMember.cast_id, CastMember.last_read_at)
+        .filter(
+            CastMember.cast_id.in_(cast_ids),
+            CastMember.user_id == current_user.id,
+        )
+        .all()
+    )
+    member_map = {row.cast_id: row.last_read_at for row in member_rows}
+
+    members_count_rows = (
+        db.query(CastMember.cast_id, func.count(CastMember.id))
+        .filter(CastMember.cast_id.in_(cast_ids))
+        .group_by(CastMember.cast_id)
+        .all()
+    )
+    members_count = {row[0]: int(row[1]) for row in members_count_rows}
+
+    last_msg_sub = (
+        db.query(
+            CastMessage.cast_id,
+            func.max(CastMessage.created_at).label("max_created"),
+        )
+        .filter(CastMessage.cast_id.in_(cast_ids))
+        .group_by(CastMessage.cast_id)
+        .subquery()
+    )
+    last_msg_rows = (
+        db.query(CastMessage)
+        .join(
+            last_msg_sub,
+            (CastMessage.cast_id == last_msg_sub.c.cast_id)
+            & (CastMessage.created_at == last_msg_sub.c.max_created),
+        )
+        .all()
+    )
+    last_msg_map = {
+        row.cast_id: (row.message, row.created_at) for row in last_msg_rows
+    }
+
+    unread_rows = (
+        db.query(CastMessage.cast_id, func.count(CastMessage.id))
+        .join(
+            CastMember,
+            (CastMember.cast_id == CastMessage.cast_id)
+            & (CastMember.user_id == current_user.id),
+        )
+        .filter(CastMessage.cast_id.in_(cast_ids))
+        .filter(
+            (CastMember.last_read_at.is_(None))
+            | (CastMessage.created_at > CastMember.last_read_at)
+        )
+        .group_by(CastMessage.cast_id)
+        .all()
+    )
+    unread_map = {row[0]: int(row[1]) for row in unread_rows}
+
     results: list[CastOut] = []
     for cast in casts:
-        member = (
-            db.query(CastMember)
-            .filter(CastMember.cast_id == cast.id, CastMember.user_id == current_user.id)
-            .first()
-        )
-        members_count = (
-            db.query(func.count(CastMember.id))
-            .filter(CastMember.cast_id == cast.id)
-            .scalar()
-            or 0
-        )
-        last_msg = (
-            db.query(CastMessage)
-            .filter(CastMessage.cast_id == cast.id)
-            .order_by(CastMessage.created_at.desc())
-            .first()
-        )
-        unread_count = 0
-        if member is not None:
-            last_read_at = member.last_read_at
-            if last_read_at is None:
-                unread_count = (
-                    db.query(func.count(CastMessage.id))
-                    .filter(CastMessage.cast_id == cast.id)
-                    .scalar()
-                    or 0
-                )
-            else:
-                unread_count = (
-                    db.query(func.count(CastMessage.id))
-                    .filter(
-                        CastMessage.cast_id == cast.id,
-                        CastMessage.created_at > last_read_at,
-                    )
-                    .scalar()
-                    or 0
-                )
+        last_msg = last_msg_map.get(cast.id)
         results.append(
             CastOut(
                 id=cast.id,
                 name=cast.name,
-                cast_type=cast.cast_type.value if isinstance(cast.cast_type, CastType) else str(cast.cast_type),
-                members_count=int(members_count),
-                last_message=last_msg.message if last_msg else None,
-                last_message_at=last_msg.created_at if last_msg else None,
-                unread_count=int(unread_count),
+                cast_type=cast.cast_type.value
+                if isinstance(cast.cast_type, CastType)
+                else str(cast.cast_type),
+                members_count=members_count.get(cast.id, 0),
+                last_message=last_msg[0] if last_msg else None,
+                last_message_at=last_msg[1] if last_msg else None,
+                unread_count=unread_map.get(cast.id, 0),
             )
         )
     return results
