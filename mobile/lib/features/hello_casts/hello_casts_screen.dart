@@ -777,10 +777,13 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         onScheduleAlert: _scheduleAlert,
       ),
               const SizedBox(height: 12),
-              _TabBar(
+              _UnifiedFilterBar(
                 tabs: _tabs,
-                index: _tabIndex,
-                onChanged: (i) => setState(() => _tabIndex = i),
+                tabIndex: _tabIndex,
+                onTabChanged: (i) => setState(() => _tabIndex = i),
+                filters: _filters,
+                currentFilter: _chatFilter,
+                onFilterChanged: (v) => setState(() => _chatFilter = v),
               ),
               const SizedBox(height: 10),
               if (_invites.isNotEmpty)
@@ -800,12 +803,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _FilterBar(
-                      filters: _filters,
-                      current: _chatFilter,
-                      onChanged: (v) => setState(() => _chatFilter = v),
-                    ),
-                    const SizedBox(height: 10),
                     if (chats.isEmpty)
                       const _EmptyState(message: "No casts yet")
                     else
@@ -951,6 +948,66 @@ class _FilterBar extends StatelessWidget {
             backgroundColor: dark ? null : Colors.white,
             labelStyle: TextStyle(
               color: active
+                  ? const Color(0xFF25D366)
+                  : (dark ? null : Colors.black87),
+              fontWeight: FontWeight.w700,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _UnifiedFilterBar extends StatelessWidget {
+  const _UnifiedFilterBar({
+    required this.tabs,
+    required this.tabIndex,
+    required this.onTabChanged,
+    required this.filters,
+    required this.currentFilter,
+    required this.onFilterChanged,
+  });
+
+  final List<String> tabs;
+  final int tabIndex;
+  final ValueChanged<int> onTabChanged;
+  final List<String> filters;
+  final String currentFilter;
+  final ValueChanged<String> onFilterChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final items = <String>[
+      ...tabs,
+      ...filters,
+    ];
+    return SizedBox(
+      height: 38,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final label = items[index];
+          final isTab = index < tabs.length;
+          final isSelected =
+              isTab ? tabs[tabIndex] == label : currentFilter == label;
+          return ChoiceChip(
+            selected: isSelected,
+            label: Text(label),
+            onSelected: (_) {
+              if (isTab) {
+                onTabChanged(tabs.indexOf(label));
+              } else {
+                onFilterChanged(label);
+              }
+            },
+            selectedColor: const Color(0xFF25D366).withValues(alpha: 0.2),
+            backgroundColor: dark ? null : Colors.white,
+            labelStyle: TextStyle(
+              color: isSelected
                   ? const Color(0xFF25D366)
                   : (dark ? null : Colors.black87),
               fontWeight: FontWeight.w700,
