@@ -895,7 +895,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     final decoded = _safeDecode(raw);
     final payload = _encodePayload(
       type: decoded["type"]?.toString() ?? "TEXT",
-      body: decoded["body"]?.toString(),
+      body: decoded["body"]?.toString() ?? raw,
       attachUrl: decoded["attachment_url"]?.toString(),
       attachName: decoded["attachment_name"]?.toString(),
       durationSecs: decoded["duration_secs"] as int?,
@@ -907,6 +907,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           "sender_name": message["sender_name"]?.toString() ?? "Member",
         },
       },
+      forceJson: true,
     );
     final sendRes = await _api.sendCastMessage(
       castId: selected,
@@ -982,7 +983,11 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         durationSecs: duration,
       );
     } else {
-      GlassToast.show(context, "Upload failed", icon: Icons.error_outline);
+      GlassToast.show(
+        context,
+        _detail(res.body, fallback: "Upload failed"),
+        icon: Icons.error_outline,
+      );
     }
   }
 
@@ -1048,6 +1053,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     String? attachName,
     int? durationSecs,
     Map<String, dynamic>? extra,
+    bool forceJson = false,
   }) {
     final payload = {
       "type": type,
@@ -1057,7 +1063,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       "duration_secs": durationSecs,
       if (extra != null) ...extra,
     };
-    if (type == "TEXT" && (attachUrl == null || attachUrl.isEmpty)) {
+    if (!forceJson && type == "TEXT" && (attachUrl == null || attachUrl.isEmpty)) {
       return (body ?? "").toString();
     }
     return jsonEncode(payload);
@@ -1075,19 +1081,18 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (text.isEmpty && attachUrl == null) return;
     _msgCtrl.clear();
 
-    final payload = {
-      "type": type,
-      "body": text.isEmpty ? null : text,
-      "attachment_url": attachUrl,
-      "attachment_name": attachName,
-      "duration_secs": durationSecs,
-      if (_replyTo != null) "reply_to": _replyTo,
-      if (extra != null) ...extra,
-    };
-
-    final messageText = type == "TEXT" && attachUrl == null
-        ? (text.isEmpty ? "" : text)
-        : jsonEncode(payload);
+    final messageText = _encodePayload(
+      type: type,
+      body: text.isEmpty ? null : text,
+      attachUrl: attachUrl,
+      attachName: attachName,
+      durationSecs: durationSecs,
+      extra: {
+        if (_replyTo != null) "reply_to": _replyTo,
+        if (extra != null) ...extra,
+      },
+      forceJson: _replyTo != null || (extra != null && extra.isNotEmpty),
+    );
     final clientId =
         "c${DateTime.now().microsecondsSinceEpoch}_${_clientMessageCounter++}";
 
@@ -1702,232 +1707,287 @@ class _MessageBubble extends StatelessWidget {
           left: isMe ? 60 : 0, right: isMe ? 0 : 60, bottom: 4),
       child: Align(
         alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: GestureDetector(
-          onLongPress: onLongPress,
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 300),
-            decoration: BoxDecoration(color: bubbleBg, borderRadius: radius),
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (forwardedFrom != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      "Forwarded",
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: textColor.withValues(alpha: 0.7),
-                      ),
-                    ),
-                  ),
-                if (replyTo is Map)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: textColor.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: textColor.withValues(alpha: 0.18),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          (replyTo["sender"] ?? "Member").toString(),
+        child: Column(
+          crossAxisAlignment:
+              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onLongPress: onLongPress,
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 300),
+                decoration: BoxDecoration(color: bubbleBg, borderRadius: radius),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (forwardedFrom != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          "Forwarded",
                           style: TextStyle(
                             fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: textColor.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ),
+                    if (replyTo is Map)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: textColor.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: textColor.withValues(alpha: 0.18),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              (replyTo["sender"] ?? "Member").toString(),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: textColor.withValues(alpha: 0.9),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              (replyTo["snippet"] ?? "").toString(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: textColor.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (!isMe && senderName != null && senderName.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          senderName,
+                          style: TextStyle(
+                            fontSize: 12,
                             fontWeight: FontWeight.w700,
                             color: textColor.withValues(alpha: 0.9),
                           ),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          (replyTo["snippet"] ?? "").toString(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: textColor.withValues(alpha: 0.7),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (!isMe && senderName != null && senderName.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(senderName,
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: textColor.withValues(alpha: 0.9))),
-                  ),
-                if (isAlert) ...[
-                  Row(
-                    children: [
-                      const Icon(Icons.alarm_rounded,
-                          size: 16, color: Colors.orange),
-                      const SizedBox(width: 6),
-                      const Text("Scheduled alert",
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.orange,
-                              fontWeight: FontWeight.w600)),
+                      ),
+                    if (isAlert) ...[
+                      Row(
+                        children: [
+                          const Icon(Icons.alarm_rounded,
+                              size: 16, color: Colors.orange),
+                          const SizedBox(width: 6),
+                          const Text("Scheduled alert",
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.orange,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
                     ],
-                  ),
-                  const SizedBox(height: 4),
-                ],
-                if (type == "VOICE_NOTE")
-                  InkWell(
-                    onTap: () => onOpenAttachment(attachUrl),
-                    borderRadius: BorderRadius.circular(10),
-                    child: Row(
-                      children: [
-                        Icon(Icons.mic_rounded,
-                            size: 20,
-                            color: textColor),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Container(
-                            height: 3,
-                            decoration: BoxDecoration(
-                              color: textColor.withValues(alpha: 0.35),
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text("${decoded["duration_secs"] ?? 0}s",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: textColor,
-                            )),
-                        const SizedBox(width: 6),
-                        Icon(Icons.open_in_new_rounded,
-                            size: 14, color: textColor),
-                      ],
-                    ),
-                  )
-                else if (type == "FILE" || type == "IMAGE")
-                  InkWell(
-                    onTap: () => onOpenAttachment(attachUrl),
-                    borderRadius: BorderRadius.circular(10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (type == "IMAGE" && attachUrl != null && attachUrl.isNotEmpty)
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              attachUrl,
-                              height: 160,
-                              width: 240,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                height: 120,
-                                color: textColor.withValues(alpha: 0.08),
-                                child: Center(
-                                  child: Icon(Icons.image_not_supported_rounded,
-                                      color: textColor),
+                    if (type == "VOICE_NOTE")
+                      InkWell(
+                        onTap: () => onOpenAttachment(attachUrl),
+                        borderRadius: BorderRadius.circular(10),
+                        child: Row(
+                          children: [
+                            Icon(Icons.mic_rounded,
+                                size: 20,
+                                color: textColor),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Container(
+                                height: 3,
+                                decoration: BoxDecoration(
+                                  color: textColor.withValues(alpha: 0.35),
+                                  borderRadius: BorderRadius.circular(2),
                                 ),
                               ),
                             ),
-                          )
-                        else
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: textColor.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.insert_drive_file_rounded,
-                                    size: 18, color: textColor),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(attachName ?? "File",
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: textColor,
-                                      ),
-                                      overflow: TextOverflow.ellipsis),
+                            const SizedBox(width: 8),
+                            Text("${decoded["duration_secs"] ?? 0}s",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: textColor,
+                                )),
+                            const SizedBox(width: 6),
+                            Icon(Icons.open_in_new_rounded,
+                                size: 14, color: textColor),
+                          ],
+                        ),
+                      )
+                    else if (type == "FILE" || type == "IMAGE")
+                      InkWell(
+                        onTap: () => onOpenAttachment(attachUrl),
+                        borderRadius: BorderRadius.circular(10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (type == "IMAGE" &&
+                                attachUrl != null &&
+                                attachUrl.isNotEmpty)
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(
+                                  attachUrl,
+                                  height: 160,
+                                  width: 240,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    height: 120,
+                                    color: textColor.withValues(alpha: 0.08),
+                                    child: Center(
+                                      child: Icon(Icons.image_not_supported_rounded,
+                                          color: textColor),
+                                    ),
+                                  ),
                                 ),
-                                const SizedBox(width: 6),
-                                Icon(Icons.download_rounded,
-                                    size: 16, color: textColor),
-                              ],
-                            ),
+                              )
+                            else
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: textColor.withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(_fileIcon(attachName, attachUrl),
+                                        size: 18, color: textColor),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        attachName ?? "File",
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: textColor,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Icon(Icons.download_rounded,
+                                        size: 16, color: textColor),
+                                  ],
+                                ),
+                              ),
+                            if (_isVideoFile(attachName, attachUrl))
+                              Container(
+                                margin: const EdgeInsets.only(top: 6),
+                                height: 140,
+                                width: 240,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.85),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Center(
+                                  child: Icon(Icons.play_circle_fill_rounded,
+                                      size: 48, color: Colors.white),
+                                ),
+                              ),
+                            if (_isPdfFile(attachName, attachUrl))
+                              Container(
+                                margin: const EdgeInsets.only(top: 6),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: textColor.withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.picture_as_pdf_rounded,
+                                        color: textColor),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        attachName ?? "PDF document",
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: textColor,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      )
+                    else if (body != null && body.isNotEmpty)
+                      _LinkText(
+                        text: body,
+                        color: textColor,
+                        onTap: onOpenLink,
+                      ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(timeStr,
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: textColor.withValues(alpha: 0.6))),
+                        if (isMe) ...[
+                          const SizedBox(width: 4),
+                          Icon(
+                            isFailed
+                                ? Icons.error_outline_rounded
+                                : isPending
+                                    ? Icons.access_time_rounded
+                                    : Icons.done_all_rounded,
+                            size: 14,
+                            color: isFailed
+                                ? Colors.redAccent
+                                : isPending
+                                    ? Colors.grey
+                                    : const Color(0xFF53BDEB),
                           ),
+                        ],
                       ],
                     ),
-                  )
-                else if (body != null && body.isNotEmpty)
-                  _LinkText(
-                    text: body,
-                    color: textColor,
-                    onTap: onOpenLink,
-                  ),
-                const SizedBox(height: 4),
-                if (reactions != null && reactions!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: reactions!.entries.map((entry) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: textColor.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            "${entry.key} ${entry.value}",
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: textColor,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text(timeStr,
-                        style: TextStyle(
-                            fontSize: 10,
-                            color: textColor.withValues(alpha: 0.6))),
-                    if (isMe) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        isFailed
-                            ? Icons.error_outline_rounded
-                            : isPending
-                                ? Icons.access_time_rounded
-                                : Icons.done_all_rounded,
-                        size: 14,
-                        color: isFailed
-                            ? Colors.redAccent
-                            : isPending
-                                ? Colors.grey
-                                : const Color(0xFF53BDEB),
-                      ),
-                    ],
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
+            if (reactions != null && reactions!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: reactions!.entries.map((entry) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: textColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        "${entry.key} ${entry.value}",
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: textColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -2015,6 +2075,35 @@ class _LinkText extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _isPdfFile(String? name, String? url) {
+  final target = (name ?? url ?? "").toLowerCase();
+  return target.endsWith(".pdf");
+}
+
+bool _isVideoFile(String? name, String? url) {
+  final target = (name ?? url ?? "").toLowerCase();
+  return target.endsWith(".mp4") ||
+      target.endsWith(".mov") ||
+      target.endsWith(".mkv") ||
+      target.endsWith(".webm");
+}
+
+IconData _fileIcon(String? name, String? url) {
+  if (_isPdfFile(name, url)) return Icons.picture_as_pdf_rounded;
+  if (_isVideoFile(name, url)) return Icons.movie_rounded;
+  final target = (name ?? url ?? "").toLowerCase();
+  if (target.endsWith(".ppt") || target.endsWith(".pptx")) {
+    return Icons.slideshow_rounded;
+  }
+  if (target.endsWith(".xls") || target.endsWith(".xlsx")) {
+    return Icons.grid_on_rounded;
+  }
+  if (target.endsWith(".doc") || target.endsWith(".docx")) {
+    return Icons.description_rounded;
+  }
+  return Icons.insert_drive_file_rounded;
 }
 
 class _IconCircle extends StatelessWidget {
