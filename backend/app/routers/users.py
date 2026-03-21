@@ -29,7 +29,15 @@ def user_directory(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(User)
+    query = db.query(User).filter(User.id != current_user.id)
     if current_user.department_id is not None:
         query = query.filter(User.department_id == current_user.department_id)
-    return query.order_by(User.name.asc()).all()
+    rows = query.order_by(User.name.asc()).all()
+    if rows:
+        return rows
+    return (
+        db.query(User)
+        .filter(User.id != current_user.id)
+        .order_by(User.name.asc())
+        .all()
+    )
