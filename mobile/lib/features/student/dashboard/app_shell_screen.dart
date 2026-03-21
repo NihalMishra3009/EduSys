@@ -7940,6 +7940,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final Map<String, RTCVideoRenderer> _remoteRenderers = {};
   final Map<String, RTCPeerConnection> _peerConnections = {};
+  final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
   MediaStream? _localStream;
   WebSocket? _socket;
   late String _peerId;
@@ -8109,19 +8110,10 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     }
 
     pc.onIceCandidate = (candidate) {
-      if (candidate.candidate == null) {
-        return;
-      }
-      _sendSignal(
-        to: remotePeerId,
-        data: {
-          "candidate": {
-            "candidate": candidate.candidate,
-            "sdpMid": candidate.sdpMid,
-            "sdpMLineIndex": candidate.sdpMLineIndex,
-          },
-        },
-      );
+      if (candidate.candidate == null) return;
+      // Buffer candidates until the remote side has set a remote description.
+      // _flushCandidates() is called after setRemoteDescription succeeds.
+      _pendingCandidates.putIfAbsent(remotePeerId, () => []).add(candidate);
     };
 
     pc.onTrack = (event) async {
@@ -8169,6 +8161,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       final sdp = (sdpData["sdp"] ?? "").toString();
       if (type.isNotEmpty && sdp.isNotEmpty) {
         await pc.setRemoteDescription(RTCSessionDescription(sdp, type));
+        _flushCandidates(fromPeerId);
         if (type == "offer") {
           final answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
@@ -8209,7 +8202,26 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     );
   }
 
+  void _flushCandidates(String remotePeerId) {
+    final candidates = _pendingCandidates.remove(remotePeerId);
+    if (candidates == null || candidates.isEmpty) return;
+    for (final candidate in candidates) {
+      if (candidate.candidate == null) continue;
+      _sendSignal(
+        to: remotePeerId,
+        data: {
+          "candidate": {
+            "candidate": candidate.candidate,
+            "sdpMid": candidate.sdpMid,
+            "sdpMLineIndex": candidate.sdpMLineIndex,
+          },
+        },
+      );
+    }
+  }
+
   Future<void> _removePeer(String peerId) async {
+    _pendingCandidates.remove(peerId);
     final pc = _peerConnections.remove(peerId);
     await pc?.close();
     final renderer = _remoteRenderers[peerId];
@@ -8399,10 +8411,14 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   }
 
   bool _shouldCreateOffer(String remotePeerId) {
+    // Always let the joining peer create the offer toward existing peers.
+    // The server sends existing peers in the 'peers' list and new arrivals
+    // in 'peer_joined'. Both paths call _createOffer, so we must not block
+    // based on lexicographic order — both sides need negotiation to succeed.
     if (remotePeerId.isEmpty || remotePeerId == _peerId) {
       return false;
     }
-    return _peerId.compareTo(remotePeerId) < 0;
+    return true;
   }
 
   void _startTimer() {

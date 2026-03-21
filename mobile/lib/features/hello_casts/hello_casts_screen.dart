@@ -1,5 +1,6 @@
 import "dart:async";
 import "dart:convert";
+import "dart:io";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
@@ -466,6 +467,31 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     }
   }
 
+  Future<void> _startCallFromList(Map<String, dynamic> cast,
+      {required bool isVideo}) async {
+    final castId = (cast["id"] as num).toInt();
+    final title = cast["name"]?.toString() ?? "Cast";
+    // Send call_invite to notify cast members via a transient WS connection.
+    try {
+      final wsUrl = await _api.castsGetWsUrl(castId);
+      final ws = await WebSocket.connect(wsUrl);
+      ws.add(jsonEncode({"type": "call_invite", "is_video": isVideo}));
+      // Brief delay to let the server broadcast, then close.
+      await Future.delayed(const Duration(milliseconds: 300));
+      await ws.close();
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      buildHelloCastsCallRoute(
+        castId: castId,
+        callTitle: title,
+        callType: isVideo ? "Video" : "Voice",
+        isVideo: isVideo,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tab = _tabs[_tabIndex];
@@ -498,16 +524,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                   GlassToast.show(context, "Create a cast first", icon: Icons.info_outline);
                   return;
                 }
-                final first = _casts.first;
-                Navigator.push(
-                  context,
-                  buildHelloCastsCallRoute(
-                    castId: (first["id"] as num).toInt(),
-                    callTitle: first["name"]?.toString() ?? "Cast",
-                    callType: "Voice",
-                    isVideo: false,
-                  ),
-                );
+                _startCallFromList(_casts.first, isVideo: false);
               },
             ),
             const SizedBox(height: 12),
@@ -597,28 +614,10 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                         .map((c) => _CallTile(
                               title: c["name"]?.toString() ?? "Cast",
                               subtitle: c["cast_type"]?.toString() ?? "",
-                              onVoice: () {
-                                Navigator.push(
-                                  context,
-                                  buildHelloCastsCallRoute(
-                                    castId: (c["id"] as num).toInt(),
-                                    callTitle: c["name"]?.toString() ?? "Cast",
-                                    callType: "Voice",
-                                    isVideo: false,
-                                  ),
-                                );
-                              },
-                              onVideo: () {
-                                Navigator.push(
-                                  context,
-                                  buildHelloCastsCallRoute(
-                                    castId: (c["id"] as num).toInt(),
-                                    callTitle: c["name"]?.toString() ?? "Cast",
-                                    callType: "Video",
-                                    isVideo: true,
-                                  ),
-                                );
-                              },
+                              onVoice: () =>
+                                  _startCallFromList(c, isVideo: false),
+                              onVideo: () =>
+                                  _startCallFromList(c, isVideo: true),
                             ))
                         .toList(),
               )

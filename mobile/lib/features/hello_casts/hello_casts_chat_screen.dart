@@ -35,6 +35,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
   bool _loading = true;
   WebSocket? _ws;
   bool _showAttachMenu = false;
+  Map<String, dynamic>? _incomingCall; // non-null when ringing
 
   @override
   void initState() {
@@ -86,12 +87,21 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
       _ws!.listen((raw) {
         try {
           final msg = jsonDecode(raw.toString()) as Map<String, dynamic>;
-          if (msg["type"] == "message") {
+          final type = msg["type"]?.toString() ?? "";
+          if (type == "message") {
             final m = msg["message"];
             if (m is Map<String, dynamic> && mounted) {
               setState(() => _messages.add(m));
               _scrollToBottom();
             }
+          } else if (type == "call_ring" && mounted) {
+            setState(() => _incomingCall = msg);
+          } else if (type == "call_rejected" && mounted) {
+            GlassToast.show(
+              context,
+              "${msg["by_name"] ?? "Someone"} declined the call",
+              icon: Icons.call_end_rounded,
+            );
           }
         } catch (_) {}
       });
@@ -108,6 +118,27 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
         );
       }
     });
+  }
+
+  void _startCall({required bool isVideo}) {
+    // Notify all members currently connected to this cast's WebSocket.
+    if (_ws != null) {
+      try {
+        _ws!.add(jsonEncode({
+          "type": "call_invite",
+          "is_video": isVideo,
+        }));
+      } catch (_) {}
+    }
+    Navigator.push(
+      context,
+      buildHelloCastsCallRoute(
+        castId: widget.castId,
+        callTitle: widget.title,
+        callType: isVideo ? "Video" : "Voice",
+        isVideo: isVideo,
+      ),
+    );
   }
 
   Map<String, dynamic> _decodeMessage(String raw) {
@@ -316,173 +347,197 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return Scaffold(
-      backgroundColor: dark ? const Color(0xFF0B141A) : const Color(0xFFECE5DD),
-      appBar: AppBar(
-        backgroundColor: dark ? const Color(0xFF1F2C34) : const Color(0xFF075E54),
-        foregroundColor: Colors.white,
-        titleSpacing: 0,
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 18,
-              backgroundColor: Colors.white24,
-              child: Text(
-                widget.title.isNotEmpty ? widget.title[0].toUpperCase() : "?",
-                style: const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w700),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.title,
-                    style: GoogleFonts.spaceGrotesk(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(widget.castType,
-                      style: const TextStyle(
-                          color: Colors.white70, fontSize: 12)),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.call_rounded, color: Colors.white),
-            onPressed: () => Navigator.push(
-              context,
-              buildHelloCastsCallRoute(
-                castId: widget.castId,
-                callTitle: widget.title,
-                callType: "Voice",
-                isVideo: false,
-              ),
-            ),
-            tooltip: "Voice call",
-          ),
-          IconButton(
-            icon: const Icon(Icons.videocam_rounded, color: Colors.white),
-            onPressed: () => Navigator.push(
-              context,
-              buildHelloCastsCallRoute(
-                castId: widget.castId,
-                callTitle: widget.title,
-                callType: "Video",
-                isVideo: true,
-              ),
-            ),
-            tooltip: "Video call",
-          ),
-          IconButton(
-            icon: const Icon(Icons.alarm_add_rounded, color: Colors.white),
-            onPressed: _sendScheduled,
-            tooltip: "Schedule alert",
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (_scheduled.isNotEmpty)
-            Container(
-              color: dark ? const Color(0xFF1F2C34) : const Color(0xFFFFF9C4),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              child: Row(
-                children: [
-                  const Icon(Icons.alarm_rounded,
-                      size: 16, color: Colors.orange),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      "${_scheduled.length} scheduled alert${_scheduled.length > 1 ? "s" : ""}",
-                      style: const TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  TextButton(onPressed: () {}, child: const Text("View")),
-                ],
-              ),
-            ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    controller: _scrollCtrl,
-                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                    itemCount: _messages.length,
-                    itemBuilder: (_, i) => _MessageBubble(
-                      msg: _messages[i],
-                      isMe: _isMe(_messages[i]),
-                      decode: _decodeMessage,
-                    ),
-                  ),
-          ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-            color: dark ? const Color(0xFF1F2C34) : const Color(0xFFF0F2F5),
-            child: Column(
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor:
+              dark ? const Color(0xFF0B141A) : const Color(0xFFECE5DD),
+          appBar: AppBar(
+            backgroundColor:
+                dark ? const Color(0xFF1F2C34) : const Color(0xFF075E54),
+            foregroundColor: Colors.white,
+            titleSpacing: 0,
+            title: Row(
               children: [
-                if (_showAttachMenu)
-                  _AttachMenu(
-                    onFile: () {
-                      setState(() => _showAttachMenu = false);
-                      _pickAndSendFile();
-                    },
-                    onClose: () => setState(() => _showAttachMenu = false),
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: Colors.white24,
+                  child: Text(
+                    widget.title.isNotEmpty ? widget.title[0].toUpperCase() : "?",
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w700),
                   ),
-                Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        _showAttachMenu
-                            ? Icons.close_rounded
-                            : Icons.attach_file_rounded,
-                        color: Colors.grey,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.title,
+                        style: GoogleFonts.spaceGrotesk(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      onPressed: () =>
-                          setState(() => _showAttachMenu = !_showAttachMenu),
-                    ),
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color:
-                              dark ? const Color(0xFF2A3942) : Colors.white,
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        child: TextField(
-                          controller: _msgCtrl,
-                          decoration: const InputDecoration(
-                            hintText: "Message",
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 10),
-                          ),
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _send(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    FloatingActionButton.small(
-                      backgroundColor: const Color(0xFF25D366),
-                      onPressed: _send,
-                      child: const Icon(Icons.send_rounded, color: Colors.white),
-                    ),
-                  ],
+                      Text(widget.castType,
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 12)),
+                    ],
+                  ),
                 ),
               ],
             ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.call_rounded, color: Colors.white),
+                onPressed: () => _startCall(isVideo: false),
+                tooltip: "Voice call",
+              ),
+              IconButton(
+                icon: const Icon(Icons.videocam_rounded, color: Colors.white),
+                onPressed: () => _startCall(isVideo: true),
+                tooltip: "Video call",
+              ),
+              IconButton(
+                icon: const Icon(Icons.alarm_add_rounded, color: Colors.white),
+                onPressed: _sendScheduled,
+                tooltip: "Schedule alert",
+              ),
+            ],
           ),
-        ],
-      ),
+          body: Column(
+            children: [
+              if (_scheduled.isNotEmpty)
+                Container(
+                  color:
+                      dark ? const Color(0xFF1F2C34) : const Color(0xFFFFF9C4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.alarm_rounded,
+                          size: 16, color: Colors.orange),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "${_scheduled.length} scheduled alert${_scheduled.length > 1 ? "s" : ""}",
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      TextButton(onPressed: () {}, child: const Text("View")),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : ListView.builder(
+                        controller: _scrollCtrl,
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                        itemCount: _messages.length,
+                        itemBuilder: (_, i) => _MessageBubble(
+                          msg: _messages[i],
+                          isMe: _isMe(_messages[i]),
+                          decode: _decodeMessage,
+                        ),
+                      ),
+              ),
+              Container(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+                color:
+                    dark ? const Color(0xFF1F2C34) : const Color(0xFFF0F2F5),
+                child: Column(
+                  children: [
+                    if (_showAttachMenu)
+                      _AttachMenu(
+                        onFile: () {
+                          setState(() => _showAttachMenu = false);
+                          _pickAndSendFile();
+                        },
+                        onClose: () => setState(() => _showAttachMenu = false),
+                      ),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(
+                            _showAttachMenu
+                                ? Icons.close_rounded
+                                : Icons.attach_file_rounded,
+                            color: Colors.grey,
+                          ),
+                          onPressed: () =>
+                              setState(() => _showAttachMenu = !_showAttachMenu),
+                        ),
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: dark
+                                  ? const Color(0xFF2A3942)
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            child: TextField(
+                              controller: _msgCtrl,
+                              decoration: const InputDecoration(
+                                hintText: "Message",
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 10),
+                              ),
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: (_) => _send(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FloatingActionButton.small(
+                          backgroundColor: const Color(0xFF25D366),
+                          onPressed: _send,
+                          child:
+                              const Icon(Icons.send_rounded, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_incomingCall != null)
+          _IncomingCallOverlay(
+            callerName:
+                _incomingCall!["caller_name"]?.toString() ?? "Someone",
+            isVideo: _incomingCall!["is_video"] == true,
+            onAccept: () {
+              final call = _incomingCall!;
+              setState(() => _incomingCall = null);
+              Navigator.push(
+                context,
+                buildHelloCastsCallRoute(
+                  castId: widget.castId,
+                  callTitle: widget.title,
+                  callType: call["is_video"] == true ? "Video" : "Voice",
+                  isVideo: call["is_video"] == true,
+                ),
+              );
+            },
+            onReject: () {
+              final call = _incomingCall!;
+              setState(() => _incomingCall = null);
+              try {
+                _ws?.add(jsonEncode({
+                  "type": "call_reject",
+                  "caller_peer_id": call["caller_peer_id"]?.toString() ?? "",
+                }));
+              } catch (_) {}
+            },
+          ),
+      ],
     );
   }
 }
@@ -693,6 +748,107 @@ class _AttachOption extends StatelessWidget {
           Text(label, style: const TextStyle(fontSize: 11)),
         ],
       ),
+    );
+  }
+}
+
+class _IncomingCallOverlay extends StatelessWidget {
+  const _IncomingCallOverlay({
+    required this.callerName,
+    required this.isVideo,
+    required this.onAccept,
+    required this.onReject,
+  });
+
+  final String callerName;
+  final bool isVideo;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black87,
+        child: SafeArea(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircleAvatar(
+                radius: 48,
+                backgroundColor: Color(0xFF25D366),
+                child: Icon(Icons.person_rounded, size: 48, color: Colors.white),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                callerName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                isVideo ? "Incoming video call" : "Incoming voice call",
+                style: const TextStyle(color: Colors.white70, fontSize: 15),
+              ),
+              const SizedBox(height: 48),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _OverlayCallButton(
+                    icon: Icons.call_end_rounded,
+                    label: "Decline",
+                    color: const Color(0xFFD94B4B),
+                    onTap: onReject,
+                  ),
+                  _OverlayCallButton(
+                    icon: isVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                    label: "Accept",
+                    color: const Color(0xFF25D366),
+                    onTap: onAccept,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverlayCallButton extends StatelessWidget {
+  const _OverlayCallButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Icon(icon, color: Colors.white, size: 30),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+      ],
     );
   }
 }

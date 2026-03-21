@@ -64,6 +64,7 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final Map<String, RTCVideoRenderer> _remoteRenderers = {};
   final Map<String, RTCPeerConnection> _peerConnections = {};
+  final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
   final ApiService _api = ApiService();
   MediaStream? _localStream;
   WebSocket? _socket;
@@ -215,19 +216,8 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
     }
 
     pc.onIceCandidate = (candidate) {
-      if (candidate.candidate == null) {
-        return;
-      }
-      _sendSignal(
-        to: remotePeerId,
-        data: {
-          "candidate": {
-            "candidate": candidate.candidate,
-            "sdpMid": candidate.sdpMid,
-            "sdpMLineIndex": candidate.sdpMLineIndex,
-          },
-        },
-      );
+      if (candidate.candidate == null) return;
+      _pendingCandidates.putIfAbsent(remotePeerId, () => []).add(candidate);
     };
 
     pc.onTrack = (event) async {
@@ -251,9 +241,7 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
   }
 
   Future<void> _createOffer(String remotePeerId) async {
-    if (_peerId.compareTo(remotePeerId) >= 0) {
-      return;
-    }
+    if (remotePeerId.isEmpty || remotePeerId == _peerId) return;
     final pc = await _ensurePeer(remotePeerId);
     final offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -276,6 +264,7 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
       final sdp = (sdpData["sdp"] ?? "").toString();
       if (type.isNotEmpty && sdp.isNotEmpty) {
         await pc.setRemoteDescription(RTCSessionDescription(sdp, type));
+        _flushCandidates(fromPeerId);
         if (type == "offer") {
           final answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
@@ -316,7 +305,26 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
     );
   }
 
+  void _flushCandidates(String remotePeerId) {
+    final candidates = _pendingCandidates.remove(remotePeerId);
+    if (candidates == null || candidates.isEmpty) return;
+    for (final candidate in candidates) {
+      if (candidate.candidate == null) continue;
+      _sendSignal(
+        to: remotePeerId,
+        data: {
+          "candidate": {
+            "candidate": candidate.candidate,
+            "sdpMid": candidate.sdpMid,
+            "sdpMLineIndex": candidate.sdpMLineIndex,
+          },
+        },
+      );
+    }
+  }
+
   Future<void> _removePeer(String peerId) async {
+    _pendingCandidates.remove(peerId);
     final pc = _peerConnections.remove(peerId);
     await pc?.close();
     final renderer = _remoteRenderers[peerId];

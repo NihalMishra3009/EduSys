@@ -148,6 +148,25 @@ class _CastChatHub:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def send_to_peer(self, room_id: str, peer_id: str, payload: dict) -> None:
+        socket = self._rooms.get(room_id, {}).get(peer_id)
+        if socket is None:
+            return
+        try:
+            await socket.send_text(json.dumps(payload))
+        except Exception:
+            pass
+
+    async def broadcast_except(self, room_id: str, exclude_peer_id: str, payload: dict) -> None:
+        peers = self._rooms.get(room_id, {})
+        tasks = []
+        for pid, socket in peers.items():
+            if pid == exclude_peer_id:
+                continue
+            tasks.append(socket.send_text(json.dumps(payload)))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
 
 _cast_hub = _CastChatHub()
 
@@ -481,6 +500,35 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
             elif msg_type == "read":
                 member.last_read_at = datetime.utcnow()
                 db.commit()
+            elif msg_type == "call_invite":
+                # Caller broadcasts a ring to all other cast members.
+                is_video = bool(payload.get("is_video", False))
+                caller_name = user.name or peer_id
+                await _cast_hub.broadcast_except(
+                    str(cast_id),
+                    peer_id,
+                    {
+                        "type": "call_ring",
+                        "cast_id": cast_id,
+                        "caller_peer_id": peer_id,
+                        "caller_name": caller_name,
+                        "is_video": is_video,
+                        "room_code": f"cast-{cast_id}-{'video' if is_video else 'voice'}",
+                    },
+                )
+            elif msg_type == "call_reject":
+                # Rejected — notify caller only.
+                caller_peer_id = str(payload.get("caller_peer_id", "")).strip()
+                if caller_peer_id:
+                    await _cast_hub.send_to_peer(
+                        str(cast_id),
+                        caller_peer_id,
+                        {
+                            "type": "call_rejected",
+                            "by_peer_id": peer_id,
+                            "by_name": user.name or peer_id,
+                        },
+                    )
     except WebSocketDisconnect:
         pass
     finally:
