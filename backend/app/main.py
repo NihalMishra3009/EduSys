@@ -926,18 +926,38 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
                 if not text:
                     continue
                 client_id = str(payload.get("client_id", "")).strip() or None
-                stored = await asyncio.to_thread(
-                    _store_cast_message, cast_id, user.id, text, client_id
-                )
-                if stored is None:
-                    continue
+                optimistic = {
+                    "id": None,
+                    "cast_id": cast_id,
+                    "sender_id": user.id,
+                    "sender_name": user.name or peer_id,
+                    "message": text,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "client_id": client_id,
+                }
                 await _cast_hub.broadcast(
                     str(cast_id),
                     {
                         "type": "message",
-                        "message": stored,
+                        "message": optimistic,
                     },
                 )
+
+                async def _store_and_broadcast() -> None:
+                    stored = await asyncio.to_thread(
+                        _store_cast_message, cast_id, user.id, text, client_id
+                    )
+                    if stored is None:
+                        return
+                    await _cast_hub.broadcast(
+                        str(cast_id),
+                        {
+                            "type": "message",
+                            "message": stored,
+                        },
+                    )
+
+                asyncio.create_task(_store_and_broadcast())
             elif msg_type == "delete":
                 raw_id = payload.get("message_id")
                 try:
