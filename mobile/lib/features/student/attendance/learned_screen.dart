@@ -31,15 +31,27 @@ class _LearnEdScreenState extends State<LearnEdScreen> {
   final _api = ApiService();
   List<Map<String, dynamic>> _subjects = [];
   bool _loading = true;
+  Timer? _syncTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _load(silent: true);
+    });
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     try {
       final res = await _api.learnedListSubjects();
       if (!mounted) return;
@@ -157,106 +169,103 @@ class _LearnEdScreenState extends State<LearnEdScreen> {
     final isProfessor = role == "PROFESSOR";
 
     return Scaffold(
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 40),
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text("LearnEd", style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700)),
-                ),
-                IconButton(
-                  onPressed: isProfessor ? _showCreateDialog : _showJoinDialog,
-                  icon: const Icon(Icons.add_circle_rounded),
-                  tooltip: isProfessor ? "Create subject" : "Join with code",
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            if (_loading)
-              const LoadingSkeleton(height: 140)
-            else if (_subjects.isEmpty)
-              EmptyStateWidget(
-                message: isProfessor
-                    ? "No subjects yet. Tap + to create your first subject."
-                    : "You haven't joined any subjects. Ask your professor for the join code, then tap +.",
-                icon: Icons.school_outlined,
-              )
-            else
-              ..._subjects.map((s) {
-                final id = (s["id"] as num).toInt();
-                final name = s["name"]?.toString() ?? "Subject";
-                final code = s["code"]?.toString() ?? "";
-                final joinCode = s["join_code"]?.toString() ?? "";
-                final count = (s["member_count"] as num?)?.toInt() ?? 0;
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 40),
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text("LearnEd", style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700)),
+              ),
+              IconButton(
+                onPressed: isProfessor ? _showCreateDialog : _showJoinDialog,
+                icon: const Icon(Icons.add_circle_rounded),
+                tooltip: isProfessor ? "Create subject" : "Join with code",
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_loading)
+            const LoadingSkeleton(height: 140)
+          else if (_subjects.isEmpty)
+            EmptyStateWidget(
+              message: isProfessor
+                  ? "No subjects yet. Tap + to create your first subject."
+                  : "You haven't joined any subjects. Ask your professor for the join code, then tap +.",
+              icon: Icons.school_outlined,
+            )
+          else
+            ..._subjects.map((s) {
+              final id = (s["id"] as num).toInt();
+              final name = s["name"]?.toString() ?? "Subject";
+              final code = s["code"]?.toString() ?? "";
+              final joinCode = s["join_code"]?.toString() ?? "";
+              final count = (s["member_count"] as num?)?.toInt() ?? 0;
 
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: AppCard(
-                    gradient: LinearGradient(
-                      colors: [
-                        Theme.of(context).colorScheme.primary.withValues(alpha: 0.88),
-                        Theme.of(context).colorScheme.secondary.withValues(alpha: 0.78),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => _SubjectScreen(
-                            subjectId: id,
-                            subjectName: name,
-                            subjectCode: code,
-                            joinCode: joinCode,
-                            isProfessor: isProfessor,
-                          ),
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: AppCard(
+                  gradient: LinearGradient(
+                    colors: [
+                      Theme.of(context).colorScheme.primary.withValues(alpha: 0.88),
+                      Theme.of(context).colorScheme.secondary.withValues(alpha: 0.78),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => _SubjectScreen(
+                          subjectId: id,
+                          subjectName: name,
+                          subjectCode: code,
+                          joinCode: joinCode,
+                          isProfessor: isProfessor,
                         ),
-                      ).then((_) => _load()),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(name, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 4),
-                          Text(code, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              const Icon(Icons.people_outline, color: Colors.white70, size: 16),
-                              const SizedBox(width: 4),
-                              Text("$count members", style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                              const Spacer(),
-                              if (isProfessor)
-                                GestureDetector(
-                                  onTap: () {
-                                    Clipboard.setData(ClipboardData(text: joinCode));
-                                    GlassToast.show(context, "Join code copied: $joinCode", icon: Icons.copy);
-                                  },
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.vpn_key_rounded, color: Colors.white54, size: 14),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        joinCode,
-                                        style: const TextStyle(color: Colors.white70, fontSize: 13, letterSpacing: 2),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ],
                       ),
+                    ).then((_) => _load()),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 4),
+                        Text(code, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            const Icon(Icons.people_outline, color: Colors.white70, size: 16),
+                            const SizedBox(width: 4),
+                            Text("$count members", style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                            const Spacer(),
+                            if (isProfessor)
+                              GestureDetector(
+                                onTap: () {
+                                  Clipboard.setData(ClipboardData(text: joinCode));
+                                  GlassToast.show(context, "Join code copied: $joinCode", icon: Icons.copy);
+                                },
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.vpn_key_rounded, color: Colors.white54, size: 14),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      joinCode,
+                                      style: const TextStyle(color: Colors.white70, fontSize: 13, letterSpacing: 2),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                );
-              }),
-          ],
-        ),
+                ),
+              );
+            }),
+        ],
       ),
     );
   }
@@ -301,7 +310,7 @@ class _SubjectScreenState extends State<_SubjectScreen> with SingleTickerProvide
     super.initState();
     _tabs = TabController(length: 5, vsync: this);
     _load();
-    _pollTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _refreshRealtime();
     });
   }
@@ -313,8 +322,10 @@ class _SubjectScreenState extends State<_SubjectScreen> with SingleTickerProvide
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     try {
       final results = await Future.wait([
         _api.learnedListPosts(widget.subjectId),
@@ -344,16 +355,7 @@ class _SubjectScreenState extends State<_SubjectScreen> with SingleTickerProvide
   }
 
   Future<void> _refreshRealtime() async {
-    try {
-      final res = await _api.learnedListPosts(widget.subjectId);
-      if (!mounted) return;
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final next = (jsonDecode(res.body) as List<dynamic>).whereType<Map<String, dynamic>>().toList();
-        setState(() {
-          _posts = next;
-        });
-      }
-    } catch (_) {}
+    await _load(silent: true);
   }
 
   List<Map<String, dynamic>> get _allPosts => _posts;
@@ -381,7 +383,6 @@ class _SubjectScreenState extends State<_SubjectScreen> with SingleTickerProvide
               icon: const Icon(Icons.share_rounded),
               tooltip: "Share join code",
             ),
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
         ],
         bottom: TabBar(
           controller: _tabs,
@@ -452,41 +453,38 @@ class _StreamTabState extends State<_StreamTab> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: () async => widget.onRefresh(),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 40),
-        children: [
-          if (widget.isProfessor) ...[
-            AppCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: _ctrl,
-                    minLines: 2,
-                    maxLines: 5,
-                    decoration: const InputDecoration(hintText: "Announce something to your class...", border: InputBorder.none),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 40),
+      children: [
+        if (widget.isProfessor) ...[
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: _ctrl,
+                  minLines: 2,
+                  maxLines: 5,
+                  decoration: const InputDecoration(hintText: "Announce something to your class...", border: InputBorder.none),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.icon(
+                    onPressed: _posting ? null : _post,
+                    icon: const Icon(Icons.send_rounded, size: 16),
+                    label: Text(_posting ? "Posting..." : "Post"),
                   ),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: _posting ? null : _post,
-                      icon: const Icon(Icons.send_rounded, size: 16),
-                      label: Text(_posting ? "Posting..." : "Post"),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-          ],
-          if (widget.posts.isEmpty)
-            const EmptyStateWidget(message: "No posts yet. The stream will show announcements, materials, and assignments.", icon: Icons.dynamic_feed_outlined)
-          else
-            ...widget.posts.map((p) => _PostCard(post: p, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: widget.onRefresh, api: widget.api, showSubmit: false)),
+          ),
+          const SizedBox(height: 12),
         ],
-      ),
+        if (widget.posts.isEmpty)
+          const EmptyStateWidget(message: "No posts yet. The stream will show announcements, materials, and assignments.", icon: Icons.dynamic_feed_outlined)
+        else
+          ...widget.posts.map((p) => _PostCard(post: p, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: widget.onRefresh, api: widget.api, showSubmit: false)),
+      ],
     );
   }
 }
@@ -568,44 +566,41 @@ class _ClassworkTabState extends State<_ClassworkTab> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: () async => widget.onRefresh(),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 40),
-        children: [
-          if (widget.isProfessor) ...[
-            AppCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("Post material", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                  const SizedBox(height: 10),
-                  TextField(controller: _titleCtrl, decoration: const InputDecoration(labelText: "Title")),
-                  const SizedBox(height: 8),
-                  TextField(controller: _bodyCtrl, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: "Description (optional)")),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: _uploading ? null : _pickFile,
-                        icon: const Icon(Icons.attach_file_rounded, size: 16),
-                        label: Text(_uploading ? "Uploading..." : _attachmentName != null ? "✓ ${_attachmentName!}" : "Attach file"),
-                      ),
-                      const Spacer(),
-                      FilledButton(onPressed: _post, child: const Text("Post")),
-                    ],
-                  ),
-                ],
-              ),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 40),
+      children: [
+        if (widget.isProfessor) ...[
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Post material", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 10),
+                TextField(controller: _titleCtrl, decoration: const InputDecoration(labelText: "Title")),
+                const SizedBox(height: 8),
+                TextField(controller: _bodyCtrl, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: "Description (optional)")),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _uploading ? null : _pickFile,
+                      icon: const Icon(Icons.attach_file_rounded, size: 16),
+                      label: Text(_uploading ? "Uploading..." : _attachmentName != null ? "✓ ${_attachmentName!}" : "Attach file"),
+                    ),
+                    const Spacer(),
+                    FilledButton(onPressed: _post, child: const Text("Post")),
+                  ],
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-          ],
-          if (widget.posts.isEmpty)
-            const EmptyStateWidget(message: "No classwork material posted yet", icon: Icons.folder_open_outlined)
-          else
-            ...widget.posts.map((p) => _PostCard(post: p, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: widget.onRefresh, api: widget.api, showSubmit: false)),
+          ),
+          const SizedBox(height: 12),
         ],
-      ),
+        if (widget.posts.isEmpty)
+          const EmptyStateWidget(message: "No classwork material posted yet", icon: Icons.folder_open_outlined)
+        else
+          ...widget.posts.map((p) => _PostCard(post: p, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: widget.onRefresh, api: widget.api, showSubmit: false)),
+      ],
     );
   }
 }
@@ -671,60 +666,57 @@ class _AssignmentsTabState extends State<_AssignmentsTab> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: () async => widget.onRefresh(),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 40),
-        children: [
-          if (widget.isProfessor) ...[
-            AppCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("Create assignment", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                  const SizedBox(height: 10),
-                  TextField(controller: _titleCtrl, decoration: const InputDecoration(labelText: "Assignment title")),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _instrCtrl,
-                    minLines: 3,
-                    maxLines: 6,
-                    decoration: const InputDecoration(labelText: "Instructions / what to submit", alignLabelWithHint: true),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _pickDue,
-                          icon: const Icon(Icons.calendar_today_rounded, size: 16),
-                          label: Text(_dueAt == null ? "Set due date" : TimeFormat.formatDate(_dueAt!)),
-                        ),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 40),
+      children: [
+        if (widget.isProfessor) ...[
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Create assignment", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 10),
+                TextField(controller: _titleCtrl, decoration: const InputDecoration(labelText: "Assignment title")),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _instrCtrl,
+                  minLines: 3,
+                  maxLines: 6,
+                  decoration: const InputDecoration(labelText: "Instructions / what to submit", alignLabelWithHint: true),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _pickDue,
+                        icon: const Icon(Icons.calendar_today_rounded, size: 16),
+                        label: Text(_dueAt == null ? "Set due date" : TimeFormat.formatDate(_dueAt!)),
                       ),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: 110,
-                        child: TextField(
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: "Max marks"),
-                          onChanged: (v) => _maxMarks = int.tryParse(v) ?? 100,
-                        ),
+                    ),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 110,
+                      child: TextField(
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: "Max marks"),
+                        onChanged: (v) => _maxMarks = int.tryParse(v) ?? 100,
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(width: double.infinity, child: FilledButton(onPressed: _create, child: const Text("Assign to class"))),
-                ],
-              ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(width: double.infinity, child: FilledButton(onPressed: _create, child: const Text("Assign to class"))),
+              ],
             ),
-            const SizedBox(height: 12),
-          ],
-          if (widget.posts.isEmpty)
-            const EmptyStateWidget(message: "No assignments yet", icon: Icons.assignment_outlined)
-          else
-            ...widget.posts.map((p) => _PostCard(post: p, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: widget.onRefresh, api: widget.api, showSubmit: true)),
+          ),
+          const SizedBox(height: 12),
         ],
-      ),
+        if (widget.posts.isEmpty)
+          const EmptyStateWidget(message: "No assignments yet", icon: Icons.assignment_outlined)
+        else
+          ...widget.posts.map((p) => _PostCard(post: p, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: widget.onRefresh, api: widget.api, showSubmit: true)),
+      ],
     );
   }
 }
@@ -1291,59 +1283,56 @@ class _SubmissionsScreenState extends State<_SubmissionsScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _submissions.isEmpty
               ? const Center(child: EmptyStateWidget(message: "No submissions yet"))
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.all(14),
-                    itemCount: _submissions.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (_, i) {
-                      final s = _submissions[i];
-                      final hasGrade = s["marks"] != null;
-                      return AppCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text((s["student_name"] ?? "Student").toString(), style: const TextStyle(fontWeight: FontWeight.w700)),
-                                ),
-                                if (hasGrade)
-                                  StatusBadge(label: "${s["marks"]}/100", color: Colors.green),
-                              ],
-                            ),
-                            Text(
-                              (s["student_email"] ?? "").toString(),
-                              style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color?.withValues(alpha: 0.65), fontSize: 12),
-                            ),
-                            const SizedBox(height: 8),
-                            if ((s["answer_text"] ?? "").toString().isNotEmpty)
-                              Text((s["answer_text"] ?? "").toString(), maxLines: 5, overflow: TextOverflow.ellipsis),
-                            if ((s["attachment_url"] ?? "").toString().isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Row(children: [
-                                const Icon(Icons.attach_file_rounded, size: 14),
-                                const SizedBox(width: 4),
-                                Text((s["attachment_name"] ?? "Attachment").toString(), style: const TextStyle(fontSize: 12)),
-                              ]),
-                            ],
-                            if ((s["feedback"] ?? "").toString().isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Text("Feedback: ${s["feedback"]}", style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 13)),
-                            ],
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: TextButton(
-                                onPressed: () => _grade(s),
-                                child: Text(hasGrade ? "Update grade" : "Grade"),
+              : ListView.separated(
+                  padding: const EdgeInsets.all(14),
+                  itemCount: _submissions.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (_, i) {
+                    final s = _submissions[i];
+                    final hasGrade = s["marks"] != null;
+                    return AppCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text((s["student_name"] ?? "Student").toString(), style: const TextStyle(fontWeight: FontWeight.w700)),
                               ),
-                            ),
+                              if (hasGrade)
+                                StatusBadge(label: "${s["marks"]}/100", color: Colors.green),
+                            ],
+                          ),
+                          Text(
+                            (s["student_email"] ?? "").toString(),
+                            style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color?.withValues(alpha: 0.65), fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
+                          if ((s["answer_text"] ?? "").toString().isNotEmpty)
+                            Text((s["answer_text"] ?? "").toString(), maxLines: 5, overflow: TextOverflow.ellipsis),
+                          if ((s["attachment_url"] ?? "").toString().isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Row(children: [
+                              const Icon(Icons.attach_file_rounded, size: 14),
+                              const SizedBox(width: 4),
+                              Text((s["attachment_name"] ?? "Attachment").toString(), style: const TextStyle(fontSize: 12)),
+                            ]),
                           ],
-                        ),
-                      );
-                    },
-                  ),
+                          if ((s["feedback"] ?? "").toString().isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text("Feedback: ${s["feedback"]}", style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 13)),
+                          ],
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: () => _grade(s),
+                              child: Text(hasGrade ? "Update grade" : "Grade"),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
     );
   }

@@ -1,4 +1,5 @@
 import "dart:convert";
+import "dart:async";
 
 import "package:edusys_mobile/core/utils/time_format.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
@@ -20,15 +21,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _logsCount = 0;
   int _studentsCount = 0;
   List<dynamic> _recentLogs = [];
+  Timer? _syncTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _load(silent: true);
+    });
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    }
 
     final allAttendance = await _api.adminAllAttendance();
     final logs = await _api.adminLogs();
@@ -383,88 +396,85 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text("Admin Dashboard",
-              style: TextStyle(fontSize: 32, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 12),
-          if (_loading)
-            const Center(
-                child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: CircularProgressIndicator()))
-          else
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                SizedBox(
-                    width: 130,
-                    child: _StatCard(
-                        title: "Students", value: _studentsCount.toString())),
-                SizedBox(
-                    width: 130,
-                    child: _StatCard(
-                        title: "Attendance",
-                        value: _attendanceCount.toString())),
-                SizedBox(
-                    width: 130,
-                    child:
-                        _StatCard(title: "Logs", value: _logsCount.toString())),
-              ],
-            ),
-          const SizedBox(height: 12),
-          const Text("Enterprise Actions",
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          _ActionTile(
-              title: "Create User",
-              subtitle: "Create student/professor/admin",
-              onTap: _createUser),
-          _ActionTile(
-              title: "Reset Device",
-              subtitle: "Reset user device binding",
-              onTap: () => _resetDeviceOrSim(deviceMode: true)),
-          _ActionTile(
-              title: "Reset SIM",
-              subtitle: "Reset user sim binding",
-              onTap: () => _resetDeviceOrSim(deviceMode: false)),
-          _ActionTile(
-              title: "Create Classroom",
-              subtitle: "Create classroom with rectangle boundary",
-              onTap: _createClassroom),
-          _ActionTile(
-              title: "Update Boundary",
-              subtitle: "Update classroom coordinates",
-              onTap: _updateBoundary),
-          _ActionTile(
-              title: "Override Attendance",
-              subtitle: "Override present/absent status",
-              onTap: _overrideAttendance),
-          const SizedBox(height: 12),
-          const Text("Recent Logs",
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-          if (_recentLogs.isEmpty)
-            const Card(
-                child: Padding(
-                    padding: EdgeInsets.all(12), child: Text("No logs found")))
-          else
-            ..._recentLogs.map(
-              (log) => Card(
-                child: ListTile(
-                  title: Text(log["action"].toString(),
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(
-                    "User ${log["actor_user_id"] ?? "-"} • ${_formatLogTimestamp(log["created_at"])}",
-                  ),
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text("Admin Dashboard",
+            style: TextStyle(fontSize: 32, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        if (_loading)
+          const Center(
+              child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: CircularProgressIndicator()))
+        else
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              SizedBox(
+                  width: 130,
+                  child: _StatCard(
+                      title: "Students", value: _studentsCount.toString())),
+              SizedBox(
+                  width: 130,
+                  child: _StatCard(
+                      title: "Attendance",
+                      value: _attendanceCount.toString())),
+              SizedBox(
+                  width: 130,
+                  child:
+                      _StatCard(title: "Logs", value: _logsCount.toString())),
+            ],
+          ),
+        const SizedBox(height: 12),
+        const Text("Enterprise Actions",
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        _ActionTile(
+            title: "Create User",
+            subtitle: "Create student/professor/admin",
+            onTap: _createUser),
+        _ActionTile(
+            title: "Reset Device",
+            subtitle: "Reset user device binding",
+            onTap: () => _resetDeviceOrSim(deviceMode: true)),
+        _ActionTile(
+            title: "Reset SIM",
+            subtitle: "Reset user sim binding",
+            onTap: () => _resetDeviceOrSim(deviceMode: false)),
+        _ActionTile(
+            title: "Create Classroom",
+            subtitle: "Create classroom with rectangle boundary",
+            onTap: _createClassroom),
+        _ActionTile(
+            title: "Update Boundary",
+            subtitle: "Update classroom coordinates",
+            onTap: _updateBoundary),
+        _ActionTile(
+            title: "Override Attendance",
+            subtitle: "Override present/absent status",
+            onTap: _overrideAttendance),
+        const SizedBox(height: 12),
+        const Text("Recent Logs",
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+        if (_recentLogs.isEmpty)
+          const Card(
+              child: Padding(
+                  padding: EdgeInsets.all(12), child: Text("No logs found")))
+        else
+          ..._recentLogs.map(
+            (log) => Card(
+              child: ListTile(
+                title: Text(log["action"].toString(),
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Text(
+                  "User ${log["actor_user_id"] ?? "-"} • ${_formatLogTimestamp(log["created_at"])}",
                 ),
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }

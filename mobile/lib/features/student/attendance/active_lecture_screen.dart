@@ -22,6 +22,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
   bool _success = false;
   final Map<int, Timer> _autoTimers = {};
   final Set<int> _autoEnabled = {};
+  Timer? _syncTimer;
 
   static const Duration _checkpointInterval = Duration(minutes: 15);
 
@@ -30,10 +31,14 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     super.initState();
     _loadActiveLectures();
     _smartAttendance.startStudentMonitoring();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _loadActiveLectures(silent: true);
+    });
   }
 
   @override
   void dispose() {
+    _syncTimer?.cancel();
     for (final timer in _autoTimers.values) {
       timer.cancel();
     }
@@ -41,11 +46,13 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     super.dispose();
   }
 
-  Future<void> _loadActiveLectures() async {
-    setState(() {
-      _loading = true;
-      _message = "";
-    });
+  Future<void> _loadActiveLectures({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _message = "";
+      });
+    }
 
     final response = await _api.listActiveLectures();
     setState(() {
@@ -58,7 +65,9 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
             .toList();
         _smartAttendance.setActiveRoomIds(roomIds);
       } else {
-        _message = _extractMessage(response.body, fallback: "Unable to load active lectures");
+        if (!silent) {
+          _message = _extractMessage(response.body, fallback: "Unable to load active lectures");
+        }
         _success = false;
         _smartAttendance.setActiveRoomIds(const []);
       }
@@ -129,12 +138,6 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Active Lectures"),
-        actions: [
-          IconButton(
-            onPressed: _loading ? null : _loadActiveLectures,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
       ),
       body: _loading && _lectures.isEmpty
           ? const Center(child: CircularProgressIndicator())

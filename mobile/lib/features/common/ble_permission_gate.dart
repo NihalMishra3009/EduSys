@@ -208,22 +208,9 @@ class _BlePermissionGateState extends State<BlePermissionGate> {
                 ),
               ),
               const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _openAppSettings,
-                      child: const Text("Open Settings"),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _refresh,
-                      child: const Text("Refresh"),
-                    ),
-                  ),
-                ],
+              OutlinedButton(
+                onPressed: _openAppSettings,
+                child: const Text("Open Settings"),
               ),
               const SizedBox(height: 10),
               if (_checks["Battery Optimization Disabled"] == false)

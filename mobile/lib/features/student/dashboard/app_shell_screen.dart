@@ -800,6 +800,7 @@ class _ShareItScreenState extends State<_ShareItScreen> {
   bool _offline = false;
   List<Map<String, dynamic>> _appointments = [];
   List<Map<String, dynamic>> _students = [];
+  Timer? _syncTimer;
 
   final TextEditingController _documentTypeController =
       TextEditingController(text: "Hall Ticket");
@@ -826,17 +827,21 @@ class _ShareItScreenState extends State<_ShareItScreen> {
     _startTime = TimeOfDay(hour: 10, minute: 0);
     _endTime = TimeOfDay(hour: 11, minute: 0);
     _load();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _load(silent: true);
+    });
   }
 
   @override
   void dispose() {
+    _syncTimer?.cancel();
     _documentTypeController.dispose();
     _venue.dispose();
     _notes.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     setState(() => _loading = true);
     final res = await _api.listShareItAppointments();
     final studentRes = await _api.studentsList();
@@ -1119,11 +1124,9 @@ class _ShareItScreenState extends State<_ShareItScreen> {
     final canManage = role == "PROFESSOR" || role == "ADMIN";
     return Scaffold(
       appBar: AppBar(title: const Text("DocEd")),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 20),
-          children: [
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 20),
+        children: [
             if (_offline)
               const Card(
                 child: ListTile(
@@ -1367,8 +1370,7 @@ class _ShareItScreenState extends State<_ShareItScreen> {
                   ),
                 ),
               ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -1390,7 +1392,7 @@ class _ClassExplorerSheetState extends State<_ClassExplorerSheet> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     if (kUseDemoDataEverywhere) {
       if (!mounted) {
         return;
@@ -1682,10 +1684,6 @@ class _ClassExplorerSheetState extends State<_ClassExplorerSheet> {
                         style: const TextStyle(
                             fontSize: 20, fontWeight: FontWeight.w700),
                       ),
-                    ),
-                    IconButton(
-                      onPressed: _load,
-                      icon: const Icon(Icons.refresh_rounded),
                     ),
                   ],
                 ),
@@ -3470,7 +3468,7 @@ class _HomeTabState extends State<_HomeTab> {
         // Ignore malformed cache.
       }
     });
-    _activeSyncTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+    _activeSyncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
       if (!mounted || kUseDemoDataEverywhere) {
         return;
       }
@@ -3490,7 +3488,7 @@ class _HomeTabState extends State<_HomeTab> {
       }
       await _syncRoomsFromApi();
     });
-    _alertSyncTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
+    _alertSyncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
       if (!mounted || kUseDemoDataEverywhere) {
         return;
       }
@@ -3635,7 +3633,7 @@ class _HomeTabState extends State<_HomeTab> {
     );
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     setState(() => _loading = true);
     final role = context.read<AuthProvider>().role ?? "STUDENT";
     if (kUseDemoDataEverywhere) {
@@ -3989,57 +3987,54 @@ class _HomeTabState extends State<_HomeTab> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final role = auth.role ?? "STUDENT";
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView(
-        padding:
-            const EdgeInsets.fromLTRB(14, 8, 14, 18 + kDockScrollBottomInset),
-        children: [
-          if (_offline && role != "PROFESSOR")
-            const Card(
-              child: ListTile(
-                leading: Icon(Icons.wifi_off_rounded),
-                title: Text("Offline mode"),
-                subtitle: Text("Showing latest available data."),
-              ),
+    return ListView(
+      padding:
+          const EdgeInsets.fromLTRB(14, 8, 14, 18 + kDockScrollBottomInset),
+      children: [
+        if (_offline && role != "PROFESSOR")
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.wifi_off_rounded),
+              title: Text("Offline mode"),
+              subtitle: Text("Showing latest available data."),
             ),
-          if (_offline && role != "PROFESSOR") const SizedBox(height: 10),
-          _Header(
-            name: auth.name ?? "User",
           ),
-          const SizedBox(height: 14),
-          if (role == "PROFESSOR")
-            _ProfessorDashboard(
-              loading: _loading,
-              active: _active,
-              scheduled: _scheduled,
-              history: _history,
-              nearbyStudents: _nearbyStudents,
-              studentSummary: _studentSummary,
-              studentNames: _studentNames,
-              docEdAppointments: _docEdAppointments,
-              complaints: _complaints,
-              departmentName: _departmentName,
-              studentCount: _studentCount,
-              onOpenAttendance: widget.onOpenAttendance,
-              onLectureStarted: _handleLectureStarted,
-              onLectureEnded: _handleLectureEnded,
-            )
-          else
-            _StudentDashboard(
-              loading: _loading,
-              active: _active,
-              scheduled: _scheduled,
-              rooms: _rooms,
-              history: _history,
-              castAlerts: _castAlerts,
-              now: _alertNow,
-              onJoinRoom: _openRoomFromHome,
-              onOpenConnected: widget.onOpenConnected,
-              onOpenCasts: _openCasts,
-            ),
-        ],
-      ),
+        if (_offline && role != "PROFESSOR") const SizedBox(height: 10),
+        _Header(
+          name: auth.name ?? "User",
+        ),
+        const SizedBox(height: 14),
+        if (role == "PROFESSOR")
+          _ProfessorDashboard(
+            loading: _loading,
+            active: _active,
+            scheduled: _scheduled,
+            history: _history,
+            nearbyStudents: _nearbyStudents,
+            studentSummary: _studentSummary,
+            studentNames: _studentNames,
+            docEdAppointments: _docEdAppointments,
+            complaints: _complaints,
+            departmentName: _departmentName,
+            studentCount: _studentCount,
+            onOpenAttendance: widget.onOpenAttendance,
+            onLectureStarted: _handleLectureStarted,
+            onLectureEnded: _handleLectureEnded,
+          )
+        else
+          _StudentDashboard(
+            loading: _loading,
+            active: _active,
+            scheduled: _scheduled,
+            rooms: _rooms,
+            history: _history,
+            castAlerts: _castAlerts,
+            now: _alertNow,
+            onJoinRoom: _openRoomFromHome,
+            onOpenConnected: widget.onOpenConnected,
+            onOpenCasts: _openCasts,
+          ),
+      ],
     );
   }
 }
@@ -6411,7 +6406,7 @@ class _NotesTabState extends State<_NotesTab> {
     await _api.saveCache("notes_submissions", _submissions);
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     if (kUseDemoDataEverywhere && !_forceCloudSyncForNotes) {
       if (!mounted) {
         return;
@@ -7896,7 +7891,7 @@ class _LearningTabState extends State<_LearningTab> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     if (kUseDemoDataEverywhere) {
       if (!mounted) {
         return;
@@ -7910,7 +7905,9 @@ class _LearningTabState extends State<_LearningTab> {
       });
       return;
     }
-    setState(() => _loading = true);
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     final roomRes = await _api.listRooms();
     final lectureRes = await _api.sampleLectures();
     final schedRes = await _api.listScheduledLectures();
@@ -10540,6 +10537,7 @@ class _LecturesTabState extends State<_LecturesTab> {
   bool _loading = false;
   bool _offline = false;
   List<dynamic> _active = [];
+  Timer? _syncTimer;
   static const List<Map<String, dynamic>> _demoActive = [
     {"id": 901, "classroom_id": 12},
     {"id": 902, "classroom_id": 14},
@@ -10549,16 +10547,20 @@ class _LecturesTabState extends State<_LecturesTab> {
   void initState() {
     super.initState();
     _load();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _load(silent: true);
+    });
   }
 
   @override
   void dispose() {
+    _syncTimer?.cancel();
     _classroomController.dispose();
     _lectureIdController.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     if (kUseDemoDataEverywhere) {
       if (!mounted) {
         return;
@@ -10570,7 +10572,9 @@ class _LecturesTabState extends State<_LecturesTab> {
       });
       return;
     }
-    setState(() => _loading = true);
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     final activeRes = await _api.listActiveLectures();
     final isOffline = !(await _api.isBackendOnlineCached());
     List<dynamic> nextActive = _active;
@@ -10666,99 +10670,96 @@ class _LecturesTabState extends State<_LecturesTab> {
   @override
   Widget build(BuildContext context) {
     final role = context.watch<AuthProvider>().role ?? "STUDENT";
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView(
-        padding:
-            const EdgeInsets.fromLTRB(14, 10, 14, 18 + kDockScrollBottomInset),
-        children: [
-          if (_offline && role != "PROFESSOR")
-            const Card(
-              child: ListTile(
-                leading: Icon(Icons.wifi_off_rounded),
-                title: Text("Offline mode"),
-                subtitle:
-                    Text("Lecture actions may not sync until network returns."),
-              ),
+    return ListView(
+      padding:
+          const EdgeInsets.fromLTRB(14, 10, 14, 18 + kDockScrollBottomInset),
+      children: [
+        if (_offline && role != "PROFESSOR")
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.wifi_off_rounded),
+              title: Text("Offline mode"),
+              subtitle:
+                  Text("Lecture actions may not sync until network returns."),
             ),
-          if (_offline && role != "PROFESSOR") const SizedBox(height: 10),
-          const Text("Lectures",
-              style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 12),
-          if (role == "PROFESSOR")
-            AppCard(
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _classroomController,
-                    decoration:
-                        const InputDecoration(labelText: "Classroom ID"),
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 10),
-                  AppButton(
-                      label: "Start Lecture",
-                      onPressed: _startLecture,
-                      icon: Icons.play_arrow_rounded),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _lectureIdController,
-                    decoration: const InputDecoration(labelText: "Lecture ID"),
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 10),
-                  AppButton(
-                      label: "End Lecture",
-                      onPressed: _endLecture,
-                      isPrimary: false,
-                      icon: Icons.stop_rounded),
-                ],
-              ),
+          ),
+        if (_offline && role != "PROFESSOR") const SizedBox(height: 10),
+        const Text("Lectures",
+            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        if (role == "PROFESSOR")
+          AppCard(
+            child: Column(
+              children: [
+                TextField(
+                  controller: _classroomController,
+                  decoration:
+                      const InputDecoration(labelText: "Classroom ID"),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 10),
+                AppButton(
+                    label: "Start Lecture",
+                    onPressed: _startLecture,
+                    icon: Icons.play_arrow_rounded),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _lectureIdController,
+                  decoration: const InputDecoration(labelText: "Lecture ID"),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 10),
+                AppButton(
+                    label: "End Lecture",
+                    onPressed: _endLecture,
+                    isPrimary: false,
+                    icon: Icons.stop_rounded),
+              ],
             ),
-          const SizedBox(height: 12),
-          if (_loading)
-            const LoadingSkeleton(height: 90)
-          else if (_active.isEmpty)
-            const EmptyStateWidget(message: "No active lectures")
-          else
-            ..._active.map(
-              (lecture) {
-                final id = (lecture["id"] as num).toInt();
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: AppCard(
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text("Lecture #$id",
-                                  style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w700)),
-                              const SizedBox(height: 4),
-                              Text("Classroom ${lecture["classroom_id"]}"),
-                            ],
+          ),
+        const SizedBox(height: 12),
+        if (_loading)
+          const LoadingSkeleton(height: 90)
+        else if (_active.isEmpty)
+          const EmptyStateWidget(message: "No active lectures")
+        else
+          ..._active.map(
+            (lecture) {
+              final id = (lecture["id"] as num).toInt();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: AppCard(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("Lecture #$id",
+                                style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 4),
+                            Text("Classroom ${lecture["classroom_id"]}"),
+                          ],
+                        ),
+                      ),
+                      if (role == "STUDENT")
+                        SizedBox(
+                          width: 130,
+                          child: AppButton(
+                            label: "Mark",
+                            onPressed: () => _markPresence(id),
+                            icon: Icons.my_location_rounded,
                           ),
                         ),
-                        if (role == "STUDENT")
-                          SizedBox(
-                            width: 130,
-                            child: AppButton(
-                              label: "Mark",
-                              onPressed: () => _markPresence(id),
-                              icon: Icons.my_location_rounded,
-                            ),
-                          ),
-                      ],
-                    ),
+                    ],
                   ),
-                );
-              },
-            ),
-        ],
-      ),
+                ),
+              );
+            },
+          ),
+      ],
     );
   }
 }
@@ -10801,6 +10802,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       TextEditingController();
   final TextEditingController _manualLectureId =
       TextEditingController(text: "1");
+  Timer? _syncTimer;
   static const List<Map<String, dynamic>> _exampleAttendanceRecords = [
     {"lecture_id": 401, "presence_duration": 3150, "status": "PRESENT"},
     {"lecture_id": 402, "presence_duration": 2920, "status": "PRESENT"},
@@ -10889,6 +10891,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
 
   @override
   void dispose() {
+    _syncTimer?.cancel();
     _spaceNameController.dispose();
     _ceilingHeightController.dispose();
     _bleRssiController.dispose();
@@ -10903,6 +10906,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     super.initState();
     _loadCreatedSpaces();
     _load();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _load(silent: true);
+    });
   }
 
   Future<void> _loadCreatedSpaces() async {
@@ -10940,7 +10946,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     await prefs.setString("professor_created_spaces", jsonEncode(_createdSpaces));
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     if (kUseDemoDataEverywhere) {
       if (!mounted) {
         return;
@@ -10987,7 +10993,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       });
       return;
     }
-    setState(() => _loading = true);
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     final role = context.read<AuthProvider>().role ?? "STUDENT";
     final res = await _api.attendanceHistory();
     final geoRes = role == "PROFESSOR" ? await _api.geofenceStatus() : null;
@@ -11807,12 +11815,10 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   @override
   Widget build(BuildContext context) {
     final role = context.watch<AuthProvider>().role ?? "STUDENT";
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView(
-        padding:
-            const EdgeInsets.fromLTRB(14, 10, 14, 18 + kDockScrollBottomInset),
-        children: [
+    return ListView(
+      padding:
+          const EdgeInsets.fromLTRB(14, 10, 14, 18 + kDockScrollBottomInset),
+      children: [
           if (_offline && role != "PROFESSOR")
             const Card(
               child: ListTile(
@@ -12208,8 +12214,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                 ),
               ),
           ],
-        ],
-      ),
+      ],
     );
   }
 }

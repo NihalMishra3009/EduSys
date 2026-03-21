@@ -926,9 +926,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                   ),
                 ),
               Expanded(
-                child: RefreshIndicator(
-                  onRefresh: _loadData,
-                  child: _loading
+                child: _loading
                       ? ListView(
                           children: const [
                             SizedBox(height: 30),
@@ -1028,7 +1026,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                               title: title, subtitle: when);
                                         }).toList(),
                                 ),
-                ),
               ),
             ],
           ),
@@ -1234,35 +1231,49 @@ class _CastTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final bg = dark ? const Color(0xFF5F57DD) : Colors.white;
-    return ListTile(
-      tileColor: bg,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      leading: CircleAvatar(
-        radius: 22,
-        backgroundColor: dark ? Colors.white24 : _castsLightChip,
-        child: Text(
-          title.isNotEmpty ? title[0].toUpperCase() : "?",
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: dark ? Colors.white : _castsAccent,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          if (!dark)
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+        ],
+      ),
+      child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        leading: CircleAvatar(
+          radius: 22,
+          backgroundColor: dark ? Colors.white24 : _castsLightChip,
+          child: Text(
+            title.isNotEmpty ? title[0].toUpperCase() : "?",
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: dark ? Colors.white : _castsAccent,
+            ),
           ),
         ),
-      ),
-      title: Text(
-        title,
-        style: TextStyle(
-          fontWeight: FontWeight.w700,
-          color: dark ? Colors.white : Colors.black87,
+        title: Text(
+          title,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: dark ? Colors.white : Colors.black87,
+          ),
         ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(color: dark ? Colors.white70 : Colors.black54),
+        ),
+        trailing: trailing ??
+            Icon(Icons.chevron_right_rounded,
+                color: dark ? Colors.white70 : Colors.black45),
+        onTap: onTap,
       ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(color: dark ? Colors.white70 : Colors.black54),
-      ),
-      trailing: trailing ??
-          Icon(Icons.chevron_right_rounded,
-              color: dark ? Colors.white70 : Colors.black45),
-      onTap: onTap,
     );
   }
 }
@@ -1336,23 +1347,22 @@ class _SearchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
     return SizedBox(
       width: 190,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: dark ? Colors.white24 : Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(
-              color: dark ? Colors.white24 : scheme.onSurface.withValues(alpha: 0.12)),
+              color: dark ? Colors.white24 : Colors.black12),
         ),
         child: Row(
           children: [
             Icon(Icons.search_rounded,
                 size: 18,
-                color: dark ? Colors.white70 : scheme.onSurface.withValues(alpha: 0.55)),
+                color: dark ? Colors.black54 : Colors.black54),
             const SizedBox(width: 6),
             Expanded(
               child: TextField(
@@ -1363,7 +1373,7 @@ class _SearchCard extends StatelessWidget {
                   border: InputBorder.none,
                   isDense: true,
                 ),
-                style: TextStyle(color: dark ? Colors.white : Colors.black87),
+                style: const TextStyle(color: Colors.black87),
               ),
             ),
           ],

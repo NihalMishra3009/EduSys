@@ -1,4 +1,5 @@
 import "dart:convert";
+import "dart:async";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
@@ -18,22 +19,29 @@ class _ComplaintScreenState extends State<ComplaintScreen> {
 
   bool _loading = false;
   List<dynamic> _items = [];
+  Timer? _syncTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _load(silent: true);
+    });
   }
 
   @override
   void dispose() {
+    _syncTimer?.cancel();
     _subjectController.dispose();
     _descController.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     final res = await _api.myComplaints();
     setState(() {
       _loading = false;
@@ -78,52 +86,49 @@ class _ComplaintScreenState extends State<ComplaintScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Complaints")),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: _subjectController,
-                      decoration: const InputDecoration(labelText: "Subject"),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _descController,
-                      maxLines: 3,
-                      decoration: const InputDecoration(labelText: "Description"),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(onPressed: _submit, child: const Text("Submit Complaint")),
-                    ),
-                  ],
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _subjectController,
+                    decoration: const InputDecoration(labelText: "Subject"),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _descController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(labelText: "Description"),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(onPressed: _submit, child: const Text("Submit Complaint")),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_loading)
+            const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()))
+          else if (_items.isEmpty)
+            const Card(child: Padding(padding: EdgeInsets.all(12), child: Text("No complaints yet")))
+          else
+            ..._items.map(
+              (item) => Card(
+                child: ListTile(
+                  title: Text(item["subject"].toString()),
+                  subtitle: Text(item["description"].toString()),
+                  trailing: Text(item["status"].toString()),
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            if (_loading)
-              const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()))
-            else if (_items.isEmpty)
-              const Card(child: Padding(padding: EdgeInsets.all(12), child: Text("No complaints yet")))
-            else
-              ..._items.map(
-                (item) => Card(
-                  child: ListTile(
-                    title: Text(item["subject"].toString()),
-                    subtitle: Text(item["description"].toString()),
-                    trailing: Text(item["status"].toString()),
-                  ),
-                ),
-              ),
-          ],
-        ),
+        ],
       ),
     );
   }

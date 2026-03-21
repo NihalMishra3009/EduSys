@@ -71,7 +71,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       unawaited(_loadDirectory());
       unawaited(_loadMessages());
       unawaited(_connectWs());
-      _syncTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
         unawaited(_loadMessages(silent: true));
       });
       _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -982,11 +982,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       final url = data["url"]?.toString();
       if (url == null || url.isEmpty) return;
       await _send(
-        type: path.toLowerCase().endsWith(".mp3") ||
-                path.toLowerCase().endsWith(".wav") ||
-                path.toLowerCase().endsWith(".m4a")
-            ? "VOICE_NOTE"
-            : "FILE",
+        type: "FILE",
         attachUrl: url,
         attachName: result.files.single.name,
       );
@@ -1052,23 +1048,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             ),
             actions: [
               _IconCircle(
-                icon: Icons.call_rounded,
-                color: _castAccent,
-                onTap: () => _startCall(isVideo: false),
-              ),
-              const SizedBox(width: 6),
-              _IconCircle(
-                icon: Icons.videocam_rounded,
-                color: _castAccent,
-                onTap: () => _startCall(isVideo: true),
-              ),
-              const SizedBox(width: 6),
-              _IconCircle(
                 icon: Icons.alarm_add_rounded,
                 color: _castAccent,
                 onTap: _sendScheduled,
               ),
-              const SizedBox(width: 6),
             ],
           ),
           body: Column(
@@ -1147,10 +1130,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                             child: Row(
                               children: [
                                 const SizedBox(width: 12),
-                                Icon(Icons.mic_rounded,
-                                    size: 18,
-                                    color: _castAccent.withValues(alpha: 0.7)),
-                                const SizedBox(width: 8),
                                 Expanded(
                                   child: TextField(
                                     controller: _msgCtrl,
@@ -1400,11 +1379,6 @@ class _AttachMenu extends StatelessWidget {
               label: "Alert",
               color: Colors.orange,
               onTap: onClose),
-          _AttachOption(
-              icon: Icons.mic_rounded,
-              label: "Voice note",
-              color: const Color(0xFF25D366),
-              onTap: onClose),
         ],
       ),
     );
@@ -1431,7 +1405,7 @@ class _IconCircle extends StatelessWidget {
       height: 34,
       decoration: BoxDecoration(
         color: dark ? Colors.white : Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.08),

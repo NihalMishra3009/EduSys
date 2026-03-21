@@ -1,4 +1,5 @@
 import "dart:convert";
+import "dart:async";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:flutter/material.dart";
@@ -16,18 +17,30 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
   List<dynamic> _records = [];
   bool _loading = false;
   String _message = "";
+  Timer? _syncTimer;
 
   @override
   void initState() {
     super.initState();
     _loadHistory();
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _loadHistory(silent: true);
+    });
   }
 
-  Future<void> _loadHistory() async {
-    setState(() {
-      _loading = true;
-      _message = "";
-    });
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadHistory({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _message = "";
+      });
+    }
 
     final response = await _api.attendanceHistory();
     setState(() {
@@ -35,7 +48,9 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         _records = jsonDecode(response.body) as List<dynamic>;
       } else {
-        _message = _extractMessage(response.body, fallback: "Unable to load attendance history");
+        if (!silent) {
+          _message = _extractMessage(response.body, fallback: "Unable to load attendance history");
+        }
       }
     });
   }
@@ -54,12 +69,6 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Attendance History"),
-        actions: [
-          IconButton(
-            onPressed: _loading ? null : _loadHistory,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
       ),
       body: _loading && _records.isEmpty
           ? const Center(child: CircularProgressIndicator())
