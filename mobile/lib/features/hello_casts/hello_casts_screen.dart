@@ -778,10 +778,8 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       ),
               const SizedBox(height: 12),
               _UnifiedFilterBar(
-                tabs: _tabs,
                 tabIndex: _tabIndex,
                 onTabChanged: (i) => setState(() => _tabIndex = i),
-                filters: _filters,
                 currentFilter: _chatFilter,
                 onFilterChanged: (v) => setState(() => _chatFilter = v),
               ),
@@ -961,28 +959,21 @@ class _FilterBar extends StatelessWidget {
 
 class _UnifiedFilterBar extends StatelessWidget {
   const _UnifiedFilterBar({
-    required this.tabs,
     required this.tabIndex,
     required this.onTabChanged,
-    required this.filters,
     required this.currentFilter,
     required this.onFilterChanged,
   });
 
-  final List<String> tabs;
   final int tabIndex;
   final ValueChanged<int> onTabChanged;
-  final List<String> filters;
   final String currentFilter;
   final ValueChanged<String> onFilterChanged;
 
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final items = <String>[
-      ...tabs,
-      ...filters,
-    ];
+    const items = ["All chats", "Individual", "Group", "Community", "Alerts"];
     return SizedBox(
       height: 38,
       child: ListView.separated(
@@ -991,18 +982,36 @@ class _UnifiedFilterBar extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final label = items[index];
-          final isTab = index < tabs.length;
-          final isSelected =
-              isTab ? tabs[tabIndex] == label : currentFilter == label;
+          final isAlerts = label == "Alerts";
+          final isSelected = switch (label) {
+            "All chats" => tabIndex == 0 && currentFilter == "All",
+            "Individual" => tabIndex == 0 && currentFilter == "Individual",
+            "Group" => tabIndex == 0 && currentFilter == "Group",
+            "Community" => tabIndex == 1,
+            "Alerts" => tabIndex == 2,
+            _ => false,
+          };
           return ChoiceChip(
             selected: isSelected,
             label: Text(label),
             onSelected: (_) {
-              if (isTab) {
-                onTabChanged(tabs.indexOf(label));
-              } else {
-                onFilterChanged(label);
+              if (isAlerts) {
+                onTabChanged(2);
+                return;
               }
+              if (label == "Community") {
+                onTabChanged(1);
+                return;
+              }
+              onTabChanged(0);
+              onFilterChanged(
+                switch (label) {
+                  "All chats" => "All",
+                  "Individual" => "Individual",
+                  "Group" => "Group",
+                  _ => currentFilter,
+                },
+              );
             },
             selectedColor: const Color(0xFF25D366).withValues(alpha: 0.2),
             backgroundColor: dark ? null : Colors.white,
