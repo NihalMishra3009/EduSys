@@ -41,6 +41,65 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   static const _tabs = ["Chats", "Communities", "Alerts"];
   static const _filters = ["All", "Community", "Group", "Individual"];
 
+  static const _demoCasts = [
+    {
+      "id": -101,
+      "name": "Gotey",
+      "cast_type": "Individual",
+      "last_message": "Aaj ka lecture hua?",
+      "unread_count": 1,
+    },
+    {
+      "id": -102,
+      "name": "Nonu",
+      "cast_type": "Individual",
+      "last_message": "Assignment bhej dena",
+      "unread_count": 0,
+    },
+    {
+      "id": -103,
+      "name": "Hi",
+      "cast_type": "Individual",
+      "last_message": "Lab kab hai?",
+      "unread_count": 0,
+    },
+    {
+      "id": -201,
+      "name": "SIGCE",
+      "cast_type": "Group",
+      "last_message": "Tomorrow seminar at 10 AM.",
+      "unread_count": 2,
+    },
+    {
+      "id": -202,
+      "name": "Mumbai University",
+      "cast_type": "Group",
+      "last_message": "Exam form deadline extended.",
+      "unread_count": 0,
+    },
+    {
+      "id": -203,
+      "name": "CSE 2024",
+      "cast_type": "Group",
+      "last_message": "Project groups finalized.",
+      "unread_count": 1,
+    },
+    {
+      "id": -301,
+      "name": "SIGCE Community",
+      "cast_type": "Community",
+      "last_message": "Welcome to the community!",
+      "unread_count": 0,
+    },
+    {
+      "id": -302,
+      "name": "MU Notices",
+      "cast_type": "Community",
+      "last_message": "Results announced on portal.",
+      "unread_count": 0,
+    },
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -122,7 +181,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
 
       if (!mounted) return;
       setState(() {
-        _casts = casts;
+        _casts = casts.isEmpty ? List<Map<String, dynamic>>.from(_demoCasts) : casts;
         _invites = inviteRows;
         _alerts = alertRows;
         _directory = directoryRows;
