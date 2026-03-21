@@ -18,6 +18,7 @@ import "package:edusys_mobile/features/student/profile/profile_screen.dart";
 import "package:edusys_mobile/features/student/attendance/active_lecture_screen.dart";
 import "package:edusys_mobile/features/student/attendance/learned_screen.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/services/cast_call_service.dart";
 import "package:edusys_mobile/shared/services/device_binding_service.dart";
 import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
 import "package:edusys_mobile/shared/widgets/app_button.dart";
@@ -84,6 +85,18 @@ class _AppShellState extends State<AppShell> {
     "AttendEd",
     "Profile",
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    CastCallService.instance.start();
+  }
+
+  @override
+  void dispose() {
+    CastCallService.instance.stop();
+    super.dispose();
+  }
 
   void _onTabSelected(int value) {
     if (value == _index) {

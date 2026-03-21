@@ -523,6 +523,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
                   callTitle: widget.title,
                   callType: call["is_video"] == true ? "Video" : "Voice",
                   isVideo: call["is_video"] == true,
+                  roomCode: call["room_code"]?.toString(),
                 ),
               );
             },

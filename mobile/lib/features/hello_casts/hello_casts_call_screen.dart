@@ -14,6 +14,7 @@ Route<void> buildHelloCastsCallRoute({
   required String callTitle,
   required String callType,
   required bool isVideo,
+  String? roomCode,
 }) {
   return PageRouteBuilder<void>(
     transitionDuration: const Duration(milliseconds: 260),
@@ -36,6 +37,7 @@ Route<void> buildHelloCastsCallRoute({
             title: callTitle,
             callType: callType,
             isVideo: isVideo,
+            roomCodeOverride: roomCode,
           ),
         ),
       );
@@ -50,12 +52,14 @@ class HelloCastsCallScreen extends StatefulWidget {
     required this.title,
     required this.callType,
     required this.isVideo,
+    this.roomCodeOverride,
   });
 
   final int castId;
   final String title;
   final String callType;
   final bool isVideo;
+  final String? roomCodeOverride;
 
   @override
   State<HelloCastsCallScreen> createState() => _HelloCastsCallScreenState();
@@ -163,7 +167,8 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
     final port = (baseUri?.hasPort ?? false) && baseUri!.port != 0
         ? baseUri.port
         : null;
-    final roomCode = "cast-${widget.castId}-${widget.isVideo ? "video" : "voice"}";
+    final roomCode = widget.roomCodeOverride ??
+        "cast-${widget.castId}-${widget.isVideo ? "video" : "voice"}";
     final name = (await _api.getSavedName()) ?? "Member";
     final role = (await _api.getSavedRole()) ?? "";
 
