@@ -15,40 +15,44 @@ class HelloCastsHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
-      gradient: LinearGradient(
-        colors: [
-          const Color(0xFF1B6EF3).withValues(alpha: 0.92),
-          const Color(0xFF23C6B8).withValues(alpha: 0.92),
-        ],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: GoogleFonts.spaceGrotesk(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.2,
-            ),
-          ),
-          if (subtitle.trim().isNotEmpty) ...[
-            const SizedBox(height: 6),
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             Text(
-              subtitle,
-              style: GoogleFonts.manrope(
-                color: Colors.white.withValues(alpha: 0.9),
-                fontSize: 13.5,
+              title,
+              style: GoogleFonts.spaceGrotesk(
+                color: scheme.primary,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              height: 6,
+              width: 48,
+              decoration: BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.22),
+                borderRadius: BorderRadius.circular(99),
               ),
             ),
           ],
+        ),
+        if (subtitle.trim().isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: GoogleFonts.manrope(
+              color: scheme.primary.withValues(alpha: 0.7),
+              fontSize: 12.5,
+            ),
+          ),
         ],
-      ),
+      ],
     );
   }
 }
