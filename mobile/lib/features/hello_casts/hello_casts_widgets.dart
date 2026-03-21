@@ -19,28 +19,14 @@ class HelloCastsHeader extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              title,
-              style: GoogleFonts.spaceGrotesk(
-                color: scheme.primary,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Container(
-              height: 6,
-              width: 48,
-              decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: 0.22),
-                borderRadius: BorderRadius.circular(99),
-              ),
-            ),
-          ],
+        Text(
+          title,
+          style: GoogleFonts.spaceGrotesk(
+            color: scheme.primary,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
         ),
         if (subtitle.trim().isNotEmpty) ...[
           const SizedBox(height: 4),
