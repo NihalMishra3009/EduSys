@@ -9208,7 +9208,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                               detail: _lobbyMessage ??
                                   "You are in the meeting waiting room.",
                             )
-                          : (!hasOthers && mainRenderers.isEmpty)
+                          : (!hasOthers && mainRenderers.isEmpty && !_isHost)
                           ? _WaitingView(
                               displayName: widget.displayName,
                               localRenderer: _localRenderer,

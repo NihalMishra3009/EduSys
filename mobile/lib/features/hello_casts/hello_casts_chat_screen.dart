@@ -148,9 +148,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Future<void> _persistMessages() async {
     await _api.saveCache(
       _messagesCacheKey,
-      _messages.length <= 200
+      _messages.length <= 500
           ? _messages
-          : _messages.sublist(_messages.length - 200),
+          : _messages.sublist(_messages.length - 500),
     );
   }
 
@@ -973,7 +973,7 @@ class _MessageBubble extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final bubbleBg = isMe
         ? (dark ? scheme.primary.withValues(alpha: 0.28) : const Color(0xFF1E67D1))
-        : (dark ? AppColors.darkSurfaceElevated : Colors.white);
+        : (dark ? AppColors.darkSurfaceElevated : const Color(0xFFE2E8F3));
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(18),
       topRight: const Radius.circular(18),

@@ -139,6 +139,7 @@ class _BlePermissionGateState extends State<BlePermissionGate> {
 
     if (_allGranted) return widget.child;
 
+    final missing = _checks.entries.where((e) => !e.value).toList();
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -147,60 +148,99 @@ class _BlePermissionGateState extends State<BlePermissionGate> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                "Permissions Required",
+                "All Permissions in One Tap",
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 8),
-              const Text(
-                "To use BLE attendance, all permissions below are mandatory. "
-                "Please grant them and disable battery optimization.",
+              const SizedBox(height: 6),
+              Text(
+                missing.isEmpty
+                    ? "You are ready for BLE attendance."
+                    : "Grant everything once, then continue.",
+                style: TextStyle(color: Theme.of(context).hintColor),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               Expanded(
                 child: ListView(
                   children: _checks.entries.map((entry) {
                     final ok = entry.value;
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(
-                        ok ? Icons.check_circle : Icons.error,
-                        color: ok ? Colors.green : Colors.redAccent,
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: ok
+                            ? Colors.green.withValues(alpha: 0.08)
+                            : Colors.redAccent.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: ok
+                              ? Colors.green.withValues(alpha: 0.25)
+                              : Colors.redAccent.withValues(alpha: 0.25),
+                        ),
                       ),
-                      title: Text(entry.key),
-                      subtitle: Text(ok ? "Granted" : "Required"),
+                      child: Row(
+                        children: [
+                          Icon(
+                            ok ? Icons.check_circle : Icons.error,
+                            color: ok ? Colors.green : Colors.redAccent,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              entry.key,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          Text(ok ? "Granted" : "Required",
+                              style: TextStyle(
+                                  color: ok ? Colors.green : Colors.redAccent)),
+                        ],
+                      ),
                     );
                   }).toList(),
                 ),
               ),
-              FilledButton(
+              FilledButton.icon(
                 onPressed: _requestAll,
-                child: const Text("Grant All Permissions"),
+                icon: const Icon(Icons.verified_rounded),
+                label: const Text("Grant All Permissions"),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
               ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: _openAppSettings,
-                child: const Text("Open App Settings"),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _openAppSettings,
+                      child: const Text("Open Settings"),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _refresh,
+                      child: const Text("Refresh"),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: _disableBatteryOptimization,
-                child: const Text("Disable Battery Optimization"),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: _openBluetoothSettings,
-                child: const Text("Turn On Bluetooth"),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: _openLocationSettings,
-                child: const Text("Turn On Location Services"),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: _refresh,
-                child: const Text("Refresh"),
-              ),
+              const SizedBox(height: 10),
+              if (_checks["Battery Optimization Disabled"] == false)
+                OutlinedButton(
+                  onPressed: _disableBatteryOptimization,
+                  child: const Text("Disable Battery Optimization"),
+                ),
+              if (_checks["Bluetooth On"] == false)
+                OutlinedButton(
+                  onPressed: _openBluetoothSettings,
+                  child: const Text("Turn On Bluetooth"),
+                ),
+              if (_checks["Location Services On"] == false)
+                OutlinedButton(
+                  onPressed: _openLocationSettings,
+                  child: const Text("Turn On Location Services"),
+                ),
             ],
           ),
         ),
