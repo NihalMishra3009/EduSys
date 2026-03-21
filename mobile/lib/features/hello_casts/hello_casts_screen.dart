@@ -809,7 +809,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
             children: [
               const HelloCastsHeader(
                 title: "Casts",
-                subtitle: "Simple group & individual messaging",
+                subtitle: "",
               ),
               const SizedBox(height: 12),
               _UnifiedFilterBar(

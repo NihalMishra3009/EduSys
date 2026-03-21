@@ -37,14 +37,16 @@ class HelloCastsHeader extends StatelessWidget {
               letterSpacing: -0.2,
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: GoogleFonts.manrope(
-              color: Colors.white.withValues(alpha: 0.9),
-              fontSize: 13.5,
+          if (subtitle.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              style: GoogleFonts.manrope(
+                color: Colors.white.withValues(alpha: 0.9),
+                fontSize: 13.5,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
