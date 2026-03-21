@@ -27,6 +27,7 @@ import "package:edusys_mobile/shared/widgets/loading_skeleton.dart";
 import "package:edusys_mobile/shared/widgets/section_title.dart";
 import "package:edusys_mobile/shared/widgets/status_badge.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:provider/provider.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart";
@@ -12382,6 +12383,18 @@ class _SettingsTabState extends State<_SettingsTab> {
     );
   }
 
+  Future<void> _copyToken() async {
+    final token = await ApiService().getToken();
+    if (!mounted) return;
+    if (token == null || token.isEmpty) {
+      GlassToast.show(context, "No token found", icon: Icons.error_outline);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: token));
+    if (!mounted) return;
+    GlassToast.show(context, "Token copied", icon: Icons.check_circle_outline);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.read<ThemeProvider>();
@@ -12610,6 +12623,13 @@ class _SettingsTabState extends State<_SettingsTab> {
                   icon: Icons.info_outline_rounded, title: "System"),
               const SizedBox(height: 8),
               const Text("App Version: 1.0.0+1"),
+              const SizedBox(height: 10),
+              AppButton(
+                label: "Copy Token",
+                isPrimary: false,
+                icon: Icons.copy_rounded,
+                onPressed: _copyToken,
+              ),
             ],
           ),
         ),
