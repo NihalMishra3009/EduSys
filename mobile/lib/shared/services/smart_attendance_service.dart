@@ -125,6 +125,17 @@ class SmartAttendanceService {
     await _saveBackgroundPreference(_backgroundEnabled);
     if (!_monitoring) return _backgroundEnabled;
     if (_backgroundEnabled) {
+      if (Platform.isAndroid) {
+        final bgOk = await _ensureBackgroundLocation(required: true);
+        final batteryOk = await _ensureBatteryOptimizationsDisabled();
+        if (!bgOk || !batteryOk) {
+          _backgroundEnabled = false;
+          await _saveBackgroundPreference(false);
+          await _setBackgroundReceiversEnabled(false);
+          _startForegroundMotionListener();
+          return _backgroundEnabled;
+        }
+      }
       final channelOk = await _ensureNotificationChannel();
       if (!channelOk) {
         _backgroundEnabled = false;
@@ -185,12 +196,11 @@ class SmartAttendanceService {
     int? scheduledStart,
   }) async {
     CrashLogService.log("PROFESSOR", "Starting session lectureId=$lectureId roomId=$roomId");
-    final advertiseStatus = await Permission.bluetoothAdvertise.request();
-    final connectStatus = await Permission.bluetoothConnect.request();
-    if (!advertiseStatus.isGranted || !connectStatus.isGranted) {
+    final ok = await _requestProfessorPermissions();
+    if (!ok) {
       throw Exception(
-        "Bluetooth advertise/connect permission denied. "
-        "Grant Bluetooth permissions in device settings.",
+        "Bluetooth, location, and background permissions are required. "
+        "Grant all permissions and disable battery optimization.",
       );
     }
     final token = _uuid.v4();
@@ -235,22 +245,84 @@ class SmartAttendanceService {
   }
 
   Future<bool> _requestStudentPermissions() async {
+    return _requestBlePermissions(
+      includeAdvertise: false,
+      requireBackground: true,
+    );
+  }
+
+  Future<bool> _requestProfessorPermissions() async {
+    return _requestBlePermissions(
+      includeAdvertise: true,
+      requireBackground: true,
+    );
+  }
+
+  Future<bool> _requestBlePermissions({
+    required bool includeAdvertise,
+    required bool requireBackground,
+  }) async {
     final permissions = <Permission>[
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
-      // bluetoothAdvertise is not needed for students — only professors advertise
+      if (includeAdvertise) Permission.bluetoothAdvertise,
+      Permission.location,
       Permission.activityRecognition,
       if (Platform.isAndroid) Permission.notification,
     ];
+
     final results = await permissions.request();
     final denied = results.entries
         .where((e) => e.value.isDenied || e.value.isPermanentlyDenied)
         .map((e) => e.key.toString())
         .toList();
+
     if (denied.isNotEmpty) {
       CrashLogService.log("PERMISSIONS", "Denied: ${denied.join(', ')}");
+      await _openAppSettings();
+      return false;
     }
-    return denied.isEmpty;
+
+    if (Platform.isAndroid) {
+      final bgOk = await _ensureBackgroundLocation(required: requireBackground);
+      if (!bgOk) return false;
+      final batteryOk = await _ensureBatteryOptimizationsDisabled();
+      if (!batteryOk) return false;
+    }
+
+    return true;
+  }
+
+  Future<bool> _ensureBackgroundLocation({required bool required}) async {
+    if (!required) return true;
+    final status = await Permission.locationAlways.status;
+    if (status.isGranted) return true;
+    final result = await Permission.locationAlways.request();
+    if (result.isGranted) return true;
+    CrashLogService.log("PERMISSIONS", "Background location denied");
+    await _openAppSettings();
+    return false;
+  }
+
+  Future<bool> _ensureBatteryOptimizationsDisabled() async {
+    final status = await Permission.ignoreBatteryOptimizations.status;
+    if (status.isGranted) return true;
+    final result = await Permission.ignoreBatteryOptimizations.request();
+    if (result.isGranted) return true;
+    CrashLogService.log("PERMISSIONS", "Battery optimization not disabled");
+    await _attendanceNativeChannel
+        .invokeMethod("requestIgnoreBatteryOptimizations");
+    await _attendanceNativeChannel
+        .invokeMethod("openBatteryOptimizationSettings");
+    return false;
+  }
+
+  Future<void> _openAppSettings() async {
+    try {
+      await _attendanceNativeChannel.invokeMethod("openAppSettings");
+    } catch (_) {
+      await openAppSettings();
+    }
   }
 
   Future<void> _ensureBackgroundService() async {

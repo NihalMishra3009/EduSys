@@ -7942,6 +7942,11 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   final Map<String, RTCVideoRenderer> _remoteRenderers = {};
   final Map<String, RTCPeerConnection> _peerConnections = {};
   final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
+  final Map<String, List<RTCIceCandidate>> _pendingRemoteCandidates = {};
+  final Map<String, bool> _remoteDescriptionSet = {};
+  final Map<String, _MeetingPeerDebugState> _peerDebug = {};
+  final Map<String, int> _localCandidateCount = {};
+  final Map<String, int> _remoteCandidateCount = {};
   List<Map<String, dynamic>> _iceServers = [
     {"urls": ["stun:stun.l.google.com:19302"]},
   ];
@@ -7953,6 +7958,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   bool _audioMuted = false;
   bool _videoOff = false;
   late bool _isHost;
+  String? _turnWarning;
   final Map<String, _MeetingParticipant> _participants = {};
   // Chat
   bool _handRaised = false;
@@ -7960,6 +7966,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   final TextEditingController _chatCtrl = TextEditingController();
   bool _chatOpen = false;
   int _unreadChat = 0;
+  bool _showDebug = false;
 
   // Layout
   bool _tileView = true; // true = tile grid, false = spotlight
@@ -8004,6 +8011,10 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       });
       _localRenderer.srcObject = _localStream;
       _iceServers = await ApiService().getIceServers();
+      if (!_hasTurnServers(_iceServers)) {
+        _turnWarning =
+            "TURN not configured. Calls may fail on different networks.";
+      }
       await _connectSignaling();
       if (!mounted) {
         return;
@@ -8083,6 +8094,8 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     if (existing != null) {
       return existing;
     }
+    _remoteDescriptionSet[remotePeerId] = false;
+    _peerDebug[remotePeerId] ??= _MeetingPeerDebugState();
 
     final pc = await createPeerConnection(
       {
@@ -8105,8 +8118,22 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
 
     pc.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
-      // Buffer candidates until the remote side has set a remote description.
-      // _flushCandidates() is called after setRemoteDescription succeeds.
+      _localCandidateCount[remotePeerId] =
+          (_localCandidateCount[remotePeerId] ?? 0) + 1;
+      final hasRemote = _remoteDescriptionSet[remotePeerId] ?? false;
+      if (hasRemote) {
+        _sendSignal(
+          to: remotePeerId,
+          data: {
+            "candidate": {
+              "candidate": candidate.candidate,
+              "sdpMid": candidate.sdpMid,
+              "sdpMLineIndex": candidate.sdpMLineIndex,
+            },
+          },
+        );
+        return;
+      }
       _pendingCandidates.putIfAbsent(remotePeerId, () => []).add(candidate);
     };
 
@@ -8124,6 +8151,23 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       if (mounted) {
         setState(() {});
       }
+    };
+
+    pc.onIceConnectionState = (state) {
+      _peerDebug[remotePeerId]?.iceConnection = state.toString();
+      if (mounted) setState(() {});
+    };
+    pc.onConnectionState = (state) {
+      _peerDebug[remotePeerId]?.connection = state.toString();
+      if (mounted) setState(() {});
+    };
+    pc.onSignalingState = (state) {
+      _peerDebug[remotePeerId]?.signaling = state.toString();
+      if (mounted) setState(() {});
+    };
+    pc.onIceGatheringState = (state) {
+      _peerDebug[remotePeerId]?.gathering = state.toString();
+      if (mounted) setState(() {});
     };
 
     _peerConnections[remotePeerId] = pc;
@@ -8156,7 +8200,9 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       if (type.isNotEmpty && sdp.isNotEmpty) {
         try {
           await pc.setRemoteDescription(RTCSessionDescription(sdp, type));
+          _remoteDescriptionSet[fromPeerId] = true;
           _flushCandidates(fromPeerId);
+          await _flushRemoteCandidates(fromPeerId, pc);
           if (type == "offer") {
             final answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
@@ -8182,9 +8228,15 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       final sdpMid = candidateData["sdpMid"]?.toString();
       final sdpMLineIndex = (candidateData["sdpMLineIndex"] as num?)?.toInt();
       if (candidate.isNotEmpty) {
-        await pc.addCandidate(
-          RTCIceCandidate(candidate, sdpMid, sdpMLineIndex),
-        );
+        final ice = RTCIceCandidate(candidate, sdpMid, sdpMLineIndex);
+        _remoteCandidateCount[fromPeerId] =
+            (_remoteCandidateCount[fromPeerId] ?? 0) + 1;
+        final hasRemote = _remoteDescriptionSet[fromPeerId] ?? false;
+        if (!hasRemote) {
+          _pendingRemoteCandidates.putIfAbsent(fromPeerId, () => []).add(ice);
+          return;
+        }
+        await pc.addCandidate(ice);
       }
     }
   }
@@ -8218,8 +8270,23 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     }
   }
 
+  Future<void> _flushRemoteCandidates(
+      String remotePeerId, RTCPeerConnection pc) async {
+    final candidates = _pendingRemoteCandidates.remove(remotePeerId);
+    if (candidates == null || candidates.isEmpty) return;
+    for (final candidate in candidates) {
+      if (candidate.candidate == null) continue;
+      await pc.addCandidate(candidate);
+    }
+  }
+
   Future<void> _removePeer(String peerId) async {
     _pendingCandidates.remove(peerId);
+    _pendingRemoteCandidates.remove(peerId);
+    _remoteDescriptionSet.remove(peerId);
+    _peerDebug.remove(peerId);
+    _localCandidateCount.remove(peerId);
+    _remoteCandidateCount.remove(peerId);
     final pc = _peerConnections.remove(peerId);
     await pc?.close();
     final renderer = _remoteRenderers[peerId];
@@ -8564,6 +8631,13 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                                   }),
                                 ),
             ),
+            if (_turnWarning != null)
+              Positioned(
+                left: 12,
+                right: 12,
+                top: 54,
+                child: _WarningBanner(text: _turnWarning!),
+              ),
 
             // ── Top bar ──────────────────────────────────────────────────
             Positioned(
@@ -8605,6 +8679,15 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                           ),
                         ],
                       ),
+                    ),
+                    IconButton(
+                      onPressed: () {
+                        if (!mounted) return;
+                        setState(() => _showDebug = !_showDebug);
+                      },
+                      icon: const Icon(Icons.bug_report_outlined,
+                          color: Colors.white),
+                      tooltip: "Debug",
                     ),
                     // Layout toggle
                     IconButton(
@@ -8686,6 +8769,14 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                 ),
               ),
             ),
+            if (_showDebug)
+              _MeetingDebugPanel(
+                peerId: _peerId,
+                iceServers: _iceServers,
+                peerStates: _peerDebug,
+                localCandidates: _localCandidateCount,
+                remoteCandidates: _remoteCandidateCount,
+              ),
 
             // ── Reaction bubbles ─────────────────────────────────────────
             if (_reactions.isNotEmpty)
@@ -9250,6 +9341,133 @@ class _ControlButton extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MeetingPeerDebugState {
+  String iceConnection = "unknown";
+  String connection = "unknown";
+  String signaling = "unknown";
+  String gathering = "unknown";
+}
+
+class _MeetingDebugPanel extends StatelessWidget {
+  const _MeetingDebugPanel({
+    required this.peerId,
+    required this.iceServers,
+    required this.peerStates,
+    required this.localCandidates,
+    required this.remoteCandidates,
+  });
+
+  final String peerId;
+  final List<Map<String, dynamic>> iceServers;
+  final Map<String, _MeetingPeerDebugState> peerStates;
+  final Map<String, int> localCandidates;
+  final Map<String, int> remoteCandidates;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = peerStates.entries.toList();
+    return Positioned(
+      left: 12,
+      right: 12,
+      top: 70,
+      child: Card(
+        color: Colors.black.withValues(alpha: 0.85),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: DefaultTextStyle(
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("WebRTC Debug",
+                    style: TextStyle(
+                        fontWeight: FontWeight.w700, color: Colors.white)),
+                const SizedBox(height: 6),
+                Text("Peer: $peerId"),
+                const SizedBox(height: 6),
+                Text("ICE Servers: ${iceServers.length}"),
+                const SizedBox(height: 6),
+                if (entries.isEmpty) const Text("No peers connected"),
+                for (final entry in entries) ...[
+                  const Divider(color: Colors.white24, height: 12),
+                  Text("Peer: ${entry.key}"),
+                  Text("ICE: ${entry.value.iceConnection}"),
+                  Text("Conn: ${entry.value.connection}"),
+                  Text("Signal: ${entry.value.signaling}"),
+                  Text("Gather: ${entry.value.gathering}"),
+                  Text(
+                      "Candidates L/R: ${localCandidates[entry.key] ?? 0}/${remoteCandidates[entry.key] ?? 0}"),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+bool _hasTurnServers(List<Map<String, dynamic>> servers) {
+  for (final entry in servers) {
+    final urls = entry["urls"];
+    if (urls is String) {
+      if (urls.startsWith("turn:") || urls.startsWith("turns:")) return true;
+    } else if (urls is List) {
+      for (final item in urls) {
+        final value = item.toString();
+        if (value.startsWith("turn:") || value.startsWith("turns:")) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+class _WarningBanner extends StatelessWidget {
+  const _WarningBanner({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE4A200),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 10,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.black),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

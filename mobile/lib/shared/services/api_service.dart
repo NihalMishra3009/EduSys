@@ -172,6 +172,27 @@ class ApiService {
   }
 
   Future<List<Map<String, dynamic>>> getIceServers() async {
+    final staticTurnUrls = ApiConfig.turnUrls.trim();
+    final staticTurnUser = ApiConfig.turnUsername.trim();
+    final staticTurnCredential = ApiConfig.turnCredential.trim();
+    final List<Map<String, dynamic>> staticTurn = [];
+    if (staticTurnUrls.isNotEmpty &&
+        staticTurnUser.isNotEmpty &&
+        staticTurnCredential.isNotEmpty) {
+      final urls = staticTurnUrls
+          .split(",")
+          .map((u) => u.trim())
+          .where((u) => u.isNotEmpty)
+          .toList();
+      if (urls.isNotEmpty) {
+        staticTurn.add({
+          "urls": urls,
+          "username": staticTurnUser,
+          "credential": staticTurnCredential,
+          "credentialType": "password",
+        });
+      }
+    }
     try {
       final headers = await _headers(auth: true);
       final res = await _sendWithFallback(
@@ -183,16 +204,24 @@ class ApiService {
         if (decoded is Map<String, dynamic>) {
           final list = decoded["iceServers"];
           if (list is List) {
-            return list.whereType<Map<String, dynamic>>().toList();
+            final servers = list.whereType<Map<String, dynamic>>().toList();
+            if (staticTurn.isNotEmpty) {
+              return [...staticTurn, ...servers];
+            }
+            return servers;
           }
         }
       }
     } catch (_) {}
     // Fallback: STUN only
-    return [
+    final fallback = [
       {"urls": ["stun:stun.l.google.com:19302"]},
       {"urls": ["stun:stun.cloudflare.com:3478"]},
     ];
+    if (staticTurn.isNotEmpty) {
+      return [...staticTurn, ...fallback];
+    }
+    return fallback;
   }
 
   Future<Map<String, String>> _headers({bool auth = false}) async {

@@ -132,6 +132,72 @@ class _MeetingSignalingHub:
 
 _meeting_hub = _MeetingSignalingHub()
 
+_turn_health = {
+    "status": "unknown",
+    "detail": "Not checked yet",
+    "checked_at": None,
+    "source": None,
+}
+
+
+async def _update_turn_health() -> None:
+    global _turn_health
+    turn_key_id = os.environ.get("CF_TURN_KEY_ID", "").strip()
+    turn_api_token = os.environ.get("CF_TURN_API_TOKEN", "").strip()
+    static_turn_urls = os.environ.get("TURN_URLS", "").strip()
+    static_turn_user = os.environ.get("TURN_USERNAME", "").strip()
+    static_turn_credential = os.environ.get("TURN_CREDENTIAL", "").strip()
+
+    if static_turn_urls and static_turn_user and static_turn_credential:
+        _turn_health = {
+            "status": "ok",
+            "detail": "Static TURN configured (not live-tested)",
+            "checked_at": datetime.utcnow().isoformat(),
+            "source": "static",
+        }
+        return
+
+    if not turn_key_id or not turn_api_token:
+        _turn_health = {
+            "status": "missing",
+            "detail": "TURN credentials not configured",
+            "checked_at": datetime.utcnow().isoformat(),
+            "source": "none",
+        }
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(
+                f"https://rtc.live.cloudflare.com/v1/turn/keys/{turn_key_id}/credentials/generate-ice-servers",
+                headers={
+                    "Authorization": f"Bearer {turn_api_token}",
+                    "Content-Type": "application/json",
+                },
+                json={"ttl": 300},
+            )
+        if response.status_code == 200:
+            _turn_health = {
+                "status": "ok",
+                "detail": "Cloudflare TURN credentials validated",
+                "checked_at": datetime.utcnow().isoformat(),
+                "source": "cloudflare",
+            }
+            return
+        _turn_health = {
+            "status": "error",
+            "detail": f"Cloudflare TURN check failed (status {response.status_code})",
+            "checked_at": datetime.utcnow().isoformat(),
+            "source": "cloudflare",
+        }
+    except Exception as exc:
+        _turn_health = {
+            "status": "error",
+            "detail": f"Cloudflare TURN check failed ({type(exc).__name__})",
+            "checked_at": datetime.utcnow().isoformat(),
+            "source": "cloudflare",
+        }
+
 
 class _CastChatHub:
     def __init__(self) -> None:
@@ -296,9 +362,19 @@ def seed_default_users() -> None:
         db.close()
 
 
+@app.on_event("startup")
+async def check_turn_health() -> None:
+    await _update_turn_health()
+
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "turn": _turn_health}
+
+
+@app.get("/calls/turn-health")
+async def turn_health():
+    return _turn_health
 
 
 @app.get("/calls/ice-servers")
@@ -310,32 +386,52 @@ async def get_ice_servers():
     """
     turn_key_id = os.environ.get("CF_TURN_KEY_ID", "").strip()
     turn_api_token = os.environ.get("CF_TURN_API_TOKEN", "").strip()
+    static_turn_urls = os.environ.get("TURN_URLS", "").strip()
+    static_turn_user = os.environ.get("TURN_USERNAME", "").strip()
+    static_turn_credential = os.environ.get("TURN_CREDENTIAL", "").strip()
 
     stun_only = [
         {"urls": ["stun:stun.l.google.com:19302"]},
         {"urls": ["stun:stun.cloudflare.com:3478"]},
     ]
 
-    if not turn_key_id or not turn_api_token:
+    ice_servers = []
+    if static_turn_urls and static_turn_user and static_turn_credential:
+        urls = [u.strip() for u in static_turn_urls.split(",") if u.strip()]
+        if urls:
+            ice_servers.append(
+                {
+                    "urls": urls,
+                    "username": static_turn_user,
+                    "credential": static_turn_credential,
+                    "credentialType": "password",
+                }
+            )
+
+    if turn_key_id and turn_api_token:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    f"https://rtc.live.cloudflare.com/v1/turn/keys/{turn_key_id}/credentials/generate-ice-servers",
+                    headers={
+                        "Authorization": f"Bearer {turn_api_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"ttl": 86400},
+                )
+            if response.status_code == 200:
+                data = response.json()
+                cf_servers = data.get("iceServers", [])
+                if isinstance(cf_servers, list):
+                    ice_servers.extend(cf_servers)
+        except Exception:
+            pass
+
+    if not ice_servers:
         return {"iceServers": stun_only}
 
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.post(
-                f"https://rtc.live.cloudflare.com/v1/turn/keys/{turn_key_id}/credentials/generate-ice-servers",
-                headers={
-                    "Authorization": f"Bearer {turn_api_token}",
-                    "Content-Type": "application/json",
-                },
-                json={"ttl": 86400},
-            )
-        if response.status_code == 200:
-            data = response.json()
-            return {"iceServers": data.get("iceServers", stun_only)}
-    except Exception:
-        pass
-
-    return {"iceServers": stun_only}
+    ice_servers.extend(stun_only)
+    return {"iceServers": ice_servers}
 
 
 @app.websocket("/ws/meetings/{room_id}")

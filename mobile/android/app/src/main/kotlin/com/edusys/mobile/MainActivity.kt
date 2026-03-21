@@ -6,10 +6,14 @@ import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
 import android.content.ComponentName
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.telephony.SubscriptionManager
@@ -81,6 +85,26 @@ class MainActivity : FlutterActivity() {
                     "setBackgroundReceivers" -> {
                         val enabled = call.argument<Boolean>("enabled") ?: false
                         setBackgroundReceiversEnabled(enabled)
+                        result.success(true)
+                    }
+                    "openAppSettings" -> {
+                        openAppSettings()
+                        result.success(true)
+                    }
+                    "requestIgnoreBatteryOptimizations" -> {
+                        requestIgnoreBatteryOptimizations()
+                        result.success(true)
+                    }
+                    "openBatteryOptimizationSettings" -> {
+                        openBatteryOptimizationSettings()
+                        result.success(true)
+                    }
+                    "openBluetoothSettings" -> {
+                        openBluetoothSettings()
+                        result.success(true)
+                    }
+                    "openLocationSettings" -> {
+                        openLocationSettings()
                         result.success(true)
                     }
                     else -> result.notImplemented()
@@ -207,6 +231,67 @@ class MainActivity : FlutterActivity() {
         }
         pm.setComponentEnabledSetting(watchdog, state, PackageManager.DONT_KILL_APP)
         pm.setComponentEnabledSetting(boot, state, PackageManager.DONT_KILL_APP)
+    }
+
+    private fun openAppSettings() {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Ignore
+        }
+    }
+
+    private fun requestIgnoreBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val power = getSystemService(PowerManager::class.java) ?: return
+            if (power.isIgnoringBatteryOptimizations(packageName)) return
+            val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Ignore
+        }
+    }
+
+    private fun openBatteryOptimizationSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Ignore
+        }
+    }
+
+    private fun openBluetoothSettings() {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Ignore
+        }
+    }
+
+    private fun openLocationSettings() {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Ignore
+        }
     }
 
     private fun stopAdvertising() {
