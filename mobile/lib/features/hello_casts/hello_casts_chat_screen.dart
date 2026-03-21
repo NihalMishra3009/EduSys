@@ -42,6 +42,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Timer? _syncTimer;
   int _clientMessageCounter = 0;
   String _myName = "Me";
+  List<Map<String, dynamic>> _directory = [];
+  List<Map<String, dynamic>> _members = [];
 
   String get _messagesCacheKey => "cast_messages_${widget.castId}";
   String get _alertsCacheKey => "cast_alerts_${widget.castId}";
@@ -53,6 +55,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _myName = (await _api.getSavedName()) ?? "Me";
       await _loadCachedState();
+      unawaited(_loadDirectory());
       unawaited(_loadMessages());
       unawaited(_connectWs());
       _syncTimer = Timer.periodic(const Duration(seconds: 20), (_) {
@@ -186,6 +189,124 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           .toList();
       setState(() => _scheduled = list);
       unawaited(_persistAlerts());
+    }
+  }
+
+  Future<void> _loadDirectory() async {
+    final dir = await _api.userDirectory();
+    if (!mounted) return;
+    if (dir.statusCode >= 200 && dir.statusCode < 300) {
+      setState(() {
+        _directory = (jsonDecode(dir.body) as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+      });
+    }
+  }
+
+  Future<void> _loadMembers() async {
+    final res = await _api.listCastMembers(castId: widget.castId);
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      setState(() {
+        _members = (jsonDecode(res.body) as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+      });
+    }
+  }
+
+  String _detail(String body, {String fallback = "Request failed"}) {
+    try {
+      final map = jsonDecode(body) as Map<String, dynamic>;
+      return (map["detail"] ?? fallback).toString();
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  Future<void> _addMembers() async {
+    if (widget.castType.toLowerCase() == "individual") {
+      GlassToast.show(context, "Individual cast can't add members",
+          icon: Icons.info_outline);
+      return;
+    }
+    if (_directory.isEmpty) {
+      await _loadDirectory();
+    }
+    await _loadMembers();
+    if (!mounted) return;
+    final existingIds = _members
+        .map((m) => (m["user_id"] as num?)?.toInt())
+        .whereType<int>()
+        .toSet();
+    final options = _directory
+        .where((u) => u["id"] != null)
+        .where((u) => !existingIds.contains((u["id"] as num).toInt()))
+        .toList(growable: false);
+    if (options.isEmpty) {
+      GlassToast.show(context, "No members to add",
+          icon: Icons.info_outline);
+      return;
+    }
+    final selected = <int>{};
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text("Add members"),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 320),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: options.length,
+              itemBuilder: (_, i) {
+                final u = options[i];
+                final id = (u["id"] as num?)?.toInt() ?? 0;
+                final name = u["name"]?.toString() ?? "User";
+                final isSelected = selected.contains(id);
+                return CheckboxListTile(
+                  value: isSelected,
+                  onChanged: (v) {
+                    setLocal(() {
+                      if (v == true) {
+                        selected.add(id);
+                      } else {
+                        selected.remove(id);
+                      }
+                    });
+                  },
+                  title: Text(name),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text("Cancel"),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text("Add"),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || ok != true || selected.isEmpty) return;
+    final res = await _api.addCastMembers(
+      castId: widget.castId,
+      memberIds: selected.toList(),
+    );
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      GlassToast.show(context, "Members added",
+          icon: Icons.check_circle_rounded);
+      await _loadMembers();
+    } else {
+      GlassToast.show(context, _detail(res.body),
+          icon: Icons.error_outline);
     }
   }
 
@@ -678,6 +799,11 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                 icon: Icon(Icons.videocam_rounded, color: appBarFg),
                 onPressed: () => _startCall(isVideo: true),
                 tooltip: "Video call",
+              ),
+              IconButton(
+                icon: Icon(Icons.person_add_rounded, color: appBarFg),
+                onPressed: _addMembers,
+                tooltip: "Add members",
               ),
               IconButton(
                 icon: Icon(Icons.alarm_add_rounded, color: appBarFg),
