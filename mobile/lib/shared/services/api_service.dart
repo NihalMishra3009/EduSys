@@ -1380,6 +1380,17 @@ class ApiService {
     );
   }
 
+  Future<http.Response> deleteCastMessage({
+    required int castId,
+    required int messageId,
+  }) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/$castId/messages/$messageId",
+      sender: (uri) => _sharedClient.delete(uri, headers: headers),
+    );
+  }
+
   Future<String> castsGetWsUrl(int castId, {String? peerId}) async {
     final baseUrl = await getBaseUrl();
     final token = await getToken();

@@ -46,9 +46,11 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   String _myName = "Me";
   List<Map<String, dynamic>> _directory = [];
   List<Map<String, dynamic>> _members = [];
+  final Set<String> _deletedKeys = {};
 
   String get _messagesCacheKey => "cast_messages_${widget.castId}";
   String get _alertsCacheKey => "cast_alerts_${widget.castId}";
+  String get _deletedCacheKey => "cast_deleted_${widget.castId}";
 
   @override
   void initState() {
@@ -94,15 +96,26 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Future<void> _loadCachedState() async {
     final cachedMessages = await _api.readCache(_messagesCacheKey);
     final cachedAlerts = await _api.readCache(_alertsCacheKey);
+    final cachedDeleted = await _api.readCache(_deletedCacheKey);
     if (!mounted) return;
     final messageList = _toMapList(cachedMessages);
     final alertList = _toMapList(cachedAlerts);
+    final deletedList = _toStringList(cachedDeleted);
+    if (deletedList.isNotEmpty) {
+      _deletedKeys
+        ..clear()
+        ..addAll(deletedList);
+    }
     if (messageList.isEmpty && alertList.isEmpty) {
       return;
     }
     setState(() {
       if (messageList.isNotEmpty) {
-        _messages = _sortedMessages(messageList);
+        _messages = _sortedMessages(
+          messageList
+              .where((message) => !_deletedKeys.contains(_messageKey(message)))
+              .toList(),
+        );
         _loading = false;
       }
       if (alertList.isNotEmpty) {
@@ -122,6 +135,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         .whereType<Map>()
         .map((row) => row.map((key, value) => MapEntry(key.toString(), value)))
         .toList();
+  }
+
+  List<String> _toStringList(dynamic raw) {
+    if (raw is! List) {
+      return const [];
+    }
+    return raw.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
   }
 
   List<Map<String, dynamic>> _sortedMessages(List<Map<String, dynamic>> messages) {
@@ -158,6 +178,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     await _api.saveCache(_alertsCacheKey, _scheduled);
   }
 
+  Future<void> _persistDeleted() async {
+    await _api.saveCache(_deletedCacheKey, _deletedKeys.toList());
+  }
+
   Future<void> _loadMessages({bool silent = false}) async {
     if (!silent && mounted && _messages.isEmpty) {
       setState(() => _loading = true);
@@ -178,8 +202,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           mergedMessages.add(pending);
         }
       }
+      final filtered =
+          mergedMessages.where((m) => !_deletedKeys.contains(_messageKey(m))).toList();
       setState(() {
-        _messages = _sortedMessages(mergedMessages);
+        _messages = _sortedMessages(filtered);
         _loading = false;
       });
       unawaited(_persistMessages());
@@ -451,6 +477,18 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             unawaited(_markRead());
           }
         }
+      } else if (type == "delete") {
+        final rawId = msg["message_id"];
+        final messageId = rawId is num ? rawId.toInt() : int.tryParse("$rawId");
+        if (messageId == null) return;
+        final key = "id:$messageId";
+        _deletedKeys.add(key);
+        if (!mounted) return;
+        setState(() {
+          _messages = _messages.where((m) => _messageKey(m) != key).toList();
+        });
+        unawaited(_persistDeleted());
+        unawaited(_persistMessages());
       }
     } catch (_) {}
   }
@@ -470,6 +508,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   }
 
   void _upsertMessage(Map<String, dynamic> incoming) {
+    if (_deletedKeys.contains(_messageKey(incoming))) {
+      return;
+    }
     final clientId = incoming["client_id"]?.toString() ?? "";
     final incomingId = (incoming["id"] as num?)?.toInt();
     final indexById = incomingId == null
@@ -501,6 +542,87 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     });
     unawaited(_persistMessages());
     _scrollToBottom();
+  }
+
+  String _messageKey(Map<String, dynamic> message) {
+    final id = (message["id"] as num?)?.toInt();
+    if (id != null) {
+      return "id:$id";
+    }
+    final clientId = message["client_id"]?.toString();
+    if (clientId != null && clientId.isNotEmpty) {
+      return "cid:$clientId";
+    }
+    final createdAt = message["created_at"]?.toString() ?? "";
+    final body = message["message"]?.toString() ?? "";
+    return "raw:$createdAt:$body";
+  }
+
+  Future<void> _deleteLocal(Map<String, dynamic> message) async {
+    final key = _messageKey(message);
+    _deletedKeys.add(key);
+    setState(() {
+      _messages = _messages.where((m) => _messageKey(m) != key).toList();
+    });
+    await _persistDeleted();
+    unawaited(_persistMessages());
+  }
+
+  Future<void> _deleteForEveryone(Map<String, dynamic> message) async {
+    final messageId = (message["id"] as num?)?.toInt();
+    if (messageId == null) {
+      GlassToast.show(context, "Message not synced yet",
+          icon: Icons.info_outline);
+      await _deleteLocal(message);
+      return;
+    }
+    await _deleteLocal(message);
+    if (_ws != null) {
+      try {
+        _ws!.add(jsonEncode({"type": "delete", "message_id": messageId}));
+        return;
+      } catch (_) {}
+    }
+    await _api.deleteCastMessage(castId: widget.castId, messageId: messageId);
+  }
+
+  Future<void> _showMessageActions(Map<String, dynamic> message, bool isMe) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded),
+                title: const Text("Remove from my chat"),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _deleteLocal(message);
+                },
+              ),
+              if (isMe)
+                ListTile(
+                  leading: const Icon(Icons.delete_sweep_rounded),
+                  title: const Text("Remove for everyone"),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await _deleteForEveryone(message);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _markRead() async {
@@ -881,6 +1003,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                           msg: _messages[i],
                           isMe: _isMe(_messages[i]),
                           decode: _decodeMessage,
+                          onLongPress: () =>
+                              _showMessageActions(_messages[i], _isMe(_messages[i])),
                         ),
                       ),
               ),
@@ -953,10 +1077,12 @@ class _MessageBubble extends StatelessWidget {
     required this.msg,
     required this.isMe,
     required this.decode,
+    required this.onLongPress,
   });
   final Map<String, dynamic> msg;
   final bool isMe;
   final Map<String, dynamic> Function(String raw) decode;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -991,105 +1117,108 @@ class _MessageBubble extends StatelessWidget {
           left: isMe ? 60 : 0, right: isMe ? 0 : 60, bottom: 4),
       child: Align(
         alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 300),
-          decoration: BoxDecoration(color: bubbleBg, borderRadius: radius),
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (!isMe && senderName != null && senderName.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(senderName,
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: Theme.of(context).colorScheme.primary)),
-                ),
-              if (isAlert) ...[
-                Row(
-                  children: [
-                    const Icon(Icons.alarm_rounded,
-                        size: 16, color: Colors.orange),
-                    const SizedBox(width: 6),
-                    const Text("Scheduled alert",
+        child: GestureDetector(
+          onLongPress: onLongPress,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 300),
+            decoration: BoxDecoration(color: bubbleBg, borderRadius: radius),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!isMe && senderName != null && senderName.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(senderName,
                         style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.orange,
-                            fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const SizedBox(height: 4),
-              ],
-              if (type == "VOICE_NOTE")
-                Row(
-                  children: [
-                    const Icon(Icons.mic_rounded,
-                        size: 20, color: Color(0xFF25D366)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Container(
-                        height: 3,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.withValues(alpha: 0.4),
-                          borderRadius: BorderRadius.circular(2),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Theme.of(context).colorScheme.primary)),
+                  ),
+                if (isAlert) ...[
+                  Row(
+                    children: [
+                      const Icon(Icons.alarm_rounded,
+                          size: 16, color: Colors.orange),
+                      const SizedBox(width: 6),
+                      const Text("Scheduled alert",
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.orange,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                if (type == "VOICE_NOTE")
+                  Row(
+                    children: [
+                      const Icon(Icons.mic_rounded,
+                          size: 20, color: Color(0xFF25D366)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Container(
+                          height: 3,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withValues(alpha: 0.4),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      Text("${decoded["duration_secs"] ?? 0}s",
+                          style: const TextStyle(fontSize: 12)),
+                    ],
+                  )
+                else if (type == "FILE" || type == "IMAGE")
+                  Row(
+                    children: [
+                      const Icon(Icons.attach_file_rounded, size: 18),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(attachName ?? "File",
+                            style: const TextStyle(fontSize: 13),
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  )
+                else if (body != null && body.isNotEmpty)
+                  Text(
+                    body,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: isMe ? Colors.white : Colors.black87,
                     ),
-                    const SizedBox(width: 8),
-                    Text("${decoded["duration_secs"] ?? 0}s",
-                        style: const TextStyle(fontSize: 12)),
-                  ],
-                )
-              else if (type == "FILE" || type == "IMAGE")
-                Row(
-                  children: [
-                    const Icon(Icons.attach_file_rounded, size: 18),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(attachName ?? "File",
-                          style: const TextStyle(fontSize: 13),
-                          overflow: TextOverflow.ellipsis),
-                    ),
-                  ],
-                )
-              else if (body != null && body.isNotEmpty)
-                Text(
-                  body,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: isMe ? Colors.white : Colors.black87,
                   ),
-                ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text(timeStr,
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey.withValues(alpha: 0.8))),
-                  if (isMe) ...[
-                    const SizedBox(width: 4),
-                    Icon(
-                      isFailed
-                          ? Icons.error_outline_rounded
-                          : isPending
-                              ? Icons.access_time_rounded
-                              : Icons.done_all_rounded,
-                      size: 14,
-                      color: isFailed
-                          ? Colors.redAccent
-                          : isPending
-                              ? Colors.grey
-                              : const Color(0xFF53BDEB),
-                    ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(timeStr,
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.withValues(alpha: 0.8))),
+                    if (isMe) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        isFailed
+                            ? Icons.error_outline_rounded
+                            : isPending
+                                ? Icons.access_time_rounded
+                                : Icons.done_all_rounded,
+                        size: 14,
+                        color: isFailed
+                            ? Colors.redAccent
+                            : isPending
+                                ? Colors.grey
+                                : const Color(0xFF53BDEB),
+                      ),
+                    ],
                   ],
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -276,6 +276,28 @@ def send_message(
     )
 
 
+@router.delete("/{cast_id}/messages/{message_id}")
+def delete_message(
+    cast_id: int,
+    message_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    member = _ensure_member(db, cast_id, current_user.id)
+    message = (
+        db.query(CastMessage)
+        .filter(CastMessage.id == message_id, CastMessage.cast_id == cast_id)
+        .first()
+    )
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if message.sender_id != current_user.id and member.role != CastMemberRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Not allowed to delete message")
+    db.delete(message)
+    db.commit()
+    return {"ok": True, "message_id": message_id}
+
+
 @router.post("/{cast_id}/read")
 def mark_read(
     cast_id: int,

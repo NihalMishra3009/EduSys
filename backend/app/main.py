@@ -444,6 +444,32 @@ def _mark_cast_read(cast_id: int, user_id: int) -> None:
         db.close()
 
 
+def _delete_cast_message(cast_id: int, message_id: int, user_id: int) -> bool:
+    db = SessionLocal()
+    try:
+        member = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == cast_id, CastMember.user_id == user_id)
+            .first()
+        )
+        if member is None:
+            return False
+        message = (
+            db.query(CastMessage)
+            .filter(CastMessage.id == message_id, CastMessage.cast_id == cast_id)
+            .first()
+        )
+        if message is None:
+            return False
+        if message.sender_id != user_id and member.role != CastMemberRole.ADMIN:
+            return False
+        db.delete(message)
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def seed_default_users() -> None:
     Base.metadata.create_all(bind=engine)
@@ -889,6 +915,23 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
                         "message": stored,
                     },
                 )
+            elif msg_type == "delete":
+                raw_id = payload.get("message_id")
+                try:
+                    message_id = int(raw_id)
+                except (TypeError, ValueError):
+                    continue
+                removed = await asyncio.to_thread(
+                    _delete_cast_message, cast_id, message_id, user.id
+                )
+                if removed:
+                    await _cast_hub.broadcast(
+                        str(cast_id),
+                        {
+                            "type": "delete",
+                            "message_id": message_id,
+                        },
+                    )
             elif msg_type == "read":
                 await asyncio.to_thread(_mark_cast_read, cast_id, user.id)
             elif msg_type == "call_invite":
