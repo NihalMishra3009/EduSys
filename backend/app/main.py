@@ -419,7 +419,7 @@ async def get_ice_servers():
                     },
                     json={"ttl": 86400},
                 )
-            if response.status_code == 200:
+            if response.status_code in (200, 201):
                 data = response.json()
                 cf_servers = data.get("iceServers", [])
                 if isinstance(cf_servers, list):
