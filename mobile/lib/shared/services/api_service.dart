@@ -1534,6 +1534,14 @@ class ApiService {
     return _sendWithFallback(path: "/learned/subjects/$subjectId/syllabus", sender: (uri) => http.get(uri, headers: headers));
   }
 
+  Future<http.Response> learnedLeaderboard(int subjectId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/learned/subjects/$subjectId/leaderboard",
+      sender: (uri) => http.get(uri, headers: headers),
+    );
+  }
+
   Future<http.Response> learnedAddSyllabusUnit(int subjectId, Map<String, dynamic> payload) async {
     final headers = await _headers(auth: true);
     return _sendWithFallback(path: "/learned/subjects/$subjectId/syllabus", sender: (uri) => http.post(uri, headers: headers, body: jsonEncode(payload)));

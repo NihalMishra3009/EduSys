@@ -110,3 +110,11 @@ class MemberOut(BaseModel):
     email: str
     role: str
     joined_at: datetime
+
+
+class LeaderboardEntry(BaseModel):
+    student_id: int
+    name: str
+    email: str
+    total_marks: int
+    submissions: int

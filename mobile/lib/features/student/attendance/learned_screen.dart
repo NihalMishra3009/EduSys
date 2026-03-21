@@ -292,18 +292,24 @@ class _SubjectScreenState extends State<_SubjectScreen> with SingleTickerProvide
   List<Map<String, dynamic>> _posts = [];
   List<Map<String, dynamic>> _members = [];
   List<Map<String, dynamic>> _syllabus = [];
+  List<Map<String, dynamic>> _leaderboard = [];
   bool _loading = true;
+  Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 5, vsync: this);
     _load();
+    _pollTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      _refreshRealtime();
+    });
   }
 
   @override
   void dispose() {
     _tabs.dispose();
+    _pollTimer?.cancel();
     super.dispose();
   }
 
@@ -314,6 +320,7 @@ class _SubjectScreenState extends State<_SubjectScreen> with SingleTickerProvide
         _api.learnedListPosts(widget.subjectId),
         _api.learnedListMembers(widget.subjectId),
         _api.learnedListSyllabus(widget.subjectId),
+        _api.learnedLeaderboard(widget.subjectId),
       ]);
       if (!mounted) return;
       setState(() {
@@ -326,11 +333,27 @@ class _SubjectScreenState extends State<_SubjectScreen> with SingleTickerProvide
         if (results[2].statusCode >= 200 && results[2].statusCode < 300) {
           _syllabus = (jsonDecode(results[2].body) as List<dynamic>).whereType<Map<String, dynamic>>().toList();
         }
+        if (results[3].statusCode >= 200 && results[3].statusCode < 300) {
+          _leaderboard = (jsonDecode(results[3].body) as List<dynamic>).whereType<Map<String, dynamic>>().toList();
+        }
         _loading = false;
       });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _refreshRealtime() async {
+    try {
+      final res = await _api.learnedListPosts(widget.subjectId);
+      if (!mounted) return;
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final next = (jsonDecode(res.body) as List<dynamic>).whereType<Map<String, dynamic>>().toList();
+        setState(() {
+          _posts = next;
+        });
+      }
+    } catch (_) {}
   }
 
   List<Map<String, dynamic>> get _allPosts => _posts;
@@ -381,7 +404,7 @@ class _SubjectScreenState extends State<_SubjectScreen> with SingleTickerProvide
                 _StreamTab(posts: _allPosts, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: _load, api: _api),
                 _ClassworkTab(posts: _materialPosts, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: _load, api: _api),
                 _AssignmentsTab(posts: _assignmentPosts, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: _load, api: _api),
-                _PeopleTab(members: _members),
+                _PeopleTab(members: _members, leaderboard: _leaderboard),
                 _SyllabusTab(units: _syllabus, subjectId: widget.subjectId, isProfessor: widget.isProfessor, onRefresh: _load, api: _api),
               ],
             ),
@@ -711,8 +734,9 @@ class _AssignmentsTabState extends State<_AssignmentsTab> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PeopleTab extends StatelessWidget {
-  const _PeopleTab({required this.members});
+  const _PeopleTab({required this.members, required this.leaderboard});
   final List<Map<String, dynamic>> members;
+  final List<Map<String, dynamic>> leaderboard;
 
   @override
   Widget build(BuildContext context) {
@@ -721,6 +745,39 @@ class _PeopleTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 40),
       children: [
+        if (leaderboard.isNotEmpty) ...[
+          const SectionTitle("Top Students"),
+          const SizedBox(height: 8),
+          ...leaderboard.map((row) {
+            final name = (row["name"] ?? "Student").toString();
+            final total = (row["total_marks"] ?? 0).toString();
+            final submissions = (row["submissions"] ?? 0).toString();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: AppCard(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.18),
+                    child: Text(name[0].toUpperCase(),
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                  title: Text(name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text("$submissions submissions"),
+                  trailing: Text("$total marks",
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 14),
+        ],
         if (professors.isNotEmpty) ...[
           const SectionTitle("Teachers"),
           const SizedBox(height: 8),

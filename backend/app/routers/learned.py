@@ -3,6 +3,7 @@ import string
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User, UserRole
@@ -14,6 +15,7 @@ from app.schemas.learned import (
     SubjectCreate, SubjectOut, JoinSubjectPayload,
     PostCreate, PostOut, SubmissionCreate, SubmissionOut,
     GradePayload, SyllabusUnitCreate, SyllabusUnitOut, MemberOut,
+    LeaderboardEntry,
 )
 
 router = APIRouter()
@@ -182,6 +184,41 @@ def list_members(
                 role=m.role, joined_at=m.joined_at,
             ))
     return result
+
+
+@router.get("/subjects/{subject_id}/leaderboard", response_model=list[LeaderboardEntry])
+def subject_leaderboard(
+    subject_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_member(db, subject_id, current_user.id)
+    rows = (
+        db.query(
+            LearnedSubmission.student_id.label("student_id"),
+            func.coalesce(func.sum(LearnedSubmission.marks), 0).label("total_marks"),
+            func.count(LearnedSubmission.id).label("submissions"),
+        )
+        .join(LearnedPost, LearnedPost.id == LearnedSubmission.post_id)
+        .filter(LearnedPost.subject_id == subject_id)
+        .group_by(LearnedSubmission.student_id)
+        .order_by(func.coalesce(func.sum(LearnedSubmission.marks), 0).desc())
+        .limit(5)
+        .all()
+    )
+    results: list[LeaderboardEntry] = []
+    for r in rows:
+        student = db.get(User, r.student_id)
+        results.append(
+            LeaderboardEntry(
+                student_id=r.student_id,
+                name=student.name if student else "Student",
+                email=student.email if student else "",
+                total_marks=int(r.total_marks or 0),
+                submissions=int(r.submissions or 0),
+            )
+        )
+    return results
 
 
 # ── Posts ─────────────────────────────────────────────────────────────────────
