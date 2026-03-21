@@ -8,7 +8,6 @@ import "package:edusys_mobile/core/animations/app_transitions.dart";
 import "package:edusys_mobile/core/constants/app_colors.dart";
 import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:edusys_mobile/core/utils/time_format.dart";
-import "package:edusys_mobile/config/api_config.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/providers/theme_provider.dart";
 import "package:edusys_mobile/features/admin/dashboard/admin_dashboard_screen.dart";
@@ -109,6 +108,7 @@ class _AppShellState extends State<AppShell> {
     if (!mounted) {
       return;
     }
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -4239,6 +4239,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
     final selectedClasses = <int>{};
     final selectedStudents = <int>{};
     int? selectedSpaceId;
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -4347,6 +4348,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                 }
               } catch (_) {}
             } else {
+              if (!context.mounted) return;
               GlassToast.show(
                 context,
                 extractDetail(res.body, "Unable to start lecture."),
@@ -4388,15 +4390,19 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                         final id = (space["id"] as num?)?.toInt();
                         final name =
                             (space["name"] ?? "Space #$id").toString();
-                        return RadioListTile<int>(
+                        final isSelected = id != null && selectedSpaceId == id;
+                        return ListTile(
                           dense: true,
-                          value: id ?? -1,
-                          groupValue: selectedSpaceId,
-                          onChanged: id == null
+                          enabled: id != null,
+                          contentPadding: EdgeInsets.zero,
+                          onTap: id == null
                               ? null
-                              : (value) => setSheetState(
-                                  () => selectedSpaceId = value,
-                                ),
+                              : () => setSheetState(() => selectedSpaceId = id),
+                          leading: Icon(
+                            isSelected
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_unchecked,
+                          ),
                           title: Text(name),
                         );
                       }),
@@ -5144,9 +5150,11 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                             "classes": selectedClasses.toList(),
                             "started_count": startedCount,
                           };
+                          if (!context.mounted) return;
                           Navigator.of(context).pop(true);
                           return;
                         }
+                        if (!context.mounted) return;
                         GlassToast.show(
                           context,
                           "Unable to start selected lectures.",
@@ -7953,6 +7961,7 @@ class _InAppMeetingScreen extends StatefulWidget {
 class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final Map<String, RTCVideoRenderer> _remoteRenderers = {};
+  final Map<String, MediaStream> _remoteMediaStreams = {};
   final Map<String, RTCPeerConnection> _peerConnections = {};
   final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
   final Map<String, List<RTCIceCandidate>> _pendingRemoteCandidates = {};
@@ -8151,19 +8160,15 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     };
 
     pc.onTrack = (event) async {
-      if (event.streams.isEmpty) {
+      final stream = await _resolveRemoteStream(remotePeerId, event);
+      if (stream == null) {
         return;
       }
-      RTCVideoRenderer renderer =
-          _remoteRenderers[remotePeerId] ?? RTCVideoRenderer();
-      if (!_remoteRenderers.containsKey(remotePeerId)) {
-        await renderer.initialize();
-        _remoteRenderers[remotePeerId] = renderer;
-      }
-      renderer.srcObject = event.streams.first;
-      if (mounted) {
-        setState(() {});
-      }
+      await _attachRemoteStream(remotePeerId, stream);
+    };
+
+    pc.onAddStream = (stream) async {
+      await _attachRemoteStream(remotePeerId, stream);
     };
 
     pc.onIceConnectionState = (state) {
@@ -8303,17 +8308,52 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     final pc = _peerConnections.remove(peerId);
     await pc?.close();
     final renderer = _remoteRenderers[peerId];
+    final stream = _remoteMediaStreams.remove(peerId);
     if (mounted) {
       setState(() {
         _remoteRenderers.remove(peerId);
       });
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         await renderer?.dispose();
+        await stream?.dispose();
       });
     } else {
       await renderer?.dispose();
+      await stream?.dispose();
       _remoteRenderers.remove(peerId);
     }
+  }
+
+  Future<void> _attachRemoteStream(
+      String remotePeerId, MediaStream stream) async {
+    RTCVideoRenderer renderer =
+        _remoteRenderers[remotePeerId] ?? RTCVideoRenderer();
+    if (!_remoteRenderers.containsKey(remotePeerId)) {
+      await renderer.initialize();
+      _remoteRenderers[remotePeerId] = renderer;
+    }
+    _remoteMediaStreams[remotePeerId] = stream;
+    renderer.srcObject = stream;
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<MediaStream?> _resolveRemoteStream(
+      String remotePeerId, RTCTrackEvent event) async {
+    if (event.streams.isNotEmpty) {
+      return event.streams.first;
+    }
+    final track = event.track;
+    final existing = _remoteMediaStreams[remotePeerId];
+    if (existing != null) {
+      existing.addTrack(track);
+      return existing;
+    }
+    final stream = await createLocalMediaStream("remote-$remotePeerId");
+    stream.addTrack(track);
+    _remoteMediaStreams[remotePeerId] = stream;
+    return stream;
   }
 
   void _handleSocketMessage(dynamic raw) {
@@ -9257,40 +9297,6 @@ class _MeetingParticipant {
   final String role;
   final bool isHost;
   final bool isLocal;
-}
-
-class _MeetingStateChip extends StatelessWidget {
-  const _MeetingStateChip({
-    required this.icon,
-    required this.label,
-  });
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Color.alphaBlend(
-          scheme.primary.withValues(alpha: 0.14),
-          scheme.surface,
-        ),
-        borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: scheme.onSurface.withValues(alpha: 0.10)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: scheme.primary),
-          const SizedBox(width: 6),
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-        ],
-      ),
-    );
-  }
 }
 
 // Reaction bubble data

@@ -1,5 +1,12 @@
-﻿from pydantic import Field
+from pathlib import Path
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_CONFIG_DIR = Path(__file__).resolve().parent
+_BACKEND_DIR = _CONFIG_DIR.parent.parent
+_REPO_ROOT = _BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
@@ -17,13 +24,17 @@ class Settings(BaseSettings):
     device_binding_enabled: bool = Field(default=False, alias="DEVICE_BINDING_ENABLED")
 
     model_config = SettingsConfigDict(
-        # Only load a real local .env file. Production should rely on injected
-        # environment variables and must not silently fall back to example values.
-        env_file=(".env",),
+        # Resolve env files relative to the codebase so local runs work from
+        # either the repo root or backend/ while production still prefers
+        # injected environment values.
+        env_file=(
+            str(_BACKEND_DIR / ".env"),
+            str(_REPO_ROOT / ".env"),
+            ".env",
+        ),
         case_sensitive=False,
         extra="ignore",
     )
 
 
 settings = Settings()
-

@@ -2,7 +2,6 @@ import "dart:async";
 import "dart:convert";
 import "dart:io";
 
-import "package:edusys_mobile/config/api_config.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:flutter/material.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart";
@@ -68,6 +67,7 @@ class HelloCastsCallScreen extends StatefulWidget {
 class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final Map<String, RTCVideoRenderer> _remoteRenderers = {};
+  final Map<String, MediaStream> _remoteMediaStreams = {};
   final Map<String, RTCPeerConnection> _peerConnections = {};
   final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
   final Map<String, List<RTCIceCandidate>> _pendingRemoteCandidates = {};
@@ -104,7 +104,11 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
     for (final renderer in _remoteRenderers.values) {
       renderer.dispose();
     }
+    for (final stream in _remoteMediaStreams.values) {
+      stream.dispose();
+    }
     _remoteRenderers.clear();
+    _remoteMediaStreams.clear();
     _peerConnections.clear();
     _localStream?.dispose();
     _localRenderer.dispose();
@@ -251,19 +255,15 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
     };
 
     pc.onTrack = (event) async {
-      if (event.streams.isEmpty) {
+      final stream = await _resolveRemoteStream(remotePeerId, event);
+      if (stream == null) {
         return;
       }
-      RTCVideoRenderer renderer =
-          _remoteRenderers[remotePeerId] ?? RTCVideoRenderer();
-      if (!_remoteRenderers.containsKey(remotePeerId)) {
-        await renderer.initialize();
-        _remoteRenderers[remotePeerId] = renderer;
-      }
-      renderer.srcObject = event.streams.first;
-      if (mounted) {
-        setState(() {});
-      }
+      await _attachRemoteStream(remotePeerId, stream);
+    };
+
+    pc.onAddStream = (stream) async {
+      await _attachRemoteStream(remotePeerId, stream);
     };
 
     pc.onIceConnectionState = (state) {
@@ -403,17 +403,52 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
     final pc = _peerConnections.remove(peerId);
     await pc?.close();
     final renderer = _remoteRenderers[peerId];
+    final stream = _remoteMediaStreams.remove(peerId);
     if (mounted) {
       setState(() {
         _remoteRenderers.remove(peerId);
       });
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         await renderer?.dispose();
+        await stream?.dispose();
       });
     } else {
       await renderer?.dispose();
+      await stream?.dispose();
       _remoteRenderers.remove(peerId);
     }
+  }
+
+  Future<void> _attachRemoteStream(
+      String remotePeerId, MediaStream stream) async {
+    RTCVideoRenderer renderer =
+        _remoteRenderers[remotePeerId] ?? RTCVideoRenderer();
+    if (!_remoteRenderers.containsKey(remotePeerId)) {
+      await renderer.initialize();
+      _remoteRenderers[remotePeerId] = renderer;
+    }
+    _remoteMediaStreams[remotePeerId] = stream;
+    renderer.srcObject = stream;
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<MediaStream?> _resolveRemoteStream(
+      String remotePeerId, RTCTrackEvent event) async {
+    if (event.streams.isNotEmpty) {
+      return event.streams.first;
+    }
+    final track = event.track;
+    final existing = _remoteMediaStreams[remotePeerId];
+    if (existing != null) {
+      existing.addTrack(track);
+      return existing;
+    }
+    final stream = await createLocalMediaStream("remote-$remotePeerId");
+    stream.addTrack(track);
+    _remoteMediaStreams[remotePeerId] = stream;
+    return stream;
   }
 
   void _handleSocketMessage(dynamic raw) {

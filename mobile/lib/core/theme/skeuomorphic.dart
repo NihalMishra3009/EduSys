@@ -8,8 +8,8 @@ class SkeuoDecor {
     required bool dark,
     BorderRadius borderRadius = const BorderRadius.all(Radius.circular(18)),
   }) {
-    final useLightPrimary = !dark && base.value == AppColors.lightPrimary.value;
-    final useDarkPrimary = dark && base.value == AppColors.darkPrimary.value;
+    final useLightPrimary = !dark && base.toARGB32() == AppColors.lightPrimary.toARGB32();
+    final useDarkPrimary = dark && base.toARGB32() == AppColors.darkPrimary.toARGB32();
     final lowEnd = PerfConfig.lowEndGlobal;
     final topTint = useLightPrimary
         ? AppColors.lightPrimary

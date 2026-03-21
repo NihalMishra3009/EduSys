@@ -416,7 +416,7 @@ class SmartAttendanceService {
 
   void _startForegroundMotionListener() {
     CrashLogService.log("ACCEL", "Starting foreground listener");
-    _accelSub ??= SensorsPlatform.instance.accelerometerEvents.listen(
+    _accelSub ??= accelerometerEventStream().listen(
       (event) {
         final last = _lastAccel;
         if (last != null) {
@@ -1005,7 +1005,7 @@ class _BackgroundSensorState {
 
   static void _trySubscribe(ServiceInstance service, {required int attempt}) {
     try {
-      SensorsPlatform.instance.accelerometerEvents.listen(
+      accelerometerEventStream().listen(
         (event) {
           final last = _last;
           if (last != null) {

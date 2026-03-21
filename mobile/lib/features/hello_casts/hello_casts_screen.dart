@@ -162,10 +162,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                       (inv["id"] as num?)?.toInt() ?? 0,
                                   action: "ACCEPT",
                                 );
-                                if (mounted) {
-                                  Navigator.pop(ctx);
-                                  _loadData();
-                                }
+                                if (!mounted || !ctx.mounted) return;
+                                Navigator.pop(ctx);
+                                _loadData();
                               },
                               child: const Text("Accept",
                                   style: TextStyle(color: Colors.green)),
@@ -177,10 +176,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                       (inv["id"] as num?)?.toInt() ?? 0,
                                   action: "REJECT",
                                 );
-                                if (mounted) {
-                                  Navigator.pop(ctx);
-                                  _loadData();
-                                }
+                                if (!mounted || !ctx.mounted) return;
+                                Navigator.pop(ctx);
+                                _loadData();
                               },
                               child: const Text("Decline",
                                   style: TextStyle(color: Colors.red)),
@@ -252,6 +250,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     if (_directory.isEmpty) {
       await _loadData();
     }
+    if (!mounted) return;
     final nameCtrl = TextEditingController();
     final selected = <int>{};
     final isIndividual = type.toLowerCase() == "individual";
@@ -331,6 +330,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       ),
     );
 
+    if (!mounted) return;
     if (ok != true) return;
     final name = nameCtrl.text.trim();
     if (name.isEmpty) {
@@ -346,6 +346,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       castType: type,
       memberIds: selected.toList(),
     );
+    if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
       GlassToast.show(context, "Cast created", icon: Icons.check_circle_rounded);
       _loadData();
@@ -375,7 +376,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<int>(
-                  value: castId.value,
+                  initialValue: castId.value,
                   decoration: const InputDecoration(labelText: "Cast"),
                   items: _casts.map((c) {
                     return DropdownMenuItem<int>(
@@ -405,11 +406,13 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                       lastDate: DateTime(2100),
                     );
                     if (d == null) return;
+                    if (!ctx.mounted) return;
                     final t = await showTimePicker(
                       context: ctx,
                       initialTime: TimeOfDay.now(),
                     );
                     if (t == null) return;
+                    if (!ctx.mounted) return;
                     setLocal(() {
                       scheduleAt = DateTime(d.year, d.month, d.day, t.hour, t.minute);
                     });
@@ -421,7 +424,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
-                  value: repeat,
+                  initialValue: repeat,
                   decoration: const InputDecoration(labelText: "Repeat"),
                   items: const [
                     "ONCE",
@@ -442,6 +445,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       ),
     );
 
+    if (!mounted) return;
     if (ok != true || scheduleAt == null || castId.value == null) return;
 
     final intervalMinutes = switch (repeat) {
@@ -459,6 +463,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       intervalMinutes: intervalMinutes,
       active: true,
     );
+    if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
       GlassToast.show(context, "Alert scheduled", icon: Icons.check_circle_rounded);
       _loadData();

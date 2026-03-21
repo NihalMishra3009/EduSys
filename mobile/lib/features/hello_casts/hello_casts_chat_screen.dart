@@ -236,11 +236,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
                     lastDate: DateTime(2100),
                   );
                   if (d == null) return;
+                  if (!ctx.mounted) return;
                   final t = await showTimePicker(
                     context: ctx,
                     initialTime: TimeOfDay.now(),
                   );
                   if (t == null) return;
+                  if (!ctx.mounted) return;
                   setLocal(() => scheduledAt =
                       DateTime(d.year, d.month, d.day, t.hour, t.minute));
                 },
@@ -251,7 +253,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                value: repeat,
+                initialValue: repeat,
                 decoration: const InputDecoration(labelText: "Repeat"),
                 items: const ["ONCE", "EVERY_2H", "DAILY", "WEEKLY"]
                     .map((r) => DropdownMenuItem(value: r, child: Text(r)))
@@ -320,6 +322,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
     if (result == null || result.files.isEmpty) return;
     final path = result.files.single.path;
     if (path == null) return;
+    if (!mounted) return;
     GlassToast.show(context, "Uploading...", icon: Icons.upload_rounded);
     final res = await _api.uploadAttachment(filePath: path, purpose: "cast");
     if (!mounted) return;
