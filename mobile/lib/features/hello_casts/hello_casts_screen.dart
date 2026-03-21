@@ -104,6 +104,33 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         .toList();
   }
 
+  String _formatLastMessage(Map<String, dynamic> cast) {
+    final raw = cast["last_message"]?.toString() ?? "";
+    if (raw.isEmpty) return "Tap to open";
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        final type = decoded["type"]?.toString() ?? "";
+        if (type == "FILE" || type == "IMAGE") {
+          final name = decoded["attachment_name"]?.toString() ?? "File";
+          return "File: $name";
+        }
+        if (type == "VOICE_NOTE") {
+          final secs = decoded["duration_secs"]?.toString() ?? "0";
+          return "Voice note ($secs s)";
+        }
+        if (type == "ALERT") {
+          return "Alert: ${decoded["body"] ?? ""}".trim();
+        }
+        final body = decoded["body"]?.toString();
+        if (body != null && body.isNotEmpty) {
+          return body;
+        }
+      }
+    } catch (_) {}
+    return raw;
+  }
+
   Future<void> _showInvites() async {
     if (_invites.isEmpty) {
       GlassToast.show(context, "No pending invites",
@@ -520,134 +547,143 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         onPressed: _showNewCastMenu,
         child: const Icon(Icons.add_rounded, color: Colors.white),
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadData,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          children: [
-            const HelloCastsHeader(
-              title: "Casts",
-              subtitle: "WhatsApp-style casts with alerts, calls & approvals",
-            ),
-            const SizedBox(height: 12),
-            HelloCastsQuickActions(
-              onCreateCast: _showNewCastMenu,
-              onScheduleAlert: _scheduleAlert,
-              onStartCall: () {
-                if (_casts.isEmpty) {
-                  GlassToast.show(context, "Create a cast first", icon: Icons.info_outline);
-                  return;
-                }
-                _startCallFromList(_casts.first, isVideo: false);
-              },
-            ),
-            const SizedBox(height: 12),
-            _TabBar(
-              tabs: _tabs,
-              index: _tabIndex,
-              onChanged: (i) => setState(() => _tabIndex = i),
-            ),
-            const SizedBox(height: 10),
-            if (_invites.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _InviteBanner(
-                  count: _invites.length,
-                  onTap: _showInvites,
-                ),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _loadData,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            children: [
+              const HelloCastsHeader(
+                title: "Casts",
+                subtitle: "WhatsApp-style casts with alerts, calls & approvals",
               ),
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.only(top: 30),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (tab == "Chats")
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _FilterBar(
-                    filters: _filters,
-                    current: _chatFilter,
-                    onChanged: (v) => setState(() => _chatFilter = v),
+              const SizedBox(height: 12),
+              HelloCastsQuickActions(
+                onCreateCast: _showNewCastMenu,
+                onScheduleAlert: _scheduleAlert,
+                onStartCall: () {
+                  if (_casts.isEmpty) {
+                    GlassToast.show(context, "Create a cast first",
+                        icon: Icons.info_outline);
+                    return;
+                  }
+                  _startCallFromList(_casts.first, isVideo: false);
+                },
+              ),
+              const SizedBox(height: 12),
+              _TabBar(
+                tabs: _tabs,
+                index: _tabIndex,
+                onChanged: (i) => setState(() => _tabIndex = i),
+              ),
+              const SizedBox(height: 10),
+              if (_invites.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _InviteBanner(
+                    count: _invites.length,
+                    onTap: _showInvites,
                   ),
-                  const SizedBox(height: 10),
-                  if (chats.isEmpty)
-                    const _EmptyState(message: "No casts yet")
-                  else
-                    ...chats.map((c) => _CastTile(
-                          title: c["name"]?.toString() ?? "Cast",
-                          subtitle: c["last_message"]?.toString() ?? "Tap to open",
-                          trailing: c["unread_count"] != null &&
-                                  (c["unread_count"] as num).toInt() > 0
-                              ? _UnreadBadge(count: (c["unread_count"] as num).toInt())
-                              : null,
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => HelloCastsChatScreen(
-                                  castId: (c["id"] as num).toInt(),
-                                  title: c["name"]?.toString() ?? "Cast",
-                                  castType: c["cast_type"]?.toString() ?? "Group",
-                                ),
-                              ),
-                            );
-                          },
-                        )),
-                ],
-              )
-            else if (tab == "Communities")
-              Column(
-                children: communities.isEmpty
-                    ? [const _EmptyState(message: "No communities yet")]
-                    : communities
-                        .map((c) => _CastTile(
-                              title: c["name"]?.toString() ?? "Community",
-                              subtitle: "Community cast",
-                              trailing: const Icon(Icons.chevron_right_rounded),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => HelloCastsChatScreen(
-                                      castId: (c["id"] as num).toInt(),
-                                      title: c["name"]?.toString() ?? "Community",
-                                      castType: c["cast_type"]?.toString() ?? "Community",
-                                    ),
+                ),
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.only(top: 30),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (tab == "Chats")
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _FilterBar(
+                      filters: _filters,
+                      current: _chatFilter,
+                      onChanged: (v) => setState(() => _chatFilter = v),
+                    ),
+                    const SizedBox(height: 10),
+                    if (chats.isEmpty)
+                      const _EmptyState(message: "No casts yet")
+                    else
+                      ...chats.map((c) => _CastTile(
+                            title: c["name"]?.toString() ?? "Cast",
+                            subtitle: _formatLastMessage(c),
+                            trailing: c["unread_count"] != null &&
+                                    (c["unread_count"] as num).toInt() > 0
+                                ? _UnreadBadge(
+                                    count:
+                                        (c["unread_count"] as num).toInt())
+                                : null,
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => HelloCastsChatScreen(
+                                    castId: (c["id"] as num).toInt(),
+                                    title: c["name"]?.toString() ?? "Cast",
+                                    castType:
+                                        c["cast_type"]?.toString() ?? "Group",
                                   ),
-                                );
-                              },
-                            ))
-                        .toList(),
-              )
-            else if (tab == "Calls")
-              Column(
-                children: _casts.isEmpty
-                    ? [const _EmptyState(message: "No casts available")]
-                    : _casts
-                        .map((c) => _CallTile(
-                              title: c["name"]?.toString() ?? "Cast",
-                              subtitle: c["cast_type"]?.toString() ?? "",
-                              onVoice: () =>
-                                  _startCallFromList(c, isVideo: false),
-                              onVideo: () =>
-                                  _startCallFromList(c, isVideo: true),
-                            ))
-                        .toList(),
-              )
-            else
-              Column(
-                children: _alerts.isEmpty
-                    ? [const _EmptyState(message: "No alerts scheduled")]
-                    : _alerts.map((a) {
-                        final title = a["title"]?.toString() ?? "Alert";
-                        final when = a["schedule_at"]?.toString() ?? "";
-                        return _AlertTile(title: title, subtitle: when);
-                      }).toList(),
-              ),
+                                ),
+                              );
+                            },
+                          )),
+                  ],
+                )
+              else if (tab == "Communities")
+                Column(
+                  children: communities.isEmpty
+                      ? [const _EmptyState(message: "No communities yet")]
+                      : communities
+                          .map((c) => _CastTile(
+                                title: c["name"]?.toString() ?? "Community",
+                                subtitle: "Community cast",
+                                trailing:
+                                    const Icon(Icons.chevron_right_rounded),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => HelloCastsChatScreen(
+                                        castId: (c["id"] as num).toInt(),
+                                        title:
+                                            c["name"]?.toString() ?? "Community",
+                                        castType: c["cast_type"]?.toString() ??
+                                            "Community",
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ))
+                          .toList(),
+                )
+              else if (tab == "Calls")
+                Column(
+                  children: _casts.isEmpty
+                      ? [const _EmptyState(message: "No casts available")]
+                      : _casts
+                          .map((c) => _CallTile(
+                                title: c["name"]?.toString() ?? "Cast",
+                                subtitle: c["cast_type"]?.toString() ?? "",
+                                onVoice: () =>
+                                    _startCallFromList(c, isVideo: false),
+                                onVideo: () =>
+                                    _startCallFromList(c, isVideo: true),
+                              ))
+                          .toList(),
+                )
+              else
+                Column(
+                  children: _alerts.isEmpty
+                      ? [const _EmptyState(message: "No alerts scheduled")]
+                      : _alerts.map((a) {
+                          final title = a["title"]?.toString() ?? "Alert";
+                          final when = a["schedule_at"]?.toString() ?? "";
+                          return _AlertTile(title: title, subtitle: when);
+                        }).toList(),
+                ),
           ],
         ),
       ),
+    ),
     );
   }
 }
