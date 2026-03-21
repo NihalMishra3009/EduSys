@@ -24,11 +24,19 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   String _chatFilter = "All";
   bool _loading = true;
   bool _shownCastDebug = false;
+  List<Map<String, dynamic>> _pendingCasts = [];
 
   List<Map<String, dynamic>> _casts = [];
   List<Map<String, dynamic>> _alerts = [];
   List<Map<String, dynamic>> _invites = [];
   List<Map<String, dynamic>> _directory = [];
+
+  static const _offlineMembersDemo = [
+    {"id": 201, "name": "Aarav Patil"},
+    {"id": 202, "name": "Diya Shinde"},
+    {"id": 203, "name": "Rohan Kale"},
+    {"id": 204, "name": "Meera Joshi"},
+  ];
 
   static const _tabs = ["Chats", "Communities", "Alerts"];
   static const _filters = ["All", "Community", "Group", "Individual"];
@@ -50,6 +58,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
 
   Future<void> _loadData({bool silent = false}) async {
     try {
+      final backendOnline = await _api.isBackendOnlineCached();
       final res = await _api.listCasts();
       final invites = await _api.listCastInvites();
       final alerts = await _api.listCastAlerts();
@@ -67,6 +76,13 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                 ?.whereType<Map<String, dynamic>>()
                 .toList() ??
             <Map<String, dynamic>>[];
+      }
+      await _loadPendingCasts();
+      if (backendOnline) {
+        await _syncPendingCasts();
+      }
+      if (_pendingCasts.isNotEmpty) {
+        casts = [...casts, ..._pendingCasts];
       }
       final inviteRows = invites.statusCode >= 200 && invites.statusCode < 300
           ? (jsonDecode(invites.body) as List)
@@ -99,6 +115,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
               .toList();
           await _api.saveCache("user_directory", directoryRows);
         }
+      }
+      if (directoryRows.isEmpty) {
+        directoryRows = List<Map<String, dynamic>>.from(_offlineMembersDemo);
       }
 
       if (!mounted) return;
@@ -135,6 +154,45 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
             (c["cast_type"] ?? "").toString().toLowerCase() ==
             type.toLowerCase())
         .toList();
+  }
+
+  Future<void> _loadPendingCasts() async {
+    final cached = await _api.readCache("casts_pending");
+    _pendingCasts = (cached as List<dynamic>?)
+            ?.whereType<Map<String, dynamic>>()
+            .toList() ??
+        <Map<String, dynamic>>[];
+  }
+
+  Future<void> _savePendingCasts() async {
+    await _api.saveCache("casts_pending", _pendingCasts);
+  }
+
+  Future<void> _syncPendingCasts() async {
+    if (_pendingCasts.isEmpty) return;
+    final List<Map<String, dynamic>> remaining = [];
+    for (final pending in _pendingCasts) {
+      final name = pending["name"]?.toString() ?? "";
+      final castType = pending["cast_type"]?.toString() ?? "Group";
+      final members = (pending["member_ids"] as List<dynamic>?)
+              ?.whereType<num>()
+              .map((e) => e.toInt())
+              .toList() ??
+          <int>[];
+      if (name.isEmpty) {
+        continue;
+      }
+      final res = await _api.createCast(
+        name: name,
+        castType: castType,
+        memberIds: members,
+      );
+      if (!(res.statusCode >= 200 && res.statusCode < 300)) {
+        remaining.add(pending);
+      }
+    }
+    _pendingCasts = remaining;
+    await _savePendingCasts();
   }
 
   String _formatLastMessage(Map<String, dynamic> cast) {
@@ -401,6 +459,24 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     }
     if (isIndividual && selected.length != 1) {
       GlassToast.show(context, "Select exactly one member", icon: Icons.error_outline);
+      return;
+    }
+    final backendOnline = await _api.isBackendOnlineCached();
+    if (!backendOnline) {
+      final pending = {
+        "id": -DateTime.now().millisecondsSinceEpoch,
+        "name": name,
+        "cast_type": type,
+        "member_ids": selected.toList(),
+        "last_message": "Pending sync",
+        "unread_count": 0,
+      };
+      _pendingCasts.add(pending);
+      await _savePendingCasts();
+      if (!mounted) return;
+      GlassToast.show(context, "Saved offline. Will sync later.",
+          icon: Icons.info_outline);
+      _loadData(silent: true);
       return;
     }
     final res = await _api.createCast(

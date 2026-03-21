@@ -28,6 +28,8 @@ class ApiService {
   static const String _lastLoginAtKey = "last_login_at";
   static const String _cachePrefix = "cache_";
   static const Duration _timeout = Duration(seconds: 12);
+  static const Duration _backendCheckTtl = Duration(seconds: 20);
+  static const Duration _backendOkTtl = Duration(minutes: 5);
 
   String? _cachedBaseUrl;
   bool _baseUrlLoaded = false;
@@ -39,6 +41,9 @@ class ApiService {
   bool _nameLoaded = false;
   String? _cachedEmail;
   bool _emailLoaded = false;
+  DateTime? _lastBackendOkAt;
+  DateTime? _lastBackendCheckAt;
+  bool? _lastBackendOnline;
 
   Future<String?> getToken() async {
     if (_tokenLoaded) return _cachedToken;
@@ -381,6 +386,31 @@ class ApiService {
 
   bool isOfflineStatus(int statusCode) {
     return statusCode == 503 || statusCode == 504;
+  }
+
+  Future<bool> isBackendOnlineCached() async {
+    final now = DateTime.now();
+    if (_lastBackendOkAt != null &&
+        now.difference(_lastBackendOkAt!) <= _backendOkTtl) {
+      return true;
+    }
+    if (_lastBackendCheckAt != null &&
+        now.difference(_lastBackendCheckAt!) <= _backendCheckTtl &&
+        _lastBackendOnline != null) {
+      return _lastBackendOnline!;
+    }
+    _lastBackendCheckAt = now;
+    try {
+      final ok = await canReachBackend();
+      _lastBackendOnline = ok;
+      if (ok) {
+        _lastBackendOkAt = now;
+      }
+      return ok;
+    } catch (_) {
+      _lastBackendOnline = false;
+      return false;
+    }
   }
 
   http.Response _handleResponse(http.Response response) {

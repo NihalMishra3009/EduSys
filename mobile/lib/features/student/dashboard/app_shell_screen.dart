@@ -840,7 +840,7 @@ class _ShareItScreenState extends State<_ShareItScreen> {
     setState(() => _loading = true);
     final res = await _api.listShareItAppointments();
     final studentRes = await _api.studentsList();
-    final isOffline = _api.isOfflineStatus(res.statusCode);
+    final isOffline = !(await _api.isBackendOnlineCached());
     List<Map<String, dynamic>> nextRows = _appointments;
     List<Map<String, dynamic>> nextStudents = _students;
     if (isOffline) {
@@ -3642,10 +3642,7 @@ class _HomeTabState extends State<_HomeTab> {
     final studentsRes = role == "PROFESSOR" ? await _api.studentsList() : null;
     final docEdRes = await _api.listShareItAppointments();
     final complaintsRes = await _api.myComplaints();
-    final isOffline = _api.isOfflineStatus(activeRes.statusCode) ||
-        _api.isOfflineStatus(histRes.statusCode) ||
-        _api.isOfflineStatus(schedRes.statusCode) ||
-        _api.isOfflineStatus(depRes.statusCode);
+    final isOffline = !(await _api.isBackendOnlineCached());
 
     List<dynamic> nextActive = _active;
     List<dynamic> nextHistory = _history;
@@ -6217,9 +6214,7 @@ class _NotesTabState extends State<_NotesTab> {
     final res = await _api.listNotes();
     final assignmentsRes = await _api.listAssignments();
     final submissionsRes = await _api.listAssignmentSubmissions();
-    final isOffline = _api.isOfflineStatus(res.statusCode) ||
-        _api.isOfflineStatus(assignmentsRes.statusCode) ||
-        _api.isOfflineStatus(submissionsRes.statusCode);
+    final isOffline = !(await _api.isBackendOnlineCached());
     List<dynamic> nextNotes = _notes;
     List<Map<String, dynamic>> nextAssignments = _assignments;
     List<Map<String, dynamic>> nextSubmissions = _submissions;
@@ -7699,9 +7694,7 @@ class _LearningTabState extends State<_LearningTab> {
     final roomRes = await _api.listRooms();
     final lectureRes = await _api.sampleLectures();
     final schedRes = await _api.listScheduledLectures();
-    bool bad(dynamic res) =>
-        res.statusCode < 200 || res.statusCode >= 300;
-    final isOffline = bad(roomRes) || bad(lectureRes) || bad(schedRes);
+    final isOffline = !(await _api.isBackendOnlineCached());
 
     List<dynamic> nextRooms = _rooms;
     List<dynamic> nextLectures = _lectures;
@@ -10359,7 +10352,7 @@ class _LecturesTabState extends State<_LecturesTab> {
     }
     setState(() => _loading = true);
     final activeRes = await _api.listActiveLectures();
-    final isOffline = _api.isOfflineStatus(activeRes.statusCode);
+    final isOffline = !(await _api.isBackendOnlineCached());
     List<dynamic> nextActive = _active;
     if (isOffline) {
       nextActive =
@@ -10786,7 +10779,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     final summaryRes =
         role == "PROFESSOR" ? await _api.lectureStudentSummary() : null;
     final monthlyRes = await _api.attendanceMonthlySummary();
-    final isOffline = _api.isOfflineStatus(res.statusCode);
+    final isOffline = !(await _api.isBackendOnlineCached());
 
     List<dynamic> nextRecords = _records;
     bool nextGeofenceEnabled = _geofenceEnabled;
