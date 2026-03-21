@@ -145,7 +145,10 @@ class _AppShellState extends State<AppShell> {
             const _SettingsTab()
           ]
         : [
-            _HomeTab(onOpenAttendance: () => _onTabSelected(3)),
+            _HomeTab(
+              onOpenAttendance: () => _onTabSelected(3),
+              onOpenConnected: () => _onTabSelected(2),
+            ),
             const _NotesTab(),
             const _LearningTab(),
             const _AttendanceTab(),
@@ -3108,9 +3111,10 @@ class _BottomTabSectionState extends State<_BottomTabSection> {
 }
 
 class _HomeTab extends StatefulWidget {
-  const _HomeTab({this.onOpenAttendance});
+  const _HomeTab({this.onOpenAttendance, this.onOpenConnected});
 
   final VoidCallback? onOpenAttendance;
+  final VoidCallback? onOpenConnected;
 
   @override
   State<_HomeTab> createState() => _HomeTabState();
@@ -3246,6 +3250,7 @@ class _HomeTabState extends State<_HomeTab> {
   List<dynamic> _active = [];
   List<dynamic> _history = [];
   List<dynamic> _scheduled = [];
+  List<dynamic> _rooms = [];
   List<dynamic> _nearbyStudents = [];
   List<dynamic> _docEdAppointments = [];
   List<dynamic> _complaints = [];
@@ -3256,6 +3261,7 @@ class _HomeTabState extends State<_HomeTab> {
   Timer? _demoSyncTimer;
   int? _demoActiveLectureId;
   Timer? _activeSyncTimer;
+  Timer? _roomSyncTimer;
 
 
   Future<void> _handleLectureStarted(Map<String, dynamic> started) async {
@@ -3473,6 +3479,16 @@ class _HomeTabState extends State<_HomeTab> {
       }
       await _syncActiveLecturesFromApi();
     });
+    _roomSyncTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
+      if (!mounted || kUseDemoDataEverywhere) {
+        return;
+      }
+      final role = context.read<AuthProvider>().role ?? "STUDENT";
+      if (role != "STUDENT") {
+        return;
+      }
+      await _syncRoomsFromApi();
+    });
     _load();
   }
 
@@ -3480,6 +3496,7 @@ class _HomeTabState extends State<_HomeTab> {
   void dispose() {
     _demoSyncTimer?.cancel();
     _activeSyncTimer?.cancel();
+    _roomSyncTimer?.cancel();
     super.dispose();
   }
 
@@ -3497,6 +3514,72 @@ class _HomeTabState extends State<_HomeTab> {
     } catch (_) {
       // Ignore transient failures.
     }
+  }
+
+  Future<void> _syncRoomsFromApi() async {
+    if (!mounted) return;
+    try {
+      final res = await _api.listRooms();
+      if (!mounted || res.statusCode < 200 || res.statusCode >= 300) {
+        return;
+      }
+      final rows = jsonDecode(res.body) as List<dynamic>;
+      await _api.saveCache("home_rooms", rows);
+      if (mounted) {
+        setState(() => _rooms = rows);
+      }
+    } catch (_) {
+      // Ignore transient failures.
+    }
+  }
+
+  String _normalizeRoomCode(String raw, {required String title}) {
+    final input = raw.trim();
+    String roomCode;
+    if (input.isNotEmpty) {
+      roomCode = input.toLowerCase().replaceAll(RegExp(r"[^a-z0-9_-]+"), "-");
+    } else {
+      roomCode =
+          "connected-${title.toLowerCase().replaceAll(RegExp(r"[^a-z0-9]+"), "-")}";
+    }
+    roomCode = roomCode
+        .replaceAll(RegExp(r"-+"), "-")
+        .replaceAll(RegExp(r"^-|-$"), "");
+    if (roomCode.isEmpty) {
+      return "connected-room-${DateTime.now().millisecondsSinceEpoch}";
+    }
+    return roomCode;
+  }
+
+  String _roomCodeFromRaw(String raw, {required String title}) {
+    final value = raw.trim();
+    if (value.startsWith("http://") || value.startsWith("https://")) {
+      final uri = Uri.tryParse(value);
+      final segment =
+          (uri?.pathSegments.isNotEmpty ?? false) ? uri!.pathSegments.last : "";
+      return _normalizeRoomCode(segment, title: title);
+    }
+    return _normalizeRoomCode(value, title: title);
+  }
+
+  Future<void> _openRoomFromHome(Map<String, dynamic> room) async {
+    if (!mounted) {
+      return;
+    }
+    final title = (room["title"] ?? "Meeting").toString();
+    final roomCode =
+        _roomCodeFromRaw((room["meeting_url"] ?? "").toString(), title: title);
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _InAppMeetingScreen(
+          title: title,
+          roomCode: roomCode,
+          displayName: context.read<AuthProvider>().name ?? "Participant",
+          role: context.read<AuthProvider>().role ?? "",
+          isHost: false,
+        ),
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -3524,6 +3607,7 @@ class _HomeTabState extends State<_HomeTab> {
         _offline = false;
         _active = demoActive == null ? _demoActiveLectures : [demoActive];
         _scheduled = _demoScheduled;
+        _rooms = const [];
         _history =
             role == "PROFESSOR" ? _demoProfessorHistory : _demoStudentHistory;
         _nearbyStudents = _demoNearby;
@@ -3552,6 +3636,7 @@ class _HomeTabState extends State<_HomeTab> {
         ? await _api.lectureHistory()
         : await _api.attendanceHistory();
     final schedRes = await _api.listScheduledLectures();
+    final roomRes = await _api.listRooms();
     final depRes = await _api.myDepartment();
     final countRes = await _api.studentCount();
     final summaryRes =
@@ -3568,6 +3653,7 @@ class _HomeTabState extends State<_HomeTab> {
     List<dynamic> nextActive = _active;
     List<dynamic> nextHistory = _history;
     List<dynamic> nextScheduled = _scheduled;
+    List<dynamic> nextRooms = _rooms;
     List<dynamic> nextNearby = _nearbyStudents;
     List<dynamic> nextDocEdAppointments = _docEdAppointments;
     List<dynamic> nextComplaints = _complaints;
@@ -3584,6 +3670,8 @@ class _HomeTabState extends State<_HomeTab> {
       nextScheduled =
           (await _api.readCache("home_scheduled") as List<dynamic>?) ??
               nextScheduled;
+      nextRooms =
+          (await _api.readCache("home_rooms") as List<dynamic>?) ?? nextRooms;
       nextNearby =
           (await _api.readCache("home_nearby") as List<dynamic>?) ?? nextNearby;
       final dep =
@@ -3620,6 +3708,10 @@ class _HomeTabState extends State<_HomeTab> {
       if (schedRes.statusCode >= 200 && schedRes.statusCode < 300) {
         nextScheduled = jsonDecode(schedRes.body) as List<dynamic>;
         await _api.saveCache("home_scheduled", nextScheduled);
+      }
+      if (roomRes.statusCode >= 200 && roomRes.statusCode < 300) {
+        nextRooms = jsonDecode(roomRes.body) as List<dynamic>;
+        await _api.saveCache("home_rooms", nextRooms);
       }
       if (nearbyRes != null &&
           nearbyRes.statusCode >= 200 &&
@@ -3677,6 +3769,7 @@ class _HomeTabState extends State<_HomeTab> {
       _active = nextActive;
       _history = nextHistory;
       _scheduled = nextScheduled;
+      _rooms = nextRooms;
       _nearbyStudents = nextNearby;
       _docEdAppointments = nextDocEdAppointments;
       _complaints = nextComplaints;
@@ -3862,7 +3955,10 @@ class _HomeTabState extends State<_HomeTab> {
               loading: _loading,
               active: _active,
               scheduled: _scheduled,
+              rooms: _rooms,
               history: _history,
+              onJoinRoom: _openRoomFromHome,
+              onOpenConnected: widget.onOpenConnected,
             ),
         ],
       ),
@@ -3875,13 +3971,19 @@ class _StudentDashboard extends StatelessWidget {
     required this.loading,
     required this.active,
     required this.scheduled,
+    required this.rooms,
     required this.history,
+    this.onJoinRoom,
+    this.onOpenConnected,
   });
 
   final bool loading;
   final List<dynamic> active;
   final List<dynamic> scheduled;
+  final List<dynamic> rooms;
   final List<dynamic> history;
+  final Future<void> Function(Map<String, dynamic> room)? onJoinRoom;
+  final VoidCallback? onOpenConnected;
   static const List<Map<String, String>> _upcomingEvents = [
     {
       "title": "Blood Donation Drive",
@@ -3909,6 +4011,8 @@ class _StudentDashboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasActive = active.isNotEmpty;
+    final liveRooms = _liveRooms(rooms);
+    final todayMeetings = _todayMeetings(scheduled);
     return Column(
       children: [
         AppCard(
@@ -4031,6 +4135,104 @@ class _StudentDashboard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(child: SectionTitle("Today's Meetings")),
+                  if (onOpenConnected != null)
+                    TextButton.icon(
+                      onPressed: onOpenConnected,
+                      icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                      label: const Text("ConnectEd"),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (liveRooms.isEmpty && todayMeetings.isEmpty)
+                const Text("No meetings scheduled for today")
+              else ...[
+                if (liveRooms.isNotEmpty) ...[
+                  Text(
+                    "Live now",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...liveRooms.take(3).map(
+                        (room) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.wifi_tethering_rounded,
+                                  size: 16, color: Colors.green),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      room["title"]?.toString() ?? "Meeting",
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w700),
+                                    ),
+                                    Text(
+                                      room["subtitle"]?.toString() ?? "Just started",
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: 0.72),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton(
+                                onPressed: onJoinRoom == null
+                                    ? null
+                                    : () => onJoinRoom!(
+                                        Map<String, dynamic>.from(room)),
+                                child: const Text("Join"),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  if (todayMeetings.isNotEmpty) const Divider(height: 18),
+                ],
+                if (todayMeetings.isNotEmpty)
+                  ...todayMeetings
+                      .take(4)
+                      .map((m) => Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.video_call_rounded, size: 16),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    "${m["title"]} • ${m["time"]}",
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
         _LectureStateSections(
           ongoing: active,
           upcoming: scheduled,
@@ -4079,6 +4281,63 @@ class _StudentDashboard extends StatelessWidget {
               ),
       ],
     );
+  }
+
+  List<Map<String, String>> _todayMeetings(List<dynamic> rows) {
+    final now = TimeFormat.nowIst();
+    final today = DateTime(now.year, now.month, now.day);
+    final list = <Map<String, String>>[];
+    for (final row in rows) {
+      if (row is! Map<String, dynamic>) {
+        continue;
+      }
+      final parsed = TimeFormat.parseToIst(row["scheduled_at"]?.toString());
+      if (parsed == null) {
+        continue;
+      }
+      final day = DateTime(parsed.year, parsed.month, parsed.day);
+      if (day != today) {
+        continue;
+      }
+      list.add({
+        "title": (row["title"] ?? "Meeting").toString(),
+        "time": TimeFormat.formatMinutes12h((parsed.hour * 60) + parsed.minute),
+      });
+    }
+    return list;
+  }
+
+  List<Map<String, dynamic>> _liveRooms(List<dynamic> rows) {
+    final now = TimeFormat.nowIst();
+    final cutoff = now.subtract(const Duration(hours: 6));
+    final live = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      if (row is! Map<String, dynamic>) {
+        continue;
+      }
+      final title = (row["title"] ?? "Meeting").toString();
+      final created = TimeFormat.parseToIst(row["created_at"]?.toString()) ??
+          _CalendarSync.parseFlexibleDateTime(
+              row["created_at"]?.toString() ?? "");
+      if (created == null || created.isBefore(cutoff)) {
+        continue;
+      }
+      final age = now.difference(created);
+      final subtitle = age.inMinutes <= 1
+          ? "Started just now"
+          : age.inMinutes < 60
+              ? "Started ${age.inMinutes} min ago"
+              : "Started ${age.inHours} hr ago";
+      live.add({
+        ...row,
+        "title": title,
+        "subtitle": subtitle,
+      });
+    }
+    live.sort((a, b) => (b["created_at"] ?? "")
+        .toString()
+        .compareTo((a["created_at"] ?? "").toString()));
+    return live;
   }
 }
 
@@ -7982,6 +8241,9 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   late bool _isHost;
   String? _turnWarning;
   final Map<String, _MeetingParticipant> _participants = {};
+  final Map<String, _MeetingParticipant> _waitingParticipants = {};
+  bool _isInLobby = false;
+  String? _lobbyMessage;
   // Chat
   bool _handRaised = false;
   final List<Map<String, dynamic>> _chatMessages = [];
@@ -8363,8 +8625,82 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
         return;
       }
       final type = (decoded["type"] ?? "").toString();
+      if (type == "lobby_status") {
+        final status = (decoded["status"] ?? "").toString();
+        final message = (decoded["message"] ?? "").toString();
+        if (status == "denied") {
+          if (mounted) {
+            GlassToast.show(
+              context,
+              message.isEmpty ? "Professor did not admit you." : message,
+              icon: Icons.error_outline,
+            );
+          }
+          Future.delayed(const Duration(milliseconds: 300), () {
+            if (mounted) {
+              Navigator.of(context).maybePop();
+            }
+          });
+          return;
+        }
+        if (mounted) {
+          setState(() {
+            _isInLobby = true;
+            _lobbyMessage = message.isEmpty
+                ? "Waiting for the professor to admit you."
+                : message;
+          });
+        }
+        return;
+      }
+      if (type == "admitted") {
+        if (mounted) {
+          setState(() {
+            _isInLobby = false;
+            _lobbyMessage = null;
+          });
+          final message = (decoded["message"] ?? "").toString();
+          if (message.isNotEmpty) {
+            GlassToast.show(context, message, icon: Icons.verified_rounded);
+          }
+        }
+        return;
+      }
+      if (type == "lobby_snapshot") {
+        final peers = (decoded["peers"] as List<dynamic>? ?? const []);
+        final nextWaiting = <String, _MeetingParticipant>{};
+        for (final peer in peers) {
+          if (peer is! Map<String, dynamic>) {
+            continue;
+          }
+          final peerId = (peer["peer_id"] ?? "").toString();
+          if (peerId.isEmpty) {
+            continue;
+          }
+          nextWaiting[peerId] = _MeetingParticipant(
+            peerId: peerId,
+            name: (peer["display_name"] ?? peerId).toString(),
+            role: (peer["role"] ?? "").toString(),
+            isHost: (peer["is_host"] ?? false) == true,
+          );
+        }
+        if (mounted) {
+          setState(() {
+            _waitingParticipants
+              ..clear()
+              ..addAll(nextWaiting);
+          });
+        }
+        return;
+      }
       if (type == "peers") {
         final peers = (decoded["peers"] as List<dynamic>? ?? const []);
+        if (mounted) {
+          setState(() {
+            _isInLobby = false;
+            _lobbyMessage = null;
+          });
+        }
         for (final peer in peers) {
           if (peer is Map<String, dynamic>) {
             final peerId = (peer["peer_id"] ?? "").toString();
@@ -8421,6 +8757,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
               isHost: isHost,
             ),
           );
+          _waitingParticipants.remove(peerId);
           // Do NOT create offer here — the newcomer will offer us.
           // Both sides calling _createOffer simultaneously causes glare.
         }
@@ -8430,6 +8767,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
         final peerId = (decoded["peer_id"] ?? "").toString();
         if (peerId.isNotEmpty) {
           _participants.remove(peerId);
+          _waitingParticipants.remove(peerId);
           _removePeer(peerId);
         }
         return;
@@ -8652,10 +8990,19 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                   : _loading
                       ? const Center(
                           child: CircularProgressIndicator(color: Colors.white))
-                      : (!hasOthers && mainRenderers.isEmpty)
+                      : _isInLobby
                           ? _WaitingView(
                               displayName: widget.displayName,
                               localRenderer: _localRenderer,
+                              message: "Waiting for professor approval...",
+                              detail: _lobbyMessage ??
+                                  "You are in the meeting waiting room.",
+                            )
+                          : (!hasOthers && mainRenderers.isEmpty)
+                          ? _WaitingView(
+                              displayName: widget.displayName,
+                              localRenderer: _localRenderer,
+                              message: "Waiting for others to join...",
                             )
                           : _tileView
                               ? _TileGrid(
@@ -8765,6 +9112,26 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                               color: Colors.white),
                           tooltip: "Participants",
                         ),
+                        if (_isHost && _waitingParticipants.isNotEmpty)
+                          Positioned(
+                            left: -2,
+                            top: 2,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade700,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                _waitingParticipants.length.toString(),
+                                style: const TextStyle(
+                                    fontSize: 9,
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ),
                         Positioned(
                           right: 4,
                           top: 4,
@@ -9142,6 +9509,34 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     GlassToast.show(context, "Mute all sent.", icon: Icons.info_outline);
   }
 
+  Future<void> _hostAdmitParticipant(String peerId) async {
+    _socket?.add(
+      jsonEncode({
+        "type": "host_action",
+        "action": "admit_peer",
+        "target_peer_id": peerId,
+      }),
+    );
+    if (mounted) {
+      final name = _waitingParticipants[peerId]?.name ?? "Participant";
+      GlassToast.show(context, "Admitting $name...", icon: Icons.verified_rounded);
+    }
+  }
+
+  Future<void> _hostDenyParticipant(String peerId) async {
+    _socket?.add(
+      jsonEncode({
+        "type": "host_action",
+        "action": "deny_peer",
+        "target_peer_id": peerId,
+      }),
+    );
+    if (mounted) {
+      final name = _waitingParticipants[peerId]?.name ?? "Participant";
+      GlassToast.show(context, "Declined $name.", icon: Icons.person_remove_rounded);
+    }
+  }
+
   Future<void> _hostRemoveParticipant(String peerId) async {
     _socket?.add(
       jsonEncode({
@@ -9168,6 +9563,8 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
         }
         return a.isHost ? -1 : 1;
       });
+    final waiting = _waitingParticipants.values.toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
 
     await showModalBottomSheet<void>(
       context: context,
@@ -9208,9 +9605,76 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                             onPressed: _hostMuteAll,
                             icon: const Icon(Icons.volume_off_rounded),
                             label: const Text("Mute All"),
-                          ),
+                        ),
                       ],
                     ),
+                    if (_isHost && waiting.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                              color: scheme.primary.withValues(alpha: 0.16)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Waiting room (${waiting.length})",
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 8),
+                            ...waiting.map(
+                              (p) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            p.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.w600),
+                                          ),
+                                          if (p.role.isNotEmpty)
+                                            Text(
+                                              p.role,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: scheme.onSurface
+                                                    .withValues(alpha: 0.68),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    TextButton(
+                                      onPressed: () =>
+                                          _hostDenyParticipant(p.peerId),
+                                      child: const Text("Deny"),
+                                    ),
+                                    FilledButton.tonal(
+                                      onPressed: () =>
+                                          _hostAdmitParticipant(p.peerId),
+                                      child: const Text("Admit"),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 420),
@@ -9497,10 +9961,14 @@ class _WaitingView extends StatelessWidget {
   const _WaitingView({
     required this.displayName,
     required this.localRenderer,
+    required this.message,
+    this.detail,
   });
 
   final String displayName;
   final RTCVideoRenderer localRenderer;
+  final String message;
+  final String? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -9532,15 +10000,30 @@ class _WaitingView extends StatelessWidget {
                       fontSize: 32,
                       fontWeight: FontWeight.w700),
                 ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                "Waiting for others to join...",
-                style: TextStyle(color: Colors.white, fontSize: 16),
-              ),
-            ],
-          ),
-        ),
+               ),
+               const SizedBox(height: 16),
+               Text(
+                 message,
+                 style: TextStyle(color: Colors.white, fontSize: 16),
+               ),
+               if (detail != null && detail!.trim().isNotEmpty) ...[
+                 const SizedBox(height: 8),
+                 SizedBox(
+                   width: 240,
+                   child: Text(
+                     detail!,
+                     textAlign: TextAlign.center,
+                     style: const TextStyle(
+                       color: Colors.white70,
+                       fontSize: 13,
+                       fontWeight: FontWeight.w500,
+                     ),
+                   ),
+                 ),
+               ],
+             ],
+           ),
+         ),
       ],
     );
   }

@@ -65,32 +65,54 @@ app.include_router(casts.router, prefix="/casts", tags=["casts"])
 class _MeetingSignalingHub:
     def __init__(self) -> None:
         self._rooms: dict[str, dict[str, dict]] = defaultdict(dict)
+        self._lobbies: dict[str, dict[str, dict]] = defaultdict(dict)
         self._lock = asyncio.Lock()
 
-    async def join(self, room_id: str, peer_id: str, socket: WebSocket, meta: dict) -> list[dict]:
-        await socket.accept()
+    def _peer_payload(self, peer_id: str, entry: dict) -> dict:
+        meta = entry.get("meta", {})
+        return {
+            "peer_id": peer_id,
+            "display_name": meta.get("display_name", peer_id),
+            "is_host": bool(meta.get("is_host", False)),
+            "role": meta.get("role", ""),
+        }
+
+    async def join_room(self, room_id: str, peer_id: str, socket: WebSocket, meta: dict) -> list[dict]:
         async with self._lock:
             peers = [
-                {
-                    "peer_id": pid,
-                    "display_name": entry.get("meta", {}).get("display_name", pid),
-                    "is_host": bool(entry.get("meta", {}).get("is_host", False)),
-                    "role": entry.get("meta", {}).get("role", ""),
-                }
+                self._peer_payload(pid, entry)
                 for pid, entry in self._rooms[room_id].items()
             ]
+            self._lobbies.get(room_id, {}).pop(peer_id, None)
             self._rooms[room_id][peer_id] = {"socket": socket, "meta": meta}
             return peers
 
-    async def leave(self, room_id: str, peer_id: str) -> None:
+    async def join_lobby(self, room_id: str, peer_id: str, socket: WebSocket, meta: dict) -> None:
         async with self._lock:
             room = self._rooms.get(room_id, {})
             room.pop(peer_id, None)
-            if not room and room_id in self._rooms:
-                self._rooms.pop(room_id, None)
+            self._lobbies[room_id][peer_id] = {"socket": socket, "meta": meta}
+
+    async def leave(self, room_id: str, peer_id: str) -> str | None:
+        async with self._lock:
+            room = self._rooms.get(room_id, {})
+            if peer_id in room:
+                room.pop(peer_id, None)
+                if not room and room_id in self._rooms:
+                    self._rooms.pop(room_id, None)
+                return "room"
+            lobby = self._lobbies.get(room_id, {})
+            if peer_id in lobby:
+                lobby.pop(peer_id, None)
+                if not lobby and room_id in self._lobbies:
+                    self._lobbies.pop(room_id, None)
+                return "lobby"
+            return None
 
     async def send(self, room_id: str, peer_id: str, payload: dict) -> None:
         entry = self._rooms.get(room_id, {}).get(peer_id)
+        if entry is None:
+            entry = self._lobbies.get(room_id, {}).get(peer_id)
         if entry is None:
             return
         socket = entry.get("socket")
@@ -110,27 +132,90 @@ class _MeetingSignalingHub:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def broadcast_to_hosts(self, room_id: str, payload: dict) -> None:
+        async with self._lock:
+            sockets = [
+                entry.get("socket")
+                for entry in self._rooms.get(room_id, {}).values()
+                if bool(entry.get("meta", {}).get("is_host", False))
+            ]
+        tasks = [socket.send_text(json.dumps(payload)) for socket in sockets if socket is not None]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def get_peer_meta(self, room_id: str, peer_id: str) -> dict:
         async with self._lock:
-            return dict(self._rooms.get(room_id, {}).get(peer_id, {}).get("meta", {}))
+            entry = self._rooms.get(room_id, {}).get(peer_id)
+            if entry is None:
+                entry = self._lobbies.get(room_id, {}).get(peer_id)
+            return dict((entry or {}).get("meta", {}))
+
+    async def get_peer_state(self, room_id: str, peer_id: str) -> str | None:
+        async with self._lock:
+            if peer_id in self._rooms.get(room_id, {}):
+                return "room"
+            if peer_id in self._lobbies.get(room_id, {}):
+                return "lobby"
+            return None
+
+    async def room_has_host(self, room_id: str) -> bool:
+        async with self._lock:
+            return any(
+                bool(entry.get("meta", {}).get("is_host", False))
+                for entry in self._rooms.get(room_id, {}).values()
+            )
+
+    async def list_lobby(self, room_id: str) -> list[dict]:
+        async with self._lock:
+            return [
+                self._peer_payload(pid, entry)
+                for pid, entry in self._lobbies.get(room_id, {}).items()
+            ]
+
+    async def admit(self, room_id: str, peer_id: str) -> tuple[dict | None, list[dict]]:
+        async with self._lock:
+            lobby = self._lobbies.get(room_id, {})
+            entry = lobby.pop(peer_id, None)
+            if entry is None:
+                return None, []
+            if not lobby and room_id in self._lobbies:
+                self._lobbies.pop(room_id, None)
+            peers = [
+                self._peer_payload(pid, active_entry)
+                for pid, active_entry in self._rooms.get(room_id, {}).items()
+            ]
+            self._rooms[room_id][peer_id] = entry
+            return {"entry": entry, "peer": self._peer_payload(peer_id, entry)}, peers
+
+    async def deny(self, room_id: str, peer_id: str) -> dict | None:
+        async with self._lock:
+            lobby = self._lobbies.get(room_id, {})
+            entry = lobby.pop(peer_id, None)
+            if entry is None:
+                return None
+            if not lobby and room_id in self._lobbies:
+                self._lobbies.pop(room_id, None)
+            return {"entry": entry, "peer": self._peer_payload(peer_id, entry)}
 
     async def list_peers(self, room_id: str) -> list[dict]:
         async with self._lock:
             peers = []
             for pid, entry in self._rooms.get(room_id, {}).items():
-                meta = entry.get("meta", {})
-                peers.append(
-                    {
-                        "peer_id": pid,
-                        "display_name": meta.get("display_name", pid),
-                        "is_host": bool(meta.get("is_host", False)),
-                        "role": meta.get("role", ""),
-                    }
-                )
+                peers.append(self._peer_payload(pid, entry))
             return peers
 
 
 _meeting_hub = _MeetingSignalingHub()
+
+
+async def _broadcast_meeting_lobby_snapshot(room_id: str) -> None:
+    await _meeting_hub.broadcast_to_hosts(
+        room_id,
+        {
+            "type": "lobby_snapshot",
+            "peers": await _meeting_hub.list_lobby(room_id),
+        },
+    )
 
 _turn_health = {
     "status": "unknown",
@@ -447,31 +532,42 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
     is_host = websocket.query_params.get("host", "0").strip() in ("1", "true", "True")
     peer_id = requested_peer_id or f"peer-{id(websocket)}"
     room_key = room_id.strip().lower() or "default-room"
+    peer_meta = {
+        "display_name": display_name,
+        "role": role,
+        "is_host": is_host,
+    }
 
-    peers = await _meeting_hub.join(
-        room_key,
-        peer_id,
-        websocket,
-        {
-            "display_name": display_name,
-            "role": role,
-            "is_host": is_host,
-        },
-    )
-    await _meeting_hub.send(room_key, peer_id, {"type": "peers", "peers": peers})
-    await _meeting_hub.broadcast_except(
-        room_key,
-        peer_id,
-        {
-            "type": "peer_joined",
-            "peer": {
-                "peer_id": peer_id,
-                "display_name": display_name,
-                "is_host": is_host,
-                "role": role,
+    await websocket.accept()
+    if is_host:
+        peers = await _meeting_hub.join_room(room_key, peer_id, websocket, peer_meta)
+        await _meeting_hub.send(room_key, peer_id, {"type": "peers", "peers": peers})
+        await _meeting_hub.broadcast_except(
+            room_key,
+            peer_id,
+            {
+                "type": "peer_joined",
+                "peer": {
+                    "peer_id": peer_id,
+                    "display_name": display_name,
+                    "is_host": is_host,
+                    "role": role,
+                },
             },
-        },
-    )
+        )
+        await _broadcast_meeting_lobby_snapshot(room_key)
+    else:
+        await _meeting_hub.join_lobby(room_key, peer_id, websocket, peer_meta)
+        await _meeting_hub.send(
+            room_key,
+            peer_id,
+            {
+                "type": "lobby_status",
+                "status": "waiting",
+                "message": "Waiting for the professor to admit you.",
+            },
+        )
+        await _broadcast_meeting_lobby_snapshot(room_key)
 
     try:
         while True:
@@ -482,7 +578,10 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                 continue
 
             msg_type = str(payload.get("type", ""))
+            peer_state = await _meeting_hub.get_peer_state(room_key, peer_id)
             if msg_type == "signal":
+                if peer_state != "room":
+                    continue
                 target_peer = str(payload.get("to", "")).strip()
                 data = payload.get("data")
                 if not target_peer or not isinstance(data, dict):
@@ -497,6 +596,8 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                     },
                 )
             elif msg_type == "chat":
+                if peer_state != "room":
+                    continue
                 text = str(payload.get("text", "")).strip()
                 sender_name = (
                     str(payload.get("sender_name", "")).strip() or peer_id
@@ -514,6 +615,8 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                         room_key, peer_id, {**msg_out, "is_own": True}
                     )
             elif msg_type == "hand_raise":
+                if peer_state != "room":
+                    continue
                 raised = bool(payload.get("raised", False))
                 meta = await _meeting_hub.get_peer_meta(room_key, peer_id)
                 await _meeting_hub.broadcast_except(
@@ -527,6 +630,8 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                     },
                 )
             elif msg_type == "reaction":
+                if peer_state != "room":
+                    continue
                 emoji = str(payload.get("emoji", "")).strip()
                 meta = await _meeting_hub.get_peer_meta(room_key, peer_id)
                 if emoji:
@@ -541,6 +646,8 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                         },
                     )
             elif msg_type == "host_action":
+                if peer_state != "room":
+                    continue
                 sender_meta = await _meeting_hub.get_peer_meta(room_key, peer_id)
                 if not bool(sender_meta.get("is_host", False)):
                     continue
@@ -569,11 +676,67 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                             "from": peer_id,
                         },
                     )
+                elif action == "admit_peer":
+                    target_peer = str(payload.get("target_peer_id", "")).strip()
+                    if not target_peer:
+                        continue
+                    admitted, peers = await _meeting_hub.admit(room_key, target_peer)
+                    if admitted is None:
+                        continue
+                    try:
+                        await admitted["entry"]["socket"].send_text(
+                            json.dumps(
+                                {
+                                    "type": "admitted",
+                                    "message": "Professor admitted you to the meeting.",
+                                }
+                            )
+                        )
+                        await admitted["entry"]["socket"].send_text(
+                            json.dumps({"type": "peers", "peers": peers})
+                        )
+                    except Exception:
+                        pass
+                    await _meeting_hub.broadcast_except(
+                        room_key,
+                        target_peer,
+                        {
+                            "type": "peer_joined",
+                            "peer": admitted["peer"],
+                        },
+                    )
+                    await _broadcast_meeting_lobby_snapshot(room_key)
+                elif action == "deny_peer":
+                    target_peer = str(payload.get("target_peer_id", "")).strip()
+                    if not target_peer:
+                        continue
+                    denied = await _meeting_hub.deny(room_key, target_peer)
+                    if denied is None:
+                        continue
+                    try:
+                        await denied["entry"]["socket"].send_text(
+                            json.dumps(
+                                {
+                                    "type": "lobby_status",
+                                    "status": "denied",
+                                    "message": "Professor did not admit you to this meeting.",
+                                }
+                            )
+                        )
+                    except Exception:
+                        pass
+                    await _broadcast_meeting_lobby_snapshot(room_key)
     except WebSocketDisconnect:
         pass
     finally:
-        await _meeting_hub.leave(room_key, peer_id)
-        await _meeting_hub.broadcast_except(room_key, peer_id, {"type": "peer_left", "peer_id": peer_id})
+        left_from = await _meeting_hub.leave(room_key, peer_id)
+        if left_from == "room":
+            await _meeting_hub.broadcast_except(
+                room_key,
+                peer_id,
+                {"type": "peer_left", "peer_id": peer_id},
+            )
+        await _broadcast_meeting_lobby_snapshot(room_key)
 
 
 @app.websocket("/ws/casts/{cast_id}")
