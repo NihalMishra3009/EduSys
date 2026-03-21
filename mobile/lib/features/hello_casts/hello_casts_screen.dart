@@ -17,6 +17,13 @@ class HelloCastsScreen extends StatefulWidget {
   State<HelloCastsScreen> createState() => _HelloCastsScreenState();
 }
 
+const Color _castsAccent = Color(0xFF5B4AE3);
+const Color _castsAccentDark = Color(0xFF4B43C7);
+const Color _castsLightBg = Color(0xFFF6F6FB);
+const Color _castsLightChip = Color(0xFFEAE7FF);
+const Color _castsDarkChip = Color(0xFF5F57DD);
+const Color _castsLightText = Color(0xFF171717);
+
 class _HelloCastsScreenState extends State<HelloCastsScreen> {
   final ApiService _api = ApiService();
   Timer? _refreshTimer;
@@ -28,6 +35,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   bool _loading = true;
   bool _shownCastDebug = false;
   List<Map<String, dynamic>> _pendingCasts = [];
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = "";
+  final Map<int, _CastSearchIndex> _searchIndex = {};
 
   List<Map<String, dynamic>> _casts = [];
   List<Map<String, dynamic>> _alerts = [];
@@ -121,11 +131,26 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   void dispose() {
     _refreshTimer?.cancel();
     _clockTimer?.cancel();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _loadData({bool silent = false}) async {
     try {
+      if (!silent) {
+        final cached = await _api.readCache("casts_list");
+        final cachedCasts = (cached as List<dynamic>?)
+                ?.whereType<Map<String, dynamic>>()
+                .toList() ??
+            <Map<String, dynamic>>[];
+        if (cachedCasts.isNotEmpty && mounted) {
+          setState(() {
+            _casts = cachedCasts;
+            _loading = false;
+          });
+          await _loadLocalSearchIndex(cachedCasts);
+        }
+      }
       final backendOnline = await _api.isBackendOnlineCached();
       final res = await _api.listCasts();
       final invites = await _api.listCastInvites();
@@ -196,6 +221,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         _directory = directoryRows;
         _loading = false;
       });
+      await _loadLocalSearchIndex(_casts);
       if (!_shownCastDebug &&
           casts.isEmpty &&
           (res.statusCode < 200 || res.statusCode >= 300)) {
@@ -216,12 +242,54 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   }
 
   List<Map<String, dynamic>> _filteredCasts(String type) {
-    if (type == "All") return _casts;
-    return _casts
-        .where((c) =>
-            (c["cast_type"] ?? "").toString().toLowerCase() ==
-            type.toLowerCase())
-        .toList();
+    final base = type == "All"
+        ? _casts
+        : _casts
+            .where((c) =>
+                (c["cast_type"] ?? "").toString().toLowerCase() ==
+                type.toLowerCase())
+            .toList();
+    if (_searchQuery.trim().isEmpty) {
+      return base;
+    }
+    final q = _searchQuery.trim().toLowerCase();
+    return base.where((c) => _matchesSearch(c, q)).toList();
+  }
+
+  bool _matchesSearch(Map<String, dynamic> cast, String q) {
+    final name = (cast["name"] ?? "").toString().toLowerCase();
+    if (name.contains(q)) return true;
+    final id = (cast["id"] as num?)?.toInt();
+    if (id == null) return false;
+    final index = _searchIndex[id];
+    if (index == null) return false;
+    return index.messageText.contains(q) || index.docText.contains(q);
+  }
+
+  Future<void> _loadLocalSearchIndex(List<Map<String, dynamic>> casts) async {
+    for (final cast in casts) {
+      final id = (cast["id"] as num?)?.toInt();
+      if (id == null) continue;
+      final cachedMessages = await _api.readCache("cast_messages_$id");
+      final cachedDocs = await _api.readCache("cast_docs_$id");
+      final msgText = (cachedMessages as List<dynamic>?)
+              ?.whereType<Map<String, dynamic>>()
+              .map((m) => (m["message"] ?? "").toString())
+              .join(" ")
+              .toLowerCase() ??
+          "";
+      final docText = (cachedDocs as List<dynamic>?)
+              ?.whereType<Map<String, dynamic>>()
+              .map((d) =>
+                  (d["name"] ?? d["attachment_name"] ?? "").toString())
+              .join(" ")
+              .toLowerCase() ??
+          "";
+      _searchIndex[id] = _CastSearchIndex(
+        messageText: msgText,
+        docText: docText,
+      );
+    }
   }
 
   Future<void> _loadPendingCasts() async {
@@ -655,6 +723,14 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     );
     if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
+      try {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final newId = (data["id"] as num?)?.toInt();
+        if (newId != null) {
+          await _api.saveCache("cast_messages_$newId", <Map<String, dynamic>>[]);
+          await _api.saveCache("cast_docs_$newId", <Map<String, dynamic>>[]);
+        }
+      } catch (_) {}
       GlassToast.show(context, "Cast created", icon: Icons.check_circle_rounded);
       _loadData();
     } else {
@@ -806,21 +882,34 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
 
     return Scaffold(
       floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF25D366),
+        backgroundColor: _castsAccent,
         onPressed: _showHeaderActions,
-        child: const Icon(Icons.add_rounded, color: Colors.white),
+        child: const Icon(Icons.edit_rounded, color: Colors.white),
       ),
-      backgroundColor: dark ? null : const Color(0xFFF2F5FB),
+      backgroundColor: dark ? _castsAccentDark : _castsLightBg,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Column(
             children: [
-              const HelloCastsHeader(
-                title: "Casts",
-                subtitle: "",
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Expanded(
+                    child: HelloCastsHeader(
+                      title: "Casts",
+                      subtitle: "",
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  _SearchCard(
+                    controller: _searchCtrl,
+                    onChanged: (value) =>
+                        setState(() => _searchQuery = value),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               _UnifiedFilterBar(
                 tabIndex: _tabIndex,
                 onTabChanged: (i) => setState(() => _tabIndex = i),
@@ -1017,12 +1106,12 @@ class _FilterBar extends StatelessWidget {
             selected: active,
             label: Text(f),
             onSelected: (_) => onChanged(f),
-            selectedColor: const Color(0xFF25D366).withValues(alpha: 0.2),
-            backgroundColor: dark ? null : Colors.white,
+            selectedColor: dark ? Colors.white : _castsAccent,
+            backgroundColor: dark ? _castsDarkChip : _castsLightChip,
             labelStyle: TextStyle(
               color: active
-                  ? const Color(0xFF25D366)
-                  : (dark ? null : Colors.black87),
+                  ? (dark ? _castsAccent : Colors.white)
+                  : (dark ? Colors.white70 : _castsLightText),
               fontWeight: FontWeight.w700,
             ),
           );
@@ -1088,12 +1177,12 @@ class _UnifiedFilterBar extends StatelessWidget {
                 },
               );
             },
-            selectedColor: const Color(0xFF25D366).withValues(alpha: 0.2),
-            backgroundColor: dark ? null : Colors.white,
+            selectedColor: dark ? Colors.white : _castsAccent,
+            backgroundColor: dark ? _castsDarkChip : _castsLightChip,
             labelStyle: TextStyle(
               color: isSelected
-                  ? const Color(0xFF25D366)
-                  : (dark ? null : Colors.black87),
+                  ? (dark ? _castsAccent : Colors.white)
+                  : (dark ? Colors.white70 : _castsLightText),
               fontWeight: FontWeight.w700,
             ),
           );
@@ -1144,29 +1233,35 @@ class _CastTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final bg = dark ? const Color(0xFF5F57DD) : Colors.white;
     return ListTile(
-      leading: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: const Color(0xFF25D366).withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(12),
+      tileColor: bg,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      leading: CircleAvatar(
+        radius: 22,
+        backgroundColor: dark ? Colors.white24 : _castsLightChip,
+        child: Text(
+          title.isNotEmpty ? title[0].toUpperCase() : "?",
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: dark ? Colors.white : _castsAccent,
+          ),
         ),
-        alignment: Alignment.center,
-        child: Text(title.isNotEmpty ? title[0].toUpperCase() : "?"),
       ),
       title: Text(
         title,
         style: TextStyle(
           fontWeight: FontWeight.w700,
-          color: dark ? null : Colors.black87,
+          color: dark ? Colors.white : Colors.black87,
         ),
       ),
       subtitle: Text(
         subtitle,
-        style: TextStyle(color: dark ? null : Colors.black54),
+        style: TextStyle(color: dark ? Colors.white70 : Colors.black54),
       ),
-      trailing: trailing ?? const Icon(Icons.chevron_right_rounded),
+      trailing: trailing ??
+          Icon(Icons.chevron_right_rounded,
+              color: dark ? Colors.white70 : Colors.black45),
       onTap: onTap,
     );
   }
@@ -1204,7 +1299,7 @@ class _UnreadBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF25D366),
+        color: _castsAccent,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
@@ -1228,6 +1323,64 @@ class _EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SearchCard extends StatelessWidget {
+  const _SearchCard({
+    required this.controller,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return SizedBox(
+      width: 190,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: dark ? Colors.white24 : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+              color: dark ? Colors.white24 : scheme.onSurface.withValues(alpha: 0.12)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.search_rounded,
+                size: 18,
+                color: dark ? Colors.white70 : scheme.onSurface.withValues(alpha: 0.55)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                onChanged: onChanged,
+                decoration: const InputDecoration(
+                  hintText: "Search",
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+                style: TextStyle(color: dark ? Colors.white : Colors.black87),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CastSearchIndex {
+  const _CastSearchIndex({
+    required this.messageText,
+    required this.docText,
+  });
+
+  final String messageText;
+  final String docText;
 }
 
 class _NewCastOption extends StatelessWidget {

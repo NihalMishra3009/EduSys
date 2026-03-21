@@ -12,6 +12,12 @@ import "package:edusys_mobile/core/constants/app_colors.dart";
 import "hello_casts_widgets.dart";
 import "package:url_launcher/url_launcher.dart";
 
+const Color _castAccent = Color(0xFF5B4AE3);
+const Color _castAccentDark = Color(0xFF4C43C7);
+const Color _castLightBg = Color(0xFFF6F6FB);
+const Color _castIncomingLight = Color(0xFFE9E6FF);
+const Color _castIncomingDark = Color(0xFF6A5AE8);
+
 
 class HelloCastsChatScreen extends StatefulWidget {
   const HelloCastsChatScreen({
@@ -50,6 +56,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   final Set<String> _deletedKeys = {};
 
   String get _messagesCacheKey => "cast_messages_${widget.castId}";
+  String get _docsCacheKey => "cast_docs_${widget.castId}";
   String get _alertsCacheKey => "cast_alerts_${widget.castId}";
   String get _deletedCacheKey => "cast_deleted_${widget.castId}";
 
@@ -173,6 +180,12 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           ? _messages
           : _messages.sublist(_messages.length - 500),
     );
+    await _persistDocsFromMessages();
+  }
+
+  Future<void> _persistDocsFromMessages() async {
+    final docs = _extractDocs(_messages);
+    await _api.saveCache(_docsCacheKey, docs);
   }
 
   Future<void> _persistAlerts() async {
@@ -186,6 +199,20 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Future<void> _loadMessages({bool silent = false}) async {
     if (!silent && mounted && _messages.isEmpty) {
       setState(() => _loading = true);
+    }
+    if (_messages.isEmpty) {
+      final cached = await _api.readCache(_messagesCacheKey);
+      final cachedRows = (cached as List<dynamic>?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList() ??
+          <Map<String, dynamic>>[];
+      if (cachedRows.isNotEmpty && mounted) {
+        setState(() {
+          _messages = _sortedMessages(
+              cachedRows.where((m) => !_deletedKeys.contains(_messageKey(m))).toList());
+          _loading = false;
+        });
+      }
     }
 
     final res = await _api.listCastMessages(castId: widget.castId);
@@ -684,6 +711,26 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     return {"type": "TEXT", "body": raw};
   }
 
+  List<Map<String, dynamic>> _extractDocs(List<Map<String, dynamic>> messages) {
+    final docs = <Map<String, dynamic>>[];
+    for (final msg in messages) {
+      final raw = msg["message"]?.toString() ?? "";
+      final decoded = _decodeMessage(raw);
+      final url = decoded["attachment_url"]?.toString();
+      if (url == null || url.isEmpty) {
+        continue;
+      }
+      docs.add({
+        "name": decoded["attachment_name"]?.toString() ?? "Attachment",
+        "url": url,
+        "type": decoded["type"]?.toString() ?? "FILE",
+        "created_at": msg["created_at"]?.toString(),
+        "sender_name": msg["sender_name"]?.toString(),
+      });
+    }
+    return docs;
+  }
+
   Future<void> _send({
     String type = "TEXT",
     String? body,
@@ -934,12 +981,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
-    final appBarTheme = Theme.of(context).appBarTheme;
-    final background =
-        dark ? AppColors.darkBackground : const Color(0xFFF2F5FB);
-    final appBarBg = appBarTheme.backgroundColor ??
-        (dark ? AppColors.darkSurface : Colors.white);
-    final appBarFg = appBarTheme.foregroundColor ?? scheme.onSurface;
+    final background = dark ? _castAccentDark : _castLightBg;
+    final appBarBg = dark ? _castAccent : Colors.white;
+    final appBarFg = dark ? Colors.white : Colors.black87;
     return Stack(
       children: [
         Scaffold(
@@ -950,18 +994,14 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             titleSpacing: 0,
             title: Row(
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  alignment: Alignment.center,
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor:
+                      dark ? Colors.white24 : _castIncomingLight,
                   child: Text(
                     widget.title.isNotEmpty ? widget.title[0].toUpperCase() : "?",
                     style: TextStyle(
-                      color: appBarFg,
+                      color: dark ? Colors.white : _castAccent,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -990,16 +1030,24 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
               ],
             ),
             actions: [
-              IconButton(
-                icon: Icon(Icons.person_add_rounded, color: appBarFg),
-                onPressed: _addMembers,
-                tooltip: "Add members",
+              _IconCircle(
+                icon: Icons.call_rounded,
+                color: _castAccent,
+                onTap: () => _startCall(isVideo: false),
               ),
-              IconButton(
-                icon: Icon(Icons.alarm_add_rounded, color: appBarFg),
-                onPressed: _sendScheduled,
-                tooltip: "Schedule alert",
+              const SizedBox(width: 6),
+              _IconCircle(
+                icon: Icons.videocam_rounded,
+                color: _castAccent,
+                onTap: () => _startCall(isVideo: true),
               ),
+              const SizedBox(width: 6),
+              _IconCircle(
+                icon: Icons.alarm_add_rounded,
+                color: _castAccent,
+                onTap: _sendScheduled,
+              ),
+              const SizedBox(width: 6),
             ],
           ),
           body: Column(
@@ -1046,7 +1094,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
               ),
               Container(
                 padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-                color: scheme.surface,
+                color: Colors.transparent,
                 child: Column(
                   children: [
                     if (_showAttachMenu)
@@ -1064,7 +1112,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                             _showAttachMenu
                                 ? Icons.close_rounded
                                 : Icons.attach_file_rounded,
-                            color: Colors.grey,
+                            color: dark ? Colors.white70 : Colors.black45,
                           ),
                           onPressed: () =>
                               setState(() => _showAttachMenu = !_showAttachMenu),
@@ -1072,28 +1120,40 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                         Expanded(
                           child: Container(
                             decoration: BoxDecoration(
-                              color: scheme.surface,
+                              color: Colors.white,
                               borderRadius: BorderRadius.circular(24),
                             ),
-                            child: TextField(
-                              controller: _msgCtrl,
-                              decoration: const InputDecoration(
-                                hintText: "Message",
-                                border: InputBorder.none,
-                                contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 10),
-                              ),
-                              textInputAction: TextInputAction.send,
-                              onSubmitted: (_) => _send(),
+                            child: Row(
+                              children: [
+                                const SizedBox(width: 12),
+                                Icon(Icons.mic_rounded,
+                                    size: 18,
+                                    color: _castAccent.withValues(alpha: 0.7)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _msgCtrl,
+                                    decoration: const InputDecoration(
+                                      hintText: "Type a message",
+                                      border: InputBorder.none,
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.symmetric(
+                                          horizontal: 0, vertical: 12),
+                                    ),
+                                    textInputAction: TextInputAction.send,
+                                    onSubmitted: (_) => _send(),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         FloatingActionButton.small(
-                          backgroundColor: scheme.primary,
+                          backgroundColor: _castAccent,
                           onPressed: _send,
-                          child: Icon(Icons.send_rounded,
-                              color: scheme.onPrimary),
+                          child:
+                              const Icon(Icons.send_rounded, color: Colors.white),
                         ),
                       ],
                     ),
@@ -1135,10 +1195,10 @@ class _MessageBubble extends StatelessWidget {
     final isPending = msg["_pending"] == true;
     final isFailed = msg["_failed"] == true;
     final isAlert = type == "ALERT" || type == "REMINDER";
-    final scheme = Theme.of(context).colorScheme;
-    final bubbleBg = isMe
-        ? (dark ? scheme.primary.withValues(alpha: 0.28) : const Color(0xFF1E67D1))
-        : (dark ? AppColors.darkSurfaceElevated : const Color(0xFFE2E8F3));
+    final bubbleBg =
+        isMe ? Colors.white : (dark ? _castIncomingDark : _castIncomingLight);
+    final textColor =
+        isMe ? _castAccent : (dark ? Colors.white : Colors.black87);
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(18),
       topRight: const Radius.circular(18),
@@ -1172,7 +1232,7 @@ class _MessageBubble extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
-                            color: Theme.of(context).colorScheme.primary)),
+                            color: textColor.withValues(alpha: 0.9))),
                   ),
                 if (isAlert) ...[
                   Row(
@@ -1197,14 +1257,13 @@ class _MessageBubble extends StatelessWidget {
                       children: [
                         Icon(Icons.mic_rounded,
                             size: 20,
-                            color: isMe ? Colors.white : const Color(0xFF25D366)),
+                            color: textColor),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Container(
                             height: 3,
                             decoration: BoxDecoration(
-                              color: (isMe ? Colors.white : Colors.grey)
-                                  .withValues(alpha: 0.4),
+                              color: textColor.withValues(alpha: 0.35),
                               borderRadius: BorderRadius.circular(2),
                             ),
                           ),
@@ -1213,12 +1272,11 @@ class _MessageBubble extends StatelessWidget {
                         Text("${decoded["duration_secs"] ?? 0}s",
                             style: TextStyle(
                               fontSize: 12,
-                              color: isMe ? Colors.white : Colors.black87,
+                              color: textColor,
                             )),
                         const SizedBox(width: 6),
                         Icon(Icons.open_in_new_rounded,
-                            size: 14,
-                            color: isMe ? Colors.white : Colors.black87),
+                            size: 14, color: textColor),
                       ],
                     ),
                   )
@@ -1233,21 +1291,20 @@ class _MessageBubble extends StatelessWidget {
                               ? Icons.image_rounded
                               : Icons.insert_drive_file_rounded,
                           size: 18,
-                          color: isMe ? Colors.white : Colors.black87,
+                          color: textColor,
                         ),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(attachName ?? "File",
                               style: TextStyle(
                                 fontSize: 13,
-                                color: isMe ? Colors.white : Colors.black87,
+                                color: textColor,
                               ),
                               overflow: TextOverflow.ellipsis),
                         ),
                         const SizedBox(width: 6),
                         Icon(Icons.download_rounded,
-                            size: 16,
-                            color: isMe ? Colors.white : Colors.black87),
+                            size: 16, color: textColor),
                       ],
                     ),
                   )
@@ -1256,7 +1313,7 @@ class _MessageBubble extends StatelessWidget {
                     body,
                     style: TextStyle(
                       fontSize: 14,
-                      color: isMe ? Colors.white : Colors.black87,
+                      color: textColor,
                     ),
                   ),
                 const SizedBox(height: 4),
@@ -1267,7 +1324,7 @@ class _MessageBubble extends StatelessWidget {
                     Text(timeStr,
                         style: TextStyle(
                             fontSize: 10,
-                            color: Colors.grey.withValues(alpha: 0.8))),
+                            color: textColor.withValues(alpha: 0.6))),
                     if (isMe) ...[
                       const SizedBox(width: 4),
                       Icon(
@@ -1328,6 +1385,44 @@ class _AttachMenu extends StatelessWidget {
               color: const Color(0xFF25D366),
               onTap: onClose),
         ],
+      ),
+    );
+  }
+}
+
+class _IconCircle extends StatelessWidget {
+  const _IconCircle({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: dark ? Colors.white : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: IconButton(
+        onPressed: onTap,
+        icon: Icon(icon, size: 18, color: color),
+        padding: EdgeInsets.zero,
       ),
     );
   }

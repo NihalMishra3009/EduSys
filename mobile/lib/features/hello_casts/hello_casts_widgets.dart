@@ -16,14 +16,16 @@ class HelloCastsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    const accent = Color(0xFF5B4AE3);
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
           style: GoogleFonts.spaceGrotesk(
-            color: scheme.primary,
-            fontSize: 20,
+            color: dark ? Colors.white : accent,
+            fontSize: 22,
             fontWeight: FontWeight.w700,
             letterSpacing: -0.2,
           ),
@@ -33,8 +35,8 @@ class HelloCastsHeader extends StatelessWidget {
           Text(
             subtitle,
             style: GoogleFonts.manrope(
-              color: scheme.primary.withValues(alpha: 0.7),
-              fontSize: 12.5,
+              color: dark ? Colors.white70 : accent.withValues(alpha: 0.6),
+              fontSize: 12,
             ),
           ),
         ],
