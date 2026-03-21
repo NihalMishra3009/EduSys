@@ -8145,9 +8145,6 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   }
 
   Future<void> _createOffer(String remotePeerId) async {
-    if (_peerId.compareTo(remotePeerId) >= 0) {
-      return;
-    }
     final pc = await _ensurePeer(remotePeerId);
     final offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -8405,7 +8402,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     if (remotePeerId.isEmpty || remotePeerId == _peerId) {
       return false;
     }
-    return _peerId.compareTo(remotePeerId) > 0;
+    return _peerId.compareTo(remotePeerId) < 0;
   }
 
   void _startTimer() {
