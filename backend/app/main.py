@@ -24,6 +24,7 @@ from app.models.cast import (
     CastMessage,
     CastType,
 )
+from app.realtime import casts_list_hub
 from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, learned, lecture, notification, resources, users, casts
 
 app = FastAPI(title="EduSys API", version="1.0.0")
@@ -966,8 +967,41 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
                             "by_name": user.name or peer_id,
                         },
                     )
+            elif msg_type == "typing":
+                is_typing = bool(payload.get("is_typing", False))
+                await _cast_hub.broadcast_except(
+                    str(cast_id),
+                    peer_id,
+                    {
+                        "type": "typing",
+                        "peer_id": peer_id,
+                        "name": user.name or peer_id,
+                        "is_typing": is_typing,
+                    },
+                )
     except WebSocketDisconnect:
         pass
     finally:
         await _cast_hub.leave(str(cast_id), peer_id)
         db.close()
+
+
+@app.websocket("/ws/casts")
+async def casts_list_socket(websocket: WebSocket):
+    token = websocket.query_params.get("token", "").strip()
+    peer_id = websocket.query_params.get("peer_id", "").strip() or f"peer-{id(websocket)}"
+    if not token:
+        await websocket.close(code=1008)
+        return
+    user = _auth_ws_user(token)
+    if user is None:
+        await websocket.close(code=1008)
+        return
+    await casts_list_hub.join(int(user.id), peer_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await casts_list_hub.leave(int(user.id), peer_id)

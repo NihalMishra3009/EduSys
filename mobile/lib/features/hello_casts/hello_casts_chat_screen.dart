@@ -7,11 +7,13 @@ import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
+import "package:flutter/gestures.dart";
 import "package:google_fonts/google_fonts.dart";
-import "package:edusys_mobile/core/constants/app_colors.dart";
 import "hello_casts_widgets.dart";
 import "hello_casts_call_screen.dart";
 import "package:url_launcher/url_launcher.dart";
+import "package:path_provider/path_provider.dart";
+import "package:record/record.dart";
 
 const Color _castAccent = Color(0xFF5B4AE3);
 const Color _castAccentDark = Color(0xFF4C43C7);
@@ -49,12 +51,23 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Timer? _reconnectTimer;
   Timer? _syncTimer;
   Timer? _clockTimer;
+  Timer? _typingTimer;
+  Timer? _typingDebounce;
   DateTime _now = DateTime.now();
   int _clientMessageCounter = 0;
   String _myName = "Me";
   List<Map<String, dynamic>> _directory = [];
   List<Map<String, dynamic>> _members = [];
   final Set<String> _deletedKeys = {};
+  bool _initialScrollDone = false;
+  final AudioRecorder _recorder = AudioRecorder();
+  Timer? _recordTimer;
+  bool _isRecording = false;
+  DateTime? _recordStart;
+  String? _recordPath;
+  int _recordSeconds = 0;
+  Map<String, dynamic>? _replyTo;
+  final Map<String, DateTime> _typingMembers = {};
 
   String get _messagesCacheKey => "cast_messages_${widget.castId}";
   String get _docsCacheKey => "cast_docs_${widget.castId}";
@@ -88,6 +101,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     _reconnectTimer?.cancel();
     _syncTimer?.cancel();
     _clockTimer?.cancel();
+    _typingTimer?.cancel();
+    _typingDebounce?.cancel();
+    _recordTimer?.cancel();
+    _recorder.dispose();
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     _ws?.close();
@@ -132,7 +149,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       }
     });
     if (messageList.isNotEmpty) {
-      _scrollToBottom();
+      _scrollToBottom(immediate: true);
     }
   }
 
@@ -238,7 +255,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         _loading = false;
       });
       unawaited(_persistMessages());
-      _scrollToBottom();
+      _scrollToBottom(immediate: !_initialScrollDone);
       unawaited(_markRead());
     } else if (!silent) {
       setState(() => _loading = false);
@@ -518,6 +535,18 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         });
         unawaited(_persistDeleted());
         unawaited(_persistMessages());
+      } else if (type == "typing") {
+        final name = msg["name"]?.toString() ?? "Someone";
+        final isTyping = msg["is_typing"] == true;
+        if (isTyping) {
+          _typingMembers[name] = DateTime.now();
+        } else {
+          _typingMembers.remove(name);
+        }
+        _scheduleTypingCleanup();
+        if (mounted) {
+          setState(() {});
+        }
       }
     } catch (_) {}
   }
@@ -534,6 +563,24 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       }
       unawaited(_connectWs());
     });
+  }
+
+  void _scheduleTypingCleanup() {
+    _typingTimer?.cancel();
+    _typingTimer = Timer(const Duration(seconds: 4), () {
+      final now = DateTime.now();
+      _typingMembers.removeWhere((_, ts) => now.difference(ts).inSeconds > 3);
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  void _sendTyping(bool isTyping) {
+    if (_ws == null) return;
+    try {
+      _ws!.add(jsonEncode({"type": "typing", "is_typing": isTyping}));
+    } catch (_) {}
   }
 
   void _upsertMessage(Map<String, dynamic> incoming) {
@@ -630,6 +677,48 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Wrap(
+                spacing: 10,
+                children: ["👍", "❤️", "😂", "😮", "😢", "🙏"]
+                    .map(
+                      (emoji) => InkWell(
+                        onTap: () async {
+                          Navigator.pop(ctx);
+                          await _sendReaction(message, emoji);
+                        },
+                        borderRadius: BorderRadius.circular(24),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: Text(emoji, style: const TextStyle(fontSize: 18)),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.reply_rounded),
+                title: const Text("Reply"),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _setReplyTo(message);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.forward_rounded),
+                title: const Text("Forward"),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _showForwardPicker(message);
+                },
+              ),
               ListTile(
                 leading: const Icon(Icons.delete_outline_rounded),
                 title: const Text("Remove from my chat"),
@@ -683,26 +772,27 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  Future<void> _markRead() async {
-    try {
-      _ws?.add(jsonEncode({"type": "read"}));
-    } catch (_) {}
-    await _api.markCastRead(castId: widget.castId);
+  Future<void> _openLink(String url) async {
+    Uri? uri = Uri.tryParse(url);
+    if (uri == null) {
+      GlassToast.show(context, "Invalid link", icon: Icons.error_outline);
+      return;
+    }
+    if (uri.scheme.isEmpty) {
+      uri = Uri.tryParse("https://$url");
+    }
+    if (uri == null) {
+      GlassToast.show(context, "Invalid link", icon: Icons.error_outline);
+      return;
+    }
+    if (!await canLaunchUrl(uri)) {
+      GlassToast.show(context, "Unable to open link", icon: Icons.error_outline);
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(
-          _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      }
-    });
-  }
-
-  Map<String, dynamic> _decodeMessage(String raw) {
+  Map<String, dynamic> _safeDecode(String raw) {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) {
@@ -710,6 +800,225 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       }
     } catch (_) {}
     return {"type": "TEXT", "body": raw};
+  }
+
+  String _messageType(Map<String, dynamic> message) {
+    final raw = message["message"]?.toString() ?? "";
+    return (_safeDecode(raw)["type"] ?? "TEXT").toString();
+  }
+
+  Map<int, Map<String, int>> _collectReactions(List<Map<String, dynamic>> messages) {
+    final map = <int, Map<String, int>>{};
+    for (final msg in messages) {
+      final raw = msg["message"]?.toString() ?? "";
+      final decoded = _safeDecode(raw);
+      if (decoded["type"]?.toString() != "REACTION") continue;
+      final targetId = decoded["target_id"];
+      final emoji = decoded["emoji"]?.toString();
+      if (emoji == null || emoji.isEmpty) continue;
+      final id = (targetId as num?)?.toInt();
+      if (id == null) continue;
+      map.putIfAbsent(id, () => {});
+      map[id]![emoji] = (map[id]![emoji] ?? 0) + 1;
+    }
+    return map;
+  }
+
+  Future<void> _sendReaction(Map<String, dynamic> message, String emoji) async {
+    final messageId = (message["id"] as num?)?.toInt();
+    if (messageId == null) {
+      GlassToast.show(context, "Wait for message to send first",
+          icon: Icons.info_outline);
+      return;
+    }
+    await _send(
+      type: "REACTION",
+      extra: {
+        "target_id": messageId,
+        "emoji": emoji,
+      },
+    );
+  }
+
+  void _setReplyTo(Map<String, dynamic> message) {
+    final raw = message["message"]?.toString() ?? "";
+    final decoded = _safeDecode(raw);
+    final body = decoded["body"]?.toString();
+    final attachName = decoded["attachment_name"]?.toString();
+    final snippet = body?.isNotEmpty == true ? body! : (attachName ?? "Attachment");
+    setState(() {
+      _replyTo = {
+        "id": (message["id"] as num?)?.toInt(),
+        "sender": message["sender_name"]?.toString() ?? "Member",
+        "snippet": snippet,
+      };
+    });
+  }
+
+  Future<void> _showForwardPicker(Map<String, dynamic> message) async {
+    final res = await _api.listCasts();
+    if (!mounted) return;
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      GlassToast.show(context, "Unable to load casts",
+          icon: Icons.error_outline);
+      return;
+    }
+    final casts = (jsonDecode(res.body) as List)
+        .whereType<Map<String, dynamic>>()
+        .where((c) => (c["id"] as num?)?.toInt() != widget.castId)
+        .toList();
+    if (casts.isEmpty) {
+      GlassToast.show(context, "No other casts found",
+          icon: Icons.info_outline);
+      return;
+    }
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => ListView(
+        children: [
+          const ListTile(
+            title: Text("Forward to"),
+          ),
+          ...casts.map((c) {
+            return ListTile(
+              title: Text(c["name"]?.toString() ?? "Cast"),
+              subtitle: Text(c["cast_type"]?.toString() ?? "Group"),
+              onTap: () => Navigator.pop(ctx, (c["id"] as num).toInt()),
+            );
+          }),
+        ],
+      ),
+    );
+    if (selected == null) return;
+    final raw = message["message"]?.toString() ?? "";
+    final decoded = _safeDecode(raw);
+    final payload = _encodePayload(
+      type: decoded["type"]?.toString() ?? "TEXT",
+      body: decoded["body"]?.toString(),
+      attachUrl: decoded["attachment_url"]?.toString(),
+      attachName: decoded["attachment_name"]?.toString(),
+      durationSecs: decoded["duration_secs"] as int?,
+      extra: {
+        if (decoded["reply_to"] != null) "reply_to": decoded["reply_to"],
+        "forwarded_from": {
+          "cast_id": widget.castId,
+          "cast_name": widget.title,
+          "sender_name": message["sender_name"]?.toString() ?? "Member",
+        },
+      },
+    );
+    final sendRes = await _api.sendCastMessage(
+      castId: selected,
+      message: payload,
+    );
+    if (!mounted) return;
+    if (sendRes.statusCode >= 200 && sendRes.statusCode < 300) {
+      GlassToast.show(context, "Forwarded", icon: Icons.check_circle_outline);
+    } else {
+      GlassToast.show(context, "Forward failed", icon: Icons.error_outline);
+    }
+  }
+
+  Future<void> _startRecording() async {
+    if (_isRecording) return;
+    final ok = await _recorder.hasPermission();
+    if (!ok) {
+      GlassToast.show(context, "Microphone permission required",
+          icon: Icons.error_outline);
+      return;
+    }
+    final dir = await getTemporaryDirectory();
+    final path =
+        "${dir.path}/cast_voice_${DateTime.now().millisecondsSinceEpoch}.m4a";
+    await _recorder.start(
+      const RecordConfig(
+        encoder: AudioEncoder.aacLc,
+        bitRate: 128000,
+        sampleRate: 44100,
+      ),
+      path: path,
+    );
+    _recordTimer?.cancel();
+    setState(() {
+      _isRecording = true;
+      _recordStart = DateTime.now();
+      _recordPath = path;
+      _recordSeconds = 0;
+    });
+    _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_isRecording || _recordStart == null) return;
+      setState(() {
+        _recordSeconds = DateTime.now().difference(_recordStart!).inSeconds;
+      });
+    });
+  }
+
+  Future<void> _stopRecording({bool send = true}) async {
+    if (!_isRecording) return;
+    _recordTimer?.cancel();
+    final path = await _recorder.stop();
+    final duration = _recordSeconds;
+    setState(() {
+      _isRecording = false;
+      _recordStart = null;
+      _recordSeconds = 0;
+      _recordPath = path ?? _recordPath;
+    });
+    if (!send) return;
+    final filePath = path ?? _recordPath;
+    if (filePath == null) return;
+    GlassToast.show(context, "Uploading...", icon: Icons.upload_rounded);
+    final res = await _api.uploadAttachment(filePath: filePath, purpose: "cast");
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final url = data["url"]?.toString();
+      if (url == null || url.isEmpty) return;
+      await _send(
+        type: "VOICE_NOTE",
+        attachUrl: url,
+        attachName: "voice_note.m4a",
+        durationSecs: duration,
+      );
+    } else {
+      GlassToast.show(context, "Upload failed", icon: Icons.error_outline);
+    }
+  }
+
+  String _formatRecordTime(int seconds) {
+    final m = (seconds ~/ 60).toString().padLeft(2, "0");
+    final s = (seconds % 60).toString().padLeft(2, "0");
+    return "$m:$s";
+  }
+
+  Future<void> _markRead() async {
+    try {
+      _ws?.add(jsonEncode({"type": "read"}));
+    } catch (_) {}
+    await _api.markCastRead(castId: widget.castId);
+  }
+
+  void _scrollToBottom({bool immediate = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        final target = _scrollCtrl.position.maxScrollExtent;
+        if (immediate || !_initialScrollDone) {
+          _scrollCtrl.jumpTo(target);
+          _initialScrollDone = true;
+        } else {
+          _scrollCtrl.animateTo(
+            target,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      }
+    });
+  }
+
+  Map<String, dynamic> _decodeMessage(String raw) {
+    return _safeDecode(raw);
   }
 
   List<Map<String, dynamic>> _extractDocs(List<Map<String, dynamic>> messages) {
@@ -732,12 +1041,35 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     return docs;
   }
 
+  String _encodePayload({
+    required String type,
+    String? body,
+    String? attachUrl,
+    String? attachName,
+    int? durationSecs,
+    Map<String, dynamic>? extra,
+  }) {
+    final payload = {
+      "type": type,
+      "body": body,
+      "attachment_url": attachUrl,
+      "attachment_name": attachName,
+      "duration_secs": durationSecs,
+      if (extra != null) ...extra,
+    };
+    if (type == "TEXT" && (attachUrl == null || attachUrl.isEmpty)) {
+      return (body ?? "").toString();
+    }
+    return jsonEncode(payload);
+  }
+
   Future<void> _send({
     String type = "TEXT",
     String? body,
     String? attachUrl,
     String? attachName,
     int? durationSecs,
+    Map<String, dynamic>? extra,
   }) async {
     final text = body ?? _msgCtrl.text.trim();
     if (text.isEmpty && attachUrl == null) return;
@@ -749,6 +1081,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       "attachment_url": attachUrl,
       "attachment_name": attachName,
       "duration_secs": durationSecs,
+      if (_replyTo != null) "reply_to": _replyTo,
+      if (extra != null) ...extra,
     };
 
     final messageText = type == "TEXT" && attachUrl == null
@@ -769,9 +1103,16 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       "_failed": false,
     };
     setState(() => _messages = _sortedMessages([..._messages, opt]));
+    if (_replyTo != null) {
+      setState(() => _replyTo = null);
+    }
     unawaited(_persistMessages());
     _scrollToBottom();
 
+    _sendTyping(false);
+    if (_ws == null) {
+      unawaited(_connectWs());
+    }
     if (_ws != null) {
       try {
         _ws!.add(jsonEncode({
@@ -998,9 +1339,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
-    final background = dark ? _castAccentDark : _castLightBg;
-    final appBarBg = dark ? _castAccent : Colors.white;
-    final appBarFg = dark ? Colors.white : Colors.black87;
+    final background = dark ? Colors.transparent : _castLightBg;
+    final appBarBg = Theme.of(context).appBarTheme.backgroundColor ??
+        (dark ? Colors.transparent : Colors.white);
+    final appBarFg = dark ? scheme.onSurface : Colors.black87;
     return Stack(
       children: [
         Scaffold(
@@ -1013,12 +1355,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
               children: [
                 CircleAvatar(
                   radius: 18,
-                  backgroundColor:
-                      dark ? Colors.white24 : _castIncomingLight,
+                  backgroundColor: dark
+                      ? scheme.primary.withValues(alpha: 0.16)
+                      : _castIncomingLight,
                   child: Text(
                     widget.title.isNotEmpty ? widget.title[0].toUpperCase() : "?",
                     style: TextStyle(
-                      color: dark ? Colors.white : _castAccent,
+                      color: dark ? scheme.onSurface : _castAccent,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -1047,10 +1390,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
               ],
             ),
             actions: [
-              _IconCircle(
-                icon: Icons.alarm_add_rounded,
-                color: _castAccent,
-                onTap: _sendScheduled,
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: _IconCircle(
+                  icon: Icons.alarm_add_rounded,
+                  color: _castAccent,
+                  onTap: _sendScheduled,
+                ),
               ),
             ],
           ),
@@ -1058,7 +1404,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             children: [
               if (_scheduled.isNotEmpty)
                 Container(
-                  color: scheme.secondary.withValues(alpha: dark ? 0.2 : 0.12),
+                  color: scheme.secondary.withValues(alpha: dark ? 0.18 : 0.12),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Row(
@@ -1082,18 +1428,28 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
               Expanded(
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
-                    : ListView.builder(
-                        controller: _scrollCtrl,
-                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                        itemCount: _messages.length,
-                        itemBuilder: (_, i) => _MessageBubble(
-                          msg: _messages[i],
-                          isMe: _isMe(_messages[i]),
-                          decode: _decodeMessage,
-                          onLongPress: () =>
-                              _showMessageActions(_messages[i], _isMe(_messages[i])),
-                          onOpenAttachment: _openAttachment,
-                        ),
+                    : Builder(
+                        builder: (_) {
+                          final reactions = _collectReactions(_messages);
+                          final visible = _messages
+                              .where((m) => _messageType(m) != "REACTION")
+                              .toList();
+                          return ListView.builder(
+                            controller: _scrollCtrl,
+                            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                            itemCount: visible.length,
+                            itemBuilder: (_, i) => _MessageBubble(
+                              msg: visible[i],
+                              isMe: _isMe(visible[i]),
+                              decode: _decodeMessage,
+                              onLongPress: () =>
+                                  _showMessageActions(visible[i], _isMe(visible[i])),
+                              onOpenAttachment: _openAttachment,
+                              onOpenLink: _openLink,
+                              reactions: reactions[(visible[i]["id"] as num?)?.toInt()],
+                            ),
+                          );
+                        },
                       ),
               ),
               Container(
@@ -1108,6 +1464,98 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                           _pickAndSendFile();
                         },
                         onClose: () => setState(() => _showAttachMenu = false),
+                      ),
+                    if (_typingMembers.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            "${_typingMembers.keys.join(", ")} typing...",
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface.withValues(alpha: 0.6),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (_replyTo != null)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: scheme.onSurface.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: scheme.onSurface.withValues(alpha: 0.12),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    (_replyTo?["sender"] ?? "Member").toString(),
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: scheme.onSurface,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    (_replyTo?["snippet"] ?? "").toString(),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: scheme.onSurface.withValues(alpha: 0.7),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => setState(() => _replyTo = null),
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (_isRecording)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.mic_rounded, color: Colors.red),
+                            const SizedBox(width: 8),
+                            Text(
+                              "Recording ${_formatRecordTime(_recordSeconds)}",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: Colors.red,
+                              ),
+                            ),
+                            const Spacer(),
+                            TextButton(
+                              onPressed: () => _stopRecording(send: false),
+                              child: const Text("Discard"),
+                            ),
+                            TextButton(
+                              onPressed: () => _stopRecording(send: true),
+                              child: const Text("Send"),
+                            ),
+                          ],
+                        ),
                       ),
                     Row(
                       children: [
@@ -1124,36 +1572,65 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                         Expanded(
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(24),
+                              color: dark ? scheme.surface : Colors.white,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: dark
+                                    ? scheme.onSurface.withValues(alpha: 0.12)
+                                    : Colors.black12,
+                              ),
                             ),
-                            child: Row(
-                              children: [
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: TextField(
-                                    controller: _msgCtrl,
-                                    decoration: const InputDecoration(
-                                      hintText: "Type a message",
-                                      border: InputBorder.none,
-                                      isDense: true,
-                                      contentPadding: EdgeInsets.symmetric(
-                                          horizontal: 0, vertical: 12),
-                                    ),
-                                    textInputAction: TextInputAction.send,
-                                    onSubmitted: (_) => _send(),
-                                  ),
+                            clipBehavior: Clip.antiAlias,
+                              child: TextField(
+                                controller: _msgCtrl,
+                                decoration: const InputDecoration(
+                                  hintText: "Type a message",
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 12),
                                 ),
-                              ],
-                            ),
+                                textInputAction: TextInputAction.send,
+                                onChanged: (value) {
+                                  _typingDebounce?.cancel();
+                                  final hasText = value.trim().isNotEmpty;
+                                  if (hasText) {
+                                    _sendTyping(true);
+                                    _typingDebounce =
+                                        Timer(const Duration(seconds: 2), () {
+                                      _sendTyping(false);
+                                    });
+                                  } else {
+                                    _sendTyping(false);
+                                  }
+                                },
+                                onSubmitted: (_) => _send(),
+                              ),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        FloatingActionButton.small(
-                          backgroundColor: _castAccent,
-                          onPressed: _send,
-                          child:
-                              const Icon(Icons.send_rounded, color: Colors.white),
+                        ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: _msgCtrl,
+                          builder: (context, value, _) {
+                            final hasText = value.text.trim().isNotEmpty;
+                            return Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (!hasText && !_isRecording)
+                                  IconButton(
+                                    icon: const Icon(Icons.mic_rounded),
+                                    color: _castAccent,
+                                    onPressed: _startRecording,
+                                  ),
+                                FloatingActionButton.small(
+                                  backgroundColor: _castAccent,
+                                  onPressed: _send,
+                                  child: const Icon(Icons.send_rounded,
+                                      color: Colors.white),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -1175,12 +1652,16 @@ class _MessageBubble extends StatelessWidget {
     required this.decode,
     required this.onLongPress,
     required this.onOpenAttachment,
+    required this.onOpenLink,
+    this.reactions,
   });
   final Map<String, dynamic> msg;
   final bool isMe;
   final Map<String, dynamic> Function(String raw) decode;
   final VoidCallback onLongPress;
   final Future<void> Function(String? url) onOpenAttachment;
+  final Future<void> Function(String url) onOpenLink;
+  final Map<String, int>? reactions;
 
   @override
   Widget build(BuildContext context) {
@@ -1191,14 +1672,19 @@ class _MessageBubble extends StatelessWidget {
     final body = decoded["body"]?.toString();
     final attachName = decoded["attachment_name"]?.toString();
     final attachUrl = decoded["attachment_url"]?.toString();
+    final replyTo = decoded["reply_to"];
+    final forwardedFrom = decoded["forwarded_from"];
     final senderName = msg["sender_name"]?.toString();
     final isPending = msg["_pending"] == true;
     final isFailed = msg["_failed"] == true;
     final isAlert = type == "ALERT" || type == "REMINDER";
-    final bubbleBg =
-        isMe ? Colors.white : (dark ? _castIncomingDark : _castIncomingLight);
-    final textColor =
-        isMe ? _castAccent : (dark ? Colors.white : Colors.black87);
+    final scheme = Theme.of(context).colorScheme;
+    final bubbleBg = isMe
+        ? (dark ? scheme.primary : Colors.white)
+        : (dark ? scheme.surface : _castIncomingLight);
+    final textColor = isMe
+        ? (dark ? scheme.onPrimary : _castAccent)
+        : (dark ? scheme.onSurface : Colors.black87);
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(18),
       topRight: const Radius.circular(18),
@@ -1225,6 +1711,53 @@ class _MessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (forwardedFrom != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      "Forwarded",
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: textColor.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ),
+                if (replyTo is Map)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: textColor.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: textColor.withValues(alpha: 0.18),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (replyTo["sender"] ?? "Member").toString(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: textColor.withValues(alpha: 0.9),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          (replyTo["snippet"] ?? "").toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: textColor.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (!isMe && senderName != null && senderName.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4),
@@ -1284,39 +1817,88 @@ class _MessageBubble extends StatelessWidget {
                   InkWell(
                     onTap: () => onOpenAttachment(attachUrl),
                     borderRadius: BorderRadius.circular(10),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          type == "IMAGE"
-                              ? Icons.image_rounded
-                              : Icons.insert_drive_file_rounded,
-                          size: 18,
-                          color: textColor,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(attachName ?? "File",
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: textColor,
+                        if (type == "IMAGE" && attachUrl != null && attachUrl.isNotEmpty)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.network(
+                              attachUrl,
+                              height: 160,
+                              width: 240,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                height: 120,
+                                color: textColor.withValues(alpha: 0.08),
+                                child: Center(
+                                  child: Icon(Icons.image_not_supported_rounded,
+                                      color: textColor),
+                                ),
                               ),
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(Icons.download_rounded,
-                            size: 16, color: textColor),
+                            ),
+                          )
+                        else
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: textColor.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.insert_drive_file_rounded,
+                                    size: 18, color: textColor),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(attachName ?? "File",
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: textColor,
+                                      ),
+                                      overflow: TextOverflow.ellipsis),
+                                ),
+                                const SizedBox(width: 6),
+                                Icon(Icons.download_rounded,
+                                    size: 16, color: textColor),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   )
                 else if (body != null && body.isNotEmpty)
-                  Text(
-                    body,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: textColor,
-                    ),
+                  _LinkText(
+                    text: body,
+                    color: textColor,
+                    onTap: onOpenLink,
                   ),
                 const SizedBox(height: 4),
+                if (reactions != null && reactions!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: reactions!.entries.map((entry) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: textColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            "${entry.key} ${entry.value}",
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: textColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.end,
@@ -1380,6 +1962,56 @@ class _AttachMenu extends StatelessWidget {
               color: Colors.orange,
               onTap: onClose),
         ],
+      ),
+    );
+  }
+}
+
+class _LinkText extends StatelessWidget {
+  const _LinkText({
+    required this.text,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String text;
+  final Color color;
+  final Future<void> Function(String url) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final regex = RegExp(
+      r'((https?:\/\/)?(www\.)?[^\s]+\.[^\s]{2,})',
+      caseSensitive: false,
+    );
+    final spans = <TextSpan>[];
+    int start = 0;
+    for (final match in regex.allMatches(text)) {
+      if (match.start > start) {
+        spans.add(TextSpan(text: text.substring(start, match.start)));
+      }
+      final linkText = text.substring(match.start, match.end);
+      spans.add(TextSpan(
+        text: linkText,
+        style: TextStyle(
+          color: color.withValues(alpha: 0.85),
+          decoration: TextDecoration.underline,
+          fontWeight: FontWeight.w600,
+        ),
+        recognizer: TapGestureRecognizer()
+          ..onTap = () {
+            onTap(linkText);
+          },
+      ));
+      start = match.end;
+    }
+    if (start < text.length) {
+      spans.add(TextSpan(text: text.substring(start)));
+    }
+    return RichText(
+      text: TextSpan(
+        style: TextStyle(fontSize: 14, color: color),
+        children: spans,
       ),
     );
   }

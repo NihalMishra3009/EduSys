@@ -1,7 +1,9 @@
 import "dart:async";
 import "dart:convert";
+import "dart:io";
 
 import "package:edusys_mobile/core/utils/time_format.dart";
+import "package:edusys_mobile/core/animations/app_transitions.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
@@ -28,6 +30,8 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   final ApiService _api = ApiService();
   Timer? _refreshTimer;
   Timer? _clockTimer;
+  WebSocket? _castsWs;
+  Timer? _castsWsRetry;
   DateTime _now = DateTime.now();
 
   int _tabIndex = 0;
@@ -117,6 +121,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   void initState() {
     super.initState();
     _loadData();
+    _connectCastsWs();
     _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       _loadData(silent: true);
     });
@@ -131,8 +136,61 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   void dispose() {
     _refreshTimer?.cancel();
     _clockTimer?.cancel();
+    _castsWsRetry?.cancel();
+    _castsWs?.close();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _connectCastsWs() async {
+    _castsWsRetry?.cancel();
+    if (_castsWs != null) return;
+    try {
+      final url = await _api.castsListGetWsUrl();
+      final socket = await WebSocket.connect(url);
+      if (!mounted) {
+        await socket.close();
+        return;
+      }
+      _castsWs = socket;
+      socket.listen(
+        _handleCastsWs,
+        onDone: _handleCastsWsClosed,
+        onError: (_) => _handleCastsWsClosed(),
+      );
+    } catch (_) {
+      _handleCastsWsClosed();
+    }
+  }
+
+  void _handleCastsWs(dynamic raw) {
+    try {
+      final msg = jsonDecode(raw.toString()) as Map<String, dynamic>;
+      final type = msg["type"]?.toString() ?? "";
+      if (type == "cast_created") {
+        final cast = msg["cast"];
+        if (cast is Map<String, dynamic>) {
+          final id = (cast["id"] as num?)?.toInt();
+          if (id == null) return;
+          final exists = _casts.any((c) => (c["id"] as num?)?.toInt() == id);
+          if (!exists && mounted) {
+            setState(() {
+              _casts = [cast, ..._casts];
+            });
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _handleCastsWsClosed() {
+    _castsWs = null;
+    if (!mounted) return;
+    _castsWsRetry?.cancel();
+    _castsWsRetry = Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      unawaited(_connectCastsWs());
+    });
   }
 
   Future<void> _loadData({bool silent = false}) async {
@@ -879,6 +937,8 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         .toList();
     final communities = _filteredCasts("Community");
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final chipTheme = Theme.of(context).chipTheme;
 
     return Scaffold(
       floatingActionButton: FloatingActionButton(
@@ -886,15 +946,24 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         onPressed: _showHeaderActions,
         child: const Icon(Icons.edit_rounded, color: Colors.white),
       ),
-      backgroundColor: dark ? _castsAccentDark : _castsLightBg,
+      backgroundColor: dark ? Colors.transparent : _castsLightBg,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Column(
             children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  IconButton(
+                    onPressed: () =>
+                        Navigator.of(context).popUntil((route) => route.isFirst),
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+                    tooltip: "Home",
+                  ),
+                  const SizedBox(width: 6),
                   const Expanded(
                     child: HelloCastsHeader(
                       title: "Casts",
@@ -954,11 +1023,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                                         .toInt())
                                                 : null,
                                             onTap: () {
-                                              Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      HelloCastsChatScreen(
+                                              Navigator.of(context).push(
+                                                AppTransitions.fadeSlide(
+                                                  HelloCastsChatScreen(
                                                     castId:
                                                         (c["id"] as num).toInt(),
                                                     title:
@@ -990,11 +1057,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                                 trailing: const Icon(
                                                     Icons.chevron_right_rounded),
                                                 onTap: () {
-                                                  Navigator.push(
-                                                    context,
-                                                    MaterialPageRoute(
-                                                      builder: (_) =>
-                                                          HelloCastsChatScreen(
+                                                  Navigator.of(context).push(
+                                                    AppTransitions.fadeSlide(
+                                                      HelloCastsChatScreen(
                                                         castId:
                                                             (c["id"] as num)
                                                                 .toInt(),
@@ -1090,6 +1155,8 @@ class _FilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final chipTheme = Theme.of(context).chipTheme;
     return SizedBox(
       height: 38,
       child: ListView.separated(
@@ -1103,12 +1170,12 @@ class _FilterBar extends StatelessWidget {
             selected: active,
             label: Text(f),
             onSelected: (_) => onChanged(f),
-            selectedColor: dark ? Colors.white : _castsAccent,
-            backgroundColor: dark ? _castsDarkChip : _castsLightChip,
+            selectedColor: dark ? (chipTheme.selectedColor ?? scheme.primary.withValues(alpha: 0.24)) : _castsAccent,
+            backgroundColor: dark ? (chipTheme.backgroundColor ?? scheme.surface) : _castsLightChip,
             labelStyle: TextStyle(
               color: active
-                  ? (dark ? _castsAccent : Colors.white)
-                  : (dark ? Colors.white70 : _castsLightText),
+                  ? (dark ? scheme.onSurface : Colors.white)
+                  : (dark ? scheme.onSurface.withValues(alpha: 0.7) : _castsLightText),
               fontWeight: FontWeight.w700,
             ),
           );
@@ -1134,6 +1201,8 @@ class _UnifiedFilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final chipTheme = Theme.of(context).chipTheme;
     const items = ["All chats", "Individual", "Group", "Community", "Alerts"];
     return SizedBox(
       height: 38,
@@ -1174,12 +1243,12 @@ class _UnifiedFilterBar extends StatelessWidget {
                 },
               );
             },
-            selectedColor: dark ? Colors.white : _castsAccent,
-            backgroundColor: dark ? _castsDarkChip : _castsLightChip,
+            selectedColor: dark ? (chipTheme.selectedColor ?? scheme.primary.withValues(alpha: 0.24)) : _castsAccent,
+            backgroundColor: dark ? (chipTheme.backgroundColor ?? scheme.surface) : _castsLightChip,
             labelStyle: TextStyle(
               color: isSelected
-                  ? (dark ? _castsAccent : Colors.white)
-                  : (dark ? Colors.white70 : _castsLightText),
+                  ? (dark ? scheme.onSurface : Colors.white)
+                  : (dark ? scheme.onSurface.withValues(alpha: 0.7) : _castsLightText),
               fontWeight: FontWeight.w700,
             ),
           );
@@ -1230,31 +1299,35 @@ class _CastTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final bg = dark ? const Color(0xFF5F57DD) : Colors.white;
+    final scheme = Theme.of(context).colorScheme;
+    final bg = dark ? scheme.surface : Colors.white;
+    final borderColor = Theme.of(context).dividerTheme.color ?? scheme.onSurface.withValues(alpha: 0.12);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
-          if (!dark)
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
-            ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
         ],
+        border: dark ? Border.all(color: borderColor) : null,
       ),
       child: ListTile(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         leading: CircleAvatar(
           radius: 22,
-          backgroundColor: dark ? Colors.white24 : _castsLightChip,
+          backgroundColor: dark
+              ? scheme.primary.withValues(alpha: 0.16)
+              : _castsLightChip,
           child: Text(
             title.isNotEmpty ? title[0].toUpperCase() : "?",
             style: TextStyle(
               fontWeight: FontWeight.w700,
-              color: dark ? Colors.white : _castsAccent,
+              color: _castsAccent,
             ),
           ),
         ),
@@ -1262,16 +1335,20 @@ class _CastTile extends StatelessWidget {
           title,
           style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: dark ? Colors.white : Colors.black87,
+            color: dark ? scheme.onSurface : Colors.black87,
           ),
         ),
         subtitle: Text(
           subtitle,
-          style: TextStyle(color: dark ? Colors.white70 : Colors.black54),
+          style: TextStyle(
+            color: dark ? scheme.onSurface.withValues(alpha: 0.7) : Colors.black54,
+          ),
         ),
         trailing: trailing ??
-            Icon(Icons.chevron_right_rounded,
-                color: dark ? Colors.white70 : Colors.black45),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: dark ? scheme.onSurface.withValues(alpha: 0.5) : Colors.black45,
+            ),
         onTap: onTap,
       ),
     );
@@ -1348,32 +1425,52 @@ class _SearchCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final borderColor = Theme.of(context).dividerTheme.color ?? scheme.onSurface.withValues(alpha: 0.12);
     return SizedBox(
       width: 190,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: dark ? scheme.surface : Colors.white,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-              color: dark ? Colors.white24 : Colors.black12),
+          border: Border.all(color: dark ? borderColor : Colors.black12),
         ),
         child: Row(
           children: [
             Icon(Icons.search_rounded,
                 size: 18,
-                color: dark ? Colors.black54 : Colors.black54),
+                color: dark
+                    ? scheme.onSurface.withValues(alpha: 0.55)
+                    : Colors.black54),
             const SizedBox(width: 6),
             Expanded(
-              child: TextField(
-                controller: controller,
-                onChanged: onChanged,
-                decoration: const InputDecoration(
-                  hintText: "Search",
-                  border: InputBorder.none,
-                  isDense: true,
+              child: Theme(
+                data: Theme.of(context).copyWith(
+                  inputDecorationTheme: const InputDecorationTheme(
+                    filled: false,
+                    fillColor: Colors.transparent,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                  ),
                 ),
-                style: const TextStyle(color: Colors.black87),
+                child: TextField(
+                  controller: controller,
+                  onChanged: onChanged,
+                  decoration: const InputDecoration(
+                    hintText: "Search",
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    isDense: true,
+                    filled: false,
+                    fillColor: Colors.transparent,
+                  ),
+                  style: TextStyle(
+                    color: dark ? scheme.onSurface : Colors.black87,
+                  ),
+                ),
               ),
             ),
           ],

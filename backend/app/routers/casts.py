@@ -29,6 +29,7 @@ from app.schemas.cast import (
     CastInviteOut,
     CastInviteRespondRequest,
 )
+from app.realtime import casts_list_hub
 
 router = APIRouter()
 
@@ -118,7 +119,7 @@ def list_casts(
 
 
 @router.post("", response_model=CastOut)
-def create_cast(
+async def create_cast(
     payload: CastCreateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -197,14 +198,24 @@ def create_cast(
             )
     db.commit()
 
-    return CastOut(
+    members_count = len(payload.member_ids) + 1
+    out = CastOut(
         id=item.id,
         name=item.name,
         cast_type=cast_type.value,
-        members_count=len(payload.member_ids) + 1,
+        members_count=members_count,
         last_message=None,
         last_message_at=None,
     )
+    member_ids = list(set([current_user.id, *payload.member_ids]))
+    await casts_list_hub.broadcast_to_users(
+        member_ids,
+        {
+            "type": "cast_created",
+            "cast": out.model_dump(),
+        },
+    )
+    return out
 
 
 @router.get("/{cast_id}/messages", response_model=list[CastMessageOut])
