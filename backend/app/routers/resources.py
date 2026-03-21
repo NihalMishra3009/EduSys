@@ -50,6 +50,13 @@ _allowed_upload_extensions = {
     ".png",
     ".jpg",
     ".jpeg",
+    ".mp3",
+    ".m4a",
+    ".wav",
+    ".aac",
+    ".ogg",
+    ".webm",
+    ".mp4",
 }
 _max_upload_size_bytes = 15 * 1024 * 1024
 

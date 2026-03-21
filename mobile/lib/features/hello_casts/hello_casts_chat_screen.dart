@@ -816,7 +816,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       final targetId = decoded["target_id"];
       final emoji = decoded["emoji"]?.toString();
       if (emoji == null || emoji.isEmpty) continue;
-      final id = (targetId as num?)?.toInt();
+      final id = targetId is num
+          ? targetId.toInt()
+          : int.tryParse(targetId?.toString() ?? "");
       if (id == null) continue;
       map.putIfAbsent(id, () => {});
       map[id]![emoji] = (map[id]![emoji] ?? 0) + 1;
@@ -917,7 +919,11 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (sendRes.statusCode >= 200 && sendRes.statusCode < 300) {
       GlassToast.show(context, "Forwarded", icon: Icons.check_circle_outline);
     } else {
-      GlassToast.show(context, "Forward failed", icon: Icons.error_outline);
+      GlassToast.show(
+        context,
+        _detail(sendRes.body, fallback: "Forward failed"),
+        icon: Icons.error_outline,
+      );
     }
   }
 
@@ -1795,135 +1801,122 @@ class _MessageBubble extends StatelessWidget {
                       const SizedBox(height: 4),
                     ],
                     if (type == "VOICE_NOTE")
-                      InkWell(
-                        onTap: () => onOpenAttachment(attachUrl),
-                        borderRadius: BorderRadius.circular(10),
-                        child: Row(
-                          children: [
-                            Icon(Icons.mic_rounded,
-                                size: 20,
-                                color: textColor),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Container(
-                                height: 3,
-                                decoration: BoxDecoration(
-                                  color: textColor.withValues(alpha: 0.35),
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
+                      Row(
+                        children: [
+                          Icon(Icons.mic_rounded, size: 20, color: textColor),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Container(
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: textColor.withValues(alpha: 0.35),
+                                borderRadius: BorderRadius.circular(2),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Text("${decoded["duration_secs"] ?? 0}s",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: textColor,
-                                )),
-                            const SizedBox(width: 6),
-                            Icon(Icons.open_in_new_rounded,
-                                size: 14, color: textColor),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text("${decoded["duration_secs"] ?? 0}s",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: textColor,
+                              )),
+                        ],
                       )
                     else if (type == "FILE" || type == "IMAGE")
-                      InkWell(
-                        onTap: () => onOpenAttachment(attachUrl),
-                        borderRadius: BorderRadius.circular(10),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (type == "IMAGE" &&
-                                attachUrl != null &&
-                                attachUrl.isNotEmpty)
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Image.network(
-                                  attachUrl,
-                                  height: 160,
-                                  width: 240,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    height: 120,
-                                    color: textColor.withValues(alpha: 0.08),
-                                    child: Center(
-                                      child: Icon(Icons.image_not_supported_rounded,
-                                          color: textColor),
-                                    ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (type == "IMAGE" &&
+                              attachUrl != null &&
+                              attachUrl.isNotEmpty)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.network(
+                                attachUrl,
+                                height: 160,
+                                width: 240,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => Container(
+                                  height: 120,
+                                  color: textColor.withValues(alpha: 0.08),
+                                  child: Center(
+                                    child: Icon(Icons.image_not_supported_rounded,
+                                        color: textColor),
                                   ),
                                 ),
-                              )
-                            else
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: textColor.withValues(alpha: 0.08),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(_fileIcon(attachName, attachUrl),
-                                        size: 18, color: textColor),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        attachName ?? "File",
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          color: textColor,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
+                              ),
+                            )
+                          else
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: textColor.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(_fileIcon(attachName, attachUrl),
+                                      size: 18, color: textColor),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      attachName ?? "File",
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: textColor,
                                       ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    const SizedBox(width: 6),
-                                    Icon(Icons.download_rounded,
-                                        size: 16, color: textColor),
-                                  ],
-                                ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Icon(Icons.download_rounded,
+                                      size: 16, color: textColor),
+                                ],
                               ),
-                            if (_isVideoFile(attachName, attachUrl))
-                              Container(
-                                margin: const EdgeInsets.only(top: 6),
-                                height: 140,
-                                width: 240,
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.85),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Center(
-                                  child: Icon(Icons.play_circle_fill_rounded,
-                                      size: 48, color: Colors.white),
-                                ),
+                            ),
+                          if (_isVideoFile(attachName, attachUrl))
+                            Container(
+                              margin: const EdgeInsets.only(top: 6),
+                              height: 140,
+                              width: 240,
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.85),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                            if (_isPdfFile(attachName, attachUrl))
-                              Container(
-                                margin: const EdgeInsets.only(top: 6),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: textColor.withValues(alpha: 0.08),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.picture_as_pdf_rounded,
-                                        color: textColor),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        attachName ?? "PDF document",
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          color: textColor,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
+                              child: const Center(
+                                child: Icon(Icons.play_circle_fill_rounded,
+                                    size: 48, color: Colors.white),
+                              ),
+                            ),
+                          if (_isPdfFile(attachName, attachUrl))
+                            Container(
+                              margin: const EdgeInsets.only(top: 6),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: textColor.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.picture_as_pdf_rounded,
+                                      color: textColor),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      attachName ?? "PDF document",
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: textColor,
                                       ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-                          ],
-                        ),
+                            ),
+                        ],
                       )
                     else if (body != null && body.isNotEmpty)
                       _LinkText(
