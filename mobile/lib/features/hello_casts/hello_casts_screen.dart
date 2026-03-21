@@ -797,7 +797,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     return Scaffold(
       floatingActionButton: FloatingActionButton(
         backgroundColor: const Color(0xFF25D366),
-        onPressed: _showNewCastMenu,
+        onPressed: _showHeaderActions,
         child: const Icon(Icons.add_rounded, color: Colors.white),
       ),
       backgroundColor: dark ? null : const Color(0xFFF2F5FB),
@@ -807,10 +807,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
-              HelloCastsHeader(
+              const HelloCastsHeader(
                 title: "Casts",
                 subtitle: "Simple group & individual messaging",
-                onCreateAction: _showHeaderActions,
               ),
               const SizedBox(height: 12),
               _UnifiedFilterBar(
