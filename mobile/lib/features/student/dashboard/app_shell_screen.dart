@@ -8252,7 +8252,9 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                 isHost: (peer["is_host"] ?? false) == true,
               ),
             );
-            _createOffer(peerId);
+            if (_isHost) {
+              _createOffer(peerId);
+            }
           } else {
             final peerId = peer.toString();
             if (peerId.isNotEmpty) {
@@ -8260,7 +8262,9 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                 _MeetingParticipant(
                     peerId: peerId, name: peerId, role: "", isHost: false),
               );
-              _createOffer(peerId);
+              if (_isHost) {
+                _createOffer(peerId);
+              }
             }
           }
         }
@@ -8290,7 +8294,9 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
               isHost: isHost,
             ),
           );
-          _createOffer(peerId);
+          if (_isHost) {
+            _createOffer(peerId);
+          }
         }
         return;
       }
