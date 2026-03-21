@@ -8509,7 +8509,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                   : _loading
                       ? const Center(
                           child: CircularProgressIndicator(color: Colors.white))
-                      : (!hasOthers)
+                      : (!hasOthers && mainRenderers.isEmpty)
                           ? _WaitingView(
                               displayName: widget.displayName,
                               localRenderer: _localRenderer,
