@@ -334,6 +334,50 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                         "data": data,
                     },
                 )
+            elif msg_type == "chat":
+                text = str(payload.get("text", "")).strip()
+                sender_name = (
+                    str(payload.get("sender_name", "")).strip() or peer_id
+                )
+                if text:
+                    msg_out = {
+                        "type": "chat",
+                        "from": peer_id,
+                        "sender_name": sender_name,
+                        "text": text,
+                        "ts": datetime.utcnow().isoformat(),
+                    }
+                    await _meeting_hub.broadcast_except(room_key, peer_id, msg_out)
+                    await _meeting_hub.send(
+                        room_key, peer_id, {**msg_out, "is_own": True}
+                    )
+            elif msg_type == "hand_raise":
+                raised = bool(payload.get("raised", False))
+                meta = await _meeting_hub.get_peer_meta(room_key, peer_id)
+                await _meeting_hub.broadcast_except(
+                    room_key,
+                    peer_id,
+                    {
+                        "type": "hand_raise",
+                        "from": peer_id,
+                        "display_name": meta.get("display_name", peer_id),
+                        "raised": raised,
+                    },
+                )
+            elif msg_type == "reaction":
+                emoji = str(payload.get("emoji", "")).strip()
+                meta = await _meeting_hub.get_peer_meta(room_key, peer_id)
+                if emoji:
+                    await _meeting_hub.broadcast_except(
+                        room_key,
+                        peer_id,
+                        {
+                            "type": "reaction",
+                            "from": peer_id,
+                            "display_name": meta.get("display_name", peer_id),
+                            "emoji": emoji,
+                        },
+                    )
             elif msg_type == "host_action":
                 sender_meta = await _meeting_hub.get_peer_meta(room_key, peer_id)
                 if not bool(sender_meta.get("is_host", False)):

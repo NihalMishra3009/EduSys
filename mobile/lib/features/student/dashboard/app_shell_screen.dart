@@ -7949,6 +7949,27 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   bool _videoOff = false;
   late bool _isHost;
   final Map<String, _MeetingParticipant> _participants = {};
+  // Chat
+  bool _handRaised = false;
+  final List<Map<String, dynamic>> _chatMessages = [];
+  final TextEditingController _chatCtrl = TextEditingController();
+  bool _chatOpen = false;
+  int _unreadChat = 0;
+
+  // Layout
+  bool _tileView = true; // true = tile grid, false = spotlight
+  String? _pinnedPeerId; // peerId of pinned participant (spotlight)
+
+  // Meeting timer
+  DateTime? _meetingStartTime;
+  Timer? _timerTick;
+  String _elapsedLabel = "0:00";
+
+  // Reactions
+  final List<_ReactionBubble> _reactions = [];
+
+  // Speaking indicator (simple RSSI-based approximation)
+  final Set<String> _speaking = {};
 
   @override
   void initState() {
@@ -7962,6 +7983,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       isHost: _isHost,
       isLocal: true,
     );
+    _startTimer();
     _boot();
   }
 
@@ -8289,6 +8311,53 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
         }
         return;
       }
+      if (type == "chat") {
+        final text = (decoded["text"] ?? "").toString();
+        final senderName = (decoded["sender_name"] ?? "").toString();
+        final isOwn = decoded["is_own"] == true;
+        if (text.isNotEmpty && mounted) {
+          setState(() {
+            _chatMessages.add({
+              "text": text,
+              "sender": senderName,
+              "is_own": isOwn,
+              "ts": (decoded["ts"] ?? "").toString(),
+            });
+            if (!_chatOpen) _unreadChat += 1;
+          });
+        }
+        return;
+      }
+      if (type == "hand_raise") {
+        final name =
+            (decoded["display_name"] ?? decoded["from"] ?? "Someone")
+                .toString();
+        final raised = decoded["raised"] == true;
+        if (raised && mounted) {
+          GlassToast.show(context, "$name raised their hand ✋",
+              icon: Icons.back_hand_rounded);
+        }
+        return;
+      }
+      if (type == "reaction") {
+        final emoji = (decoded["emoji"] ?? "").toString();
+        final name = (decoded["display_name"] ?? "").toString();
+        if (emoji.isNotEmpty && mounted) {
+          setState(() {
+            _reactions.add(_ReactionBubble(
+                emoji: emoji,
+                name: name,
+                id: DateTime.now().microsecondsSinceEpoch.toString()));
+          });
+          Future.delayed(const Duration(seconds: 3), () {
+            if (mounted) {
+              setState(
+                  () => _reactions.removeWhere((r) => r.id == _reactions.last.id));
+            }
+          });
+        }
+        return;
+      }
       if (type == "signal") {
         final from = (decoded["from"] ?? "").toString();
         final data = decoded["data"];
@@ -8326,140 +8395,542 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     }
   }
 
+  void _startTimer() {
+    _meetingStartTime = DateTime.now();
+    _timerTick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+      final diff = DateTime.now().difference(_meetingStartTime!);
+      final h = diff.inHours;
+      final m = diff.inMinutes.remainder(60).toString().padLeft(2, "0");
+      final s = diff.inSeconds.remainder(60).toString().padLeft(2, "0");
+      setState(() => _elapsedLabel = h > 0 ? "$h:$m:$s" : "$m:$s");
+    });
+  }
+
+  Future<void> _toggleHandRaise() async {
+    final next = !_handRaised;
+    setState(() => _handRaised = next);
+    _socket?.add(jsonEncode({"type": "hand_raise", "raised": next}));
+  }
+
+  void _sendChat() {
+    final text = _chatCtrl.text.trim();
+    if (text.isEmpty) {
+      return;
+    }
+    _socket?.add(jsonEncode(
+        {"type": "chat", "text": text, "sender_name": widget.displayName}));
+    _chatCtrl.clear();
+  }
+
+  void _sendReaction(String emoji) {
+    _socket?.add(jsonEncode(
+        {"type": "reaction", "emoji": emoji, "display_name": widget.displayName}));
+    setState(() {
+      _reactions.add(_ReactionBubble(
+        emoji: emoji,
+        name: "You",
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+      ));
+    });
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() => _reactions
+            .removeWhere((r) => r.name == "You" && r.emoji == emoji));
+      }
+    });
+  }
+
+  void _pinParticipant(String peerId) {
+    setState(() {
+      _pinnedPeerId = _pinnedPeerId == peerId ? null : peerId;
+      _tileView = _pinnedPeerId == null;
+    });
+  }
+
+  void _showReactionPicker() {
+    const emojis = ["👍", "❤️", "😂", "😮", "👏", "🎉"];
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: emojis
+                .map(
+                  (e) => GestureDetector(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _sendReaction(e);
+                    },
+                    child: Text(e, style: const TextStyle(fontSize: 36)),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final remoteRenderers = _remoteRenderers.values.toList(growable: false);
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final remoteList = _remoteRenderers.entries.toList();
+
+    // Determine which renderers to show in the main grid
+    final mainRenderers = _pinnedPeerId != null
+        ? remoteList.where((e) => e.key == _pinnedPeerId).toList()
+        : remoteList;
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text("${widget.title} (${widget.roomCode})"),
-        actions: [
-          IconButton(
-            tooltip: "Participants",
-            onPressed: _showParticipantsSheet,
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.people_alt_rounded),
-                Positioned(
-                  right: -6,
-                  top: -6,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      _participants.length.toString(),
-                      style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700),
-                    ),
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            // ── Main video area ──────────────────────────────────────────
+            Positioned.fill(
+              bottom: 80,
+              child: _error != null
+                  ? Center(
+                      child: Text(_error!,
+                          style: const TextStyle(color: Colors.white)))
+                  : _loading
+                      ? const Center(
+                          child: CircularProgressIndicator(color: Colors.white))
+                      : mainRenderers.isEmpty
+                          ? _WaitingView(
+                              displayName: widget.displayName,
+                              localRenderer: _localRenderer,
+                            )
+                          : _tileView
+                              ? _TileGrid(
+                                  renderers: mainRenderers,
+                                  participants: _participants,
+                                  speaking: _speaking,
+                                  onPin: _pinParticipant,
+                                  localRenderer: _localRenderer,
+                                  localPeerId: _peerId,
+                                  localName: widget.displayName,
+                                  videoOff: _videoOff,
+                                )
+                              : _SpotlightView(
+                                  pinnedEntry: mainRenderers.isNotEmpty
+                                      ? mainRenderers.first
+                                      : null,
+                                  participants: _participants,
+                                  speaking: _speaking,
+                                  localRenderer: _localRenderer,
+                                  localPeerId: _peerId,
+                                  localName: widget.displayName,
+                                  videoOff: _videoOff,
+                                  onUnpin: () => setState(() {
+                                    _pinnedPeerId = null;
+                                    _tileView = true;
+                                  }),
+                                ),
+            ),
+
+            // ── Top bar ──────────────────────────────────────────────────
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.7),
+                      Colors.transparent
+                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: _audioMuted ? "Unmute" : "Mute",
-            onPressed: _error != null ? null : _toggleAudio,
-            icon: Icon(_audioMuted ? Icons.mic_off_rounded : Icons.mic_rounded),
-          ),
-          IconButton(
-            tooltip: _videoOff ? "Camera On" : "Camera Off",
-            onPressed: _error != null ? null : _toggleVideo,
-            icon: Icon(_videoOff
-                ? Icons.videocam_off_rounded
-                : Icons.videocam_rounded),
-          ),
-          TextButton.icon(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.call_end_rounded, color: Colors.redAccent),
-            label:
-                const Text("Leave", style: TextStyle(color: Colors.redAccent)),
-          ),
-        ],
-      ),
-      body: _error != null
-          ? Center(child: Text(_error!))
-          : Stack(
-              children: [
-                Positioned.fill(
-                  child: remoteRenderers.isEmpty
-                      ? const Center(child: Text("Waiting for participants..."))
-                      : GridView.builder(
-                          padding: const EdgeInsets.all(10),
-                          itemCount: remoteRenderers.length,
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 1,
-                            mainAxisSpacing: 10,
-                            crossAxisSpacing: 10,
-                            childAspectRatio: 1.1,
+                child: Row(
+                  children: [
+                    // Meeting title + timer
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.title,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          itemBuilder: (context, index) {
-                            return ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: RTCVideoView(
-                                remoteRenderers[index],
-                                objectFit: RTCVideoViewObjectFit
-                                    .RTCVideoViewObjectFitCover,
-                              ),
-                            );
-                          },
-                        ),
-                ),
-                Positioned(
-                  right: 12,
-                  top: 12,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: SizedBox(
-                      width: 118,
-                      height: 168,
-                      child: RTCVideoView(
-                        _localRenderer,
-                        mirror: true,
-                        objectFit:
-                            RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                          Text(
+                            _elapsedLabel,
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ),
-                Positioned(
-                  left: 12,
-                  right: 12,
-                  bottom: 12,
-                  child: IgnorePointer(
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 8,
-                      runSpacing: 8,
+                    // Layout toggle
+                    IconButton(
+                      onPressed: () => setState(() {
+                        _tileView = !_tileView;
+                        _pinnedPeerId = null;
+                      }),
+                      icon: Icon(
+                          _tileView
+                              ? Icons.view_agenda_rounded
+                              : Icons.grid_view_rounded,
+                          color: Colors.white),
+                      tooltip: _tileView ? "Spotlight" : "Tile view",
+                    ),
+                    // Participants
+                    Stack(
+                      clipBehavior: Clip.none,
                       children: [
-                        _MeetingStateChip(
-                          icon: _audioMuted
-                              ? Icons.mic_off_rounded
-                              : Icons.mic_rounded,
-                          label: _audioMuted ? "Muted" : "Mic On",
+                        IconButton(
+                          onPressed: _showParticipantsSheet,
+                          icon: const Icon(Icons.people_alt_rounded,
+                              color: Colors.white),
+                          tooltip: "Participants",
                         ),
-                        _MeetingStateChip(
-                          icon: _videoOff
-                              ? Icons.videocam_off_rounded
-                              : Icons.videocam_rounded,
-                          label: _videoOff ? "Camera Off" : "Camera On",
+                        Positioned(
+                          right: 4,
+                          top: 4,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: scheme.primary,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              _participants.length.toString(),
+                              style: const TextStyle(
+                                  fontSize: 9,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
                         ),
                       ],
                     ),
+                    // Chat
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        IconButton(
+                          onPressed: () => setState(() {
+                            _chatOpen = !_chatOpen;
+                            if (_chatOpen) _unreadChat = 0;
+                          }),
+                          icon: const Icon(Icons.chat_bubble_outline_rounded,
+                              color: Colors.white),
+                          tooltip: "Chat",
+                        ),
+                        if (_unreadChat > 0)
+                          Positioned(
+                            right: 4,
+                            top: 4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(8)),
+                              child: Text("$_unreadChat",
+                                  style: const TextStyle(
+                                      fontSize: 9,
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700)),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // ── Reaction bubbles ─────────────────────────────────────────
+            if (_reactions.isNotEmpty)
+              Positioned(
+                left: 16,
+                bottom: 100,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: _reactions
+                      .take(5)
+                      .map((r) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(r.emoji,
+                                      style: const TextStyle(fontSize: 20)),
+                                  const SizedBox(width: 6),
+                                  Text(r.name,
+                                      style: const TextStyle(
+                                          color: Colors.white, fontSize: 12)),
+                                ],
+                              ),
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ),
+
+            // ── Bottom control bar ───────────────────────────────────────
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.80),
+                      Colors.transparent
+                    ],
                   ),
                 ),
-                if (_loading)
-                  const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-              ],
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    // Mic
+                    _ControlButton(
+                      icon: _audioMuted
+                          ? Icons.mic_off_rounded
+                          : Icons.mic_rounded,
+                      label: _audioMuted ? "Unmute" : "Mute",
+                      active: !_audioMuted,
+                      onTap: _error != null ? null : _toggleAudio,
+                    ),
+                    // Camera
+                    _ControlButton(
+                      icon: _videoOff
+                          ? Icons.videocam_off_rounded
+                          : Icons.videocam_rounded,
+                      label: _videoOff ? "Start video" : "Stop video",
+                      active: !_videoOff,
+                      onTap: _error != null ? null : _toggleVideo,
+                    ),
+                    // Hand raise
+                    _ControlButton(
+                      icon: Icons.back_hand_rounded,
+                      label: _handRaised ? "Lower hand" : "Raise hand",
+                      active: _handRaised,
+                      activeColor: Colors.amber,
+                      onTap: _error != null ? null : _toggleHandRaise,
+                    ),
+                    // Reactions
+                    _ControlButton(
+                      icon: Icons.emoji_emotions_rounded,
+                      label: "React",
+                      active: false,
+                      onTap: _showReactionPicker,
+                    ),
+                    // Leave (red)
+                    _ControlButton(
+                      icon: Icons.call_end_rounded,
+                      label: "Leave",
+                      active: true,
+                      activeColor: Colors.red,
+                      onTap: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
             ),
+
+            // ── Chat panel (slides in from right) ────────────────────────
+            if (_chatOpen)
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: 300,
+                child: Container(
+                  color: dark
+                      ? Colors.black.withValues(alpha: 0.92)
+                      : Colors.white.withValues(alpha: 0.96),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                        child: Row(
+                          children: [
+                            const Text("In-call messages",
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15)),
+                            const Spacer(),
+                            IconButton(
+                              onPressed: () =>
+                                  setState(() => _chatOpen = false),
+                              icon: const Icon(Icons.close_rounded),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      Expanded(
+                        child: _chatMessages.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.chat_bubble_outline_rounded,
+                                        size: 40,
+                                        color: scheme.onSurface
+                                            .withValues(alpha: 0.3)),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      "Messages are visible to everyone\nin this call",
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                          color: scheme.onSurface
+                                              .withValues(alpha: 0.5),
+                                          fontSize: 13),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ListView.builder(
+                                padding: const EdgeInsets.all(12),
+                                reverse: true,
+                                itemCount: _chatMessages.length,
+                                itemBuilder: (_, i) {
+                                  final msg = _chatMessages[
+                                      _chatMessages.length - 1 - i];
+                                  final isOwn = msg["is_own"] == true;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: Column(
+                                      crossAxisAlignment: isOwn
+                                          ? CrossAxisAlignment.end
+                                          : CrossAxisAlignment.start,
+                                      children: [
+                                        if (!isOwn)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                                bottom: 2, left: 4),
+                                            child: Text(
+                                              msg["sender"]?.toString() ?? "",
+                                              style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: scheme.primary),
+                                            ),
+                                          ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 8),
+                                          constraints: const BoxConstraints(
+                                              maxWidth: 220),
+                                          decoration: BoxDecoration(
+                                            color: isOwn
+                                                ? scheme.primary
+                                                : scheme
+                                                    .surfaceContainerHighest,
+                                            borderRadius: BorderRadius.only(
+                                              topLeft: const Radius.circular(16),
+                                              topRight:
+                                                  const Radius.circular(16),
+                                              bottomLeft: Radius.circular(
+                                                  isOwn ? 16 : 4),
+                                              bottomRight: Radius.circular(
+                                                  isOwn ? 4 : 16),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            msg["text"]?.toString() ?? "",
+                                            style: TextStyle(
+                                                fontSize: 14,
+                                                color: isOwn
+                                                    ? Colors.white
+                                                    : null),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                      const Divider(height: 1),
+                      Padding(
+                        padding: EdgeInsets.only(
+                          left: 12,
+                          right: 8,
+                          top: 10,
+                          bottom: MediaQuery.of(context).viewInsets.bottom + 10,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _chatCtrl,
+                                style: TextStyle(
+                                    fontSize: 14, color: scheme.onSurface),
+                                decoration: InputDecoration(
+                                  hintText: "Send a message...",
+                                  hintStyle: TextStyle(
+                                      color: scheme.onSurface
+                                          .withValues(alpha: 0.4)),
+                                  isDense: true,
+                                  filled: true,
+                                  fillColor: scheme.surfaceContainerHighest
+                                      .withValues(alpha: 0.6),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(24),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 10),
+                                ),
+                                onSubmitted: (_) => _sendChat(),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            IconButton(
+                              onPressed: _sendChat,
+                              icon: Icon(Icons.send_rounded,
+                                  color: scheme.primary),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -8638,6 +9109,8 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     _localStream?.dispose();
     _localRenderer.dispose();
     _socket?.close();
+    _chatCtrl.dispose();
+    _timerTick?.cancel();
     super.dispose();
   }
 }
@@ -8687,6 +9160,418 @@ class _MeetingStateChip extends StatelessWidget {
           const SizedBox(width: 6),
           Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
         ],
+      ),
+    );
+  }
+}
+
+// Reaction bubble data
+class _ReactionBubble {
+  const _ReactionBubble({
+    required this.emoji,
+    required this.name,
+    required this.id,
+  });
+
+  final String emoji;
+  final String name;
+  final String id;
+}
+
+// Google Meet style round control button
+class _ControlButton extends StatelessWidget {
+  const _ControlButton({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.onTap,
+    this.activeColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback? onTap;
+  final Color? activeColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = activeColor != null && active
+        ? activeColor!
+        : active
+            ? Colors.white.withValues(alpha: 0.18)
+            : Colors.white.withValues(alpha: 0.08);
+    final fg = activeColor != null && active
+        ? Colors.white
+        : active
+            ? Colors.white
+            : Colors.white.withValues(alpha: 0.55);
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+            child: Icon(icon, color: fg, size: 22),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.75), fontSize: 10),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Waiting screen when no remote peers yet
+class _WaitingView extends StatelessWidget {
+  const _WaitingView({
+    required this.displayName,
+    required this.localRenderer,
+  });
+
+  final String displayName;
+  final RTCVideoRenderer localRenderer;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: ClipRRect(
+            child: RTCVideoView(
+              localRenderer,
+              mirror: true,
+              objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: Container(color: Colors.black.withValues(alpha: 0.4)),
+        ),
+        Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 40,
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                child: Text(
+                  displayName.isNotEmpty ? displayName[0].toUpperCase() : "?",
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 32,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                "Waiting for others to join...",
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// Tile grid view (Google Meet tiled layout)
+class _TileGrid extends StatelessWidget {
+  const _TileGrid({
+    required this.renderers,
+    required this.participants,
+    required this.speaking,
+    required this.onPin,
+    required this.localRenderer,
+    required this.localPeerId,
+    required this.localName,
+    required this.videoOff,
+  });
+
+  final List<MapEntry<String, RTCVideoRenderer>> renderers;
+  final Map<String, _MeetingParticipant> participants;
+  final Set<String> speaking;
+  final void Function(String peerId) onPin;
+  final RTCVideoRenderer localRenderer;
+  final String localPeerId;
+  final String localName;
+  final bool videoOff;
+
+  @override
+  Widget build(BuildContext context) {
+    final allTiles = <Widget>[
+      // Local tile always first
+      _VideoTile(
+        renderer: localRenderer,
+        name: "$localName (You)",
+        isMirrored: true,
+        isSpeaking: false,
+        videoOff: videoOff,
+        onPin: null,
+      ),
+      // Remote tiles
+      ...renderers.map((e) {
+        final p = participants[e.key];
+        return _VideoTile(
+          renderer: e.value,
+          name: p?.name ?? e.key,
+          isMirrored: false,
+          isSpeaking: speaking.contains(e.key),
+          videoOff: false,
+          onPin: () => onPin(e.key),
+          isHost: p?.isHost ?? false,
+        );
+      }),
+    ];
+
+    final count = allTiles.length;
+    final crossAxisCount = count <= 1 ? 1 : count <= 4 ? 2 : 3;
+
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(8, 56, 8, 8),
+      itemCount: allTiles.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        mainAxisSpacing: 6,
+        crossAxisSpacing: 6,
+        childAspectRatio: count == 1 ? 3 / 4 : 4 / 3,
+      ),
+      itemBuilder: (_, i) => allTiles[i],
+    );
+  }
+}
+
+// Spotlight view — one large + strip of thumbnails
+class _SpotlightView extends StatelessWidget {
+  const _SpotlightView({
+    required this.pinnedEntry,
+    required this.participants,
+    required this.speaking,
+    required this.localRenderer,
+    required this.localPeerId,
+    required this.localName,
+    required this.videoOff,
+    required this.onUnpin,
+  });
+
+  final MapEntry<String, RTCVideoRenderer>? pinnedEntry;
+  final Map<String, _MeetingParticipant> participants;
+  final Set<String> speaking;
+  final RTCVideoRenderer localRenderer;
+  final String localPeerId;
+  final String localName;
+  final bool videoOff;
+  final VoidCallback onUnpin;
+
+  @override
+  Widget build(BuildContext context) {
+    if (pinnedEntry == null) {
+      return const Center(
+          child: Text("No participant pinned",
+              style: TextStyle(color: Colors.white)));
+    }
+    final p = participants[pinnedEntry!.key];
+    return Column(
+      children: [
+        Expanded(
+          child: _VideoTile(
+            renderer: pinnedEntry!.value,
+            name: p?.name ?? pinnedEntry!.key,
+            isMirrored: false,
+            isSpeaking: speaking.contains(pinnedEntry!.key),
+            videoOff: false,
+            onPin: onUnpin,
+            isPinned: true,
+            isHost: p?.isHost ?? false,
+          ),
+        ),
+        // Local pip thumbnail
+        Container(
+          height: 90,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: _VideoTile(
+            renderer: localRenderer,
+            name: "$localName (You)",
+            isMirrored: true,
+            isSpeaking: false,
+            videoOff: videoOff,
+            onPin: null,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// Individual video tile with name overlay and speaking ring
+class _VideoTile extends StatelessWidget {
+  const _VideoTile({
+    required this.renderer,
+    required this.name,
+    required this.isMirrored,
+    required this.isSpeaking,
+    required this.videoOff,
+    required this.onPin,
+    this.isHost = false,
+    this.isPinned = false,
+  });
+
+  final RTCVideoRenderer renderer;
+  final String name;
+  final bool isMirrored;
+  final bool isSpeaking;
+  final bool videoOff;
+  final VoidCallback? onPin;
+  final bool isHost;
+  final bool isPinned;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onDoubleTap: onPin,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          children: [
+            // Video or avatar
+            Positioned.fill(
+              child: videoOff
+                  ? Container(
+                      color: const Color(0xFF1E1E2A),
+                      child: Center(
+                        child: CircleAvatar(
+                          radius: 28,
+                          backgroundColor:
+                              scheme.primary.withValues(alpha: 0.3),
+                          child: Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : "?",
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    )
+                  : RTCVideoView(
+                      renderer,
+                      mirror: isMirrored,
+                      objectFit:
+                          RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                    ),
+            ),
+            // Speaking ring
+            if (isSpeaking)
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.green, width: 3),
+                  ),
+                ),
+              ),
+            // Name overlay bottom
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(8, 16, 8, 6),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.7),
+                      Colors.transparent
+                    ],
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        name,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (isHost)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withValues(alpha: 0.85),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text("Host",
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    if (isPinned)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 4),
+                        child: Icon(Icons.push_pin_rounded,
+                            color: Colors.white, size: 12),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            // Pin hint on double tap (small icon top right)
+            if (onPin != null && !isPinned)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: GestureDetector(
+                  onTap: onPin,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.push_pin_outlined,
+                        color: Colors.white70, size: 14),
+                  ),
+                ),
+              ),
+            if (isPinned)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: GestureDetector(
+                  onTap: onPin,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.push_pin_rounded,
+                        color: Colors.amber, size: 14),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
