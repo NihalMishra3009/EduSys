@@ -1,6 +1,7 @@
 import "dart:async";
 import "dart:convert";
 
+import "package:edusys_mobile/core/utils/time_format.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
@@ -19,6 +20,8 @@ class HelloCastsScreen extends StatefulWidget {
 class _HelloCastsScreenState extends State<HelloCastsScreen> {
   final ApiService _api = ApiService();
   Timer? _refreshTimer;
+  Timer? _clockTimer;
+  DateTime _now = DateTime.now();
 
   int _tabIndex = 0;
   String _chatFilter = "All";
@@ -104,14 +107,20 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   void initState() {
     super.initState();
     _loadData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       _loadData(silent: true);
+    });
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_alerts.isEmpty && _tabIndex != 2) return;
+      setState(() => _now = DateTime.now());
     });
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _clockTimer?.cancel();
     super.dispose();
   }
 
@@ -279,6 +288,57 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       }
     } catch (_) {}
     return raw;
+  }
+
+  DateTime _defaultScheduleBase() =>
+      DateTime.now().add(const Duration(minutes: 5));
+
+  DateTime _shiftSchedule(DateTime? base,
+      {int minutes = 0, int hours = 0}) {
+    final start = base ?? _defaultScheduleBase();
+    return start.add(Duration(minutes: minutes, hours: hours));
+  }
+
+  DateTime? _parseAlertAt(dynamic raw) {
+    final text = raw?.toString();
+    if (text == null || text.isEmpty) return null;
+    return TimeFormat.parseToIst(text) ?? DateTime.tryParse(text);
+  }
+
+  String _formatAlertWhen(Map<String, dynamic> alert) {
+    final at = _parseAlertAt(alert["schedule_at"]);
+    if (at == null) {
+      return alert["schedule_at"]?.toString() ?? "";
+    }
+    final diff = at.difference(_now);
+    final timeLabel = _formatClock(at);
+    if (diff.inSeconds.abs() <= 60) {
+      return "Now â€¢ $timeLabel";
+    }
+    if (diff.isNegative) {
+      return "Overdue â€¢ $timeLabel";
+    }
+    return "In ${_formatDuration(diff)} â€¢ $timeLabel";
+  }
+
+  String _formatDuration(Duration diff) {
+    final totalMinutes = diff.inMinutes;
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes.remainder(60);
+    if (hours > 0 && minutes > 0) {
+      return "${hours}h ${minutes}m";
+    }
+    if (hours > 0) {
+      return "${hours}h";
+    }
+    return "${minutes}m";
+  }
+
+  String _formatClock(DateTime time) {
+    final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+    final minute = time.minute.toString().padLeft(2, "0");
+    final period = time.hour >= 12 ? "PM" : "AM";
+    return "$hour:$minute $period";
   }
 
   Future<void> _showInvites() async {
@@ -594,11 +654,13 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                   decoration: const InputDecoration(labelText: "Message"),
                 ),
                 const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () async {
+                HelloCastsClockLayout(
+                  scheduledAt: scheduleAt,
+                  onPick: () async {
                     final d = await showDatePicker(
                       context: ctx,
-                      initialDate: DateTime.now().add(const Duration(minutes: 5)),
+                      initialDate:
+                          scheduleAt ?? DateTime.now().add(const Duration(minutes: 5)),
                       firstDate: DateTime.now(),
                       lastDate: DateTime(2100),
                     );
@@ -606,18 +668,25 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                     if (!ctx.mounted) return;
                     final t = await showTimePicker(
                       context: ctx,
-                      initialTime: TimeOfDay.now(),
+                      initialTime: TimeOfDay.fromDateTime(
+                        scheduleAt ?? DateTime.now(),
+                      ),
                     );
                     if (t == null) return;
                     if (!ctx.mounted) return;
                     setLocal(() {
-                      scheduleAt = DateTime(d.year, d.month, d.day, t.hour, t.minute);
+                      scheduleAt =
+                          DateTime(d.year, d.month, d.day, t.hour, t.minute);
                     });
                   },
-                  icon: const Icon(Icons.schedule_rounded),
-                  label: Text(scheduleAt == null
-                      ? "Set date & time"
-                      : "${scheduleAt!.day}/${scheduleAt!.month} ${scheduleAt!.hour}:${scheduleAt!.minute.toString().padLeft(2, '0')}"),
+                  onAdd15: () => setLocal(
+                      () => scheduleAt = _shiftSchedule(scheduleAt, minutes: 15)),
+                  onSub15: () => setLocal(
+                      () => scheduleAt = _shiftSchedule(scheduleAt, minutes: -15)),
+                  onAddHour: () => setLocal(
+                      () => scheduleAt = _shiftSchedule(scheduleAt, hours: 1)),
+                  onSubHour: () => setLocal(
+                      () => scheduleAt = _shiftSchedule(scheduleAt, hours: -1)),
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
@@ -662,6 +731,13 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     );
     if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
+      Map<String, dynamic>? created;
+      try {
+        created = jsonDecode(res.body) as Map<String, dynamic>;
+      } catch (_) {}
+      if (created != null && mounted) {
+        setState(() => _alerts = [..._alerts, created!]);
+      }
       GlassToast.show(context, "Alert scheduled", icon: Icons.check_circle_rounded);
       _loadData();
     } else {
@@ -789,7 +865,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                       ? [const _EmptyState(message: "No alerts scheduled")]
                       : _alerts.map((a) {
                           final title = a["title"]?.toString() ?? "Alert";
-                          final when = a["schedule_at"]?.toString() ?? "";
+                          final when = _formatAlertWhen(a);
                           return _AlertTile(title: title, subtitle: when);
                         }).toList(),
                 ),

@@ -3248,6 +3248,7 @@ class _HomeTabState extends State<_HomeTab> {
   List<dynamic> _history = [];
   List<dynamic> _scheduled = [];
   List<dynamic> _rooms = [];
+  List<Map<String, dynamic>> _castAlerts = [];
   List<dynamic> _nearbyStudents = [];
   List<dynamic> _docEdAppointments = [];
   List<dynamic> _complaints = [];
@@ -3259,6 +3260,9 @@ class _HomeTabState extends State<_HomeTab> {
   int? _demoActiveLectureId;
   Timer? _activeSyncTimer;
   Timer? _roomSyncTimer;
+  Timer? _alertSyncTimer;
+  Timer? _alertTickTimer;
+  DateTime _alertNow = DateTime.now();
 
 
   Future<void> _handleLectureStarted(Map<String, dynamic> started) async {
@@ -3486,6 +3490,17 @@ class _HomeTabState extends State<_HomeTab> {
       }
       await _syncRoomsFromApi();
     });
+    _alertSyncTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
+      if (!mounted || kUseDemoDataEverywhere) {
+        return;
+      }
+      await _syncCastAlerts();
+    });
+    _alertTickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_castAlerts.isEmpty) return;
+      setState(() => _alertNow = DateTime.now());
+    });
     _load();
   }
 
@@ -3494,6 +3509,8 @@ class _HomeTabState extends State<_HomeTab> {
     _demoSyncTimer?.cancel();
     _activeSyncTimer?.cancel();
     _roomSyncTimer?.cancel();
+    _alertSyncTimer?.cancel();
+    _alertTickTimer?.cancel();
     super.dispose();
   }
 
@@ -3524,6 +3541,36 @@ class _HomeTabState extends State<_HomeTab> {
       await _api.saveCache("home_rooms", rows);
       if (mounted) {
         setState(() => _rooms = rows);
+      }
+    } catch (_) {
+      // Ignore transient failures.
+    }
+  }
+
+  List<Map<String, dynamic>> _parseMapList(dynamic raw) {
+    if (raw is! List) {
+      return const [];
+    }
+    return raw
+        .whereType<Map>()
+        .map((row) => row.map((key, value) => MapEntry(key.toString(), value)))
+        .toList();
+  }
+
+  Future<void> _syncCastAlerts() async {
+    if (!mounted) return;
+    try {
+      final res = await _api.listCastAlerts();
+      if (!mounted || res.statusCode < 200 || res.statusCode >= 300) {
+        return;
+      }
+      final rows = _parseMapList(jsonDecode(res.body));
+      await _api.saveCache("home_cast_alerts", rows);
+      if (mounted) {
+        setState(() {
+          _castAlerts = rows;
+          _alertNow = DateTime.now();
+        });
       }
     } catch (_) {
       // Ignore transient failures.
@@ -3579,6 +3626,15 @@ class _HomeTabState extends State<_HomeTab> {
     );
   }
 
+  Future<void> _openCasts() async {
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context).push(
+      AppTransitions.fadeSlide(const HelloCastsScreen()),
+    );
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     final role = context.read<AuthProvider>().role ?? "STUDENT";
@@ -3605,6 +3661,22 @@ class _HomeTabState extends State<_HomeTab> {
         _active = demoActive == null ? _demoActiveLectures : [demoActive];
         _scheduled = _demoScheduled;
         _rooms = const [];
+        _castAlerts = [
+          {
+            "id": 9001,
+            "title": "Project Review",
+            "schedule_at":
+                DateTime.now().add(const Duration(minutes: 18)).toIso8601String(),
+            "active": true,
+          },
+          {
+            "id": 9002,
+            "title": "Lab Reminder",
+            "schedule_at":
+                DateTime.now().add(const Duration(hours: 2)).toIso8601String(),
+            "active": true,
+          },
+        ];
         _history =
             role == "PROFESSOR" ? _demoProfessorHistory : _demoStudentHistory;
         _nearbyStudents = _demoNearby;
@@ -3634,6 +3706,7 @@ class _HomeTabState extends State<_HomeTab> {
         : await _api.attendanceHistory();
     final schedRes = await _api.listScheduledLectures();
     final roomRes = await _api.listRooms();
+    final alertsRes = await _api.listCastAlerts();
     final depRes = await _api.myDepartment();
     final countRes = await _api.studentCount();
     final summaryRes =
@@ -3648,6 +3721,7 @@ class _HomeTabState extends State<_HomeTab> {
     List<dynamic> nextHistory = _history;
     List<dynamic> nextScheduled = _scheduled;
     List<dynamic> nextRooms = _rooms;
+    List<Map<String, dynamic>> nextCastAlerts = _castAlerts;
     List<dynamic> nextNearby = _nearbyStudents;
     List<dynamic> nextDocEdAppointments = _docEdAppointments;
     List<dynamic> nextComplaints = _complaints;
@@ -3666,6 +3740,7 @@ class _HomeTabState extends State<_HomeTab> {
               nextScheduled;
       nextRooms =
           (await _api.readCache("home_rooms") as List<dynamic>?) ?? nextRooms;
+      nextCastAlerts = _parseMapList(await _api.readCache("home_cast_alerts"));
       nextNearby =
           (await _api.readCache("home_nearby") as List<dynamic>?) ?? nextNearby;
       final dep =
@@ -3706,6 +3781,10 @@ class _HomeTabState extends State<_HomeTab> {
       if (roomRes.statusCode >= 200 && roomRes.statusCode < 300) {
         nextRooms = jsonDecode(roomRes.body) as List<dynamic>;
         await _api.saveCache("home_rooms", nextRooms);
+      }
+      if (alertsRes.statusCode >= 200 && alertsRes.statusCode < 300) {
+        nextCastAlerts = _parseMapList(jsonDecode(alertsRes.body));
+        await _api.saveCache("home_cast_alerts", nextCastAlerts);
       }
       if (nearbyRes != null &&
           nearbyRes.statusCode >= 200 &&
@@ -3764,6 +3843,7 @@ class _HomeTabState extends State<_HomeTab> {
       _history = nextHistory;
       _scheduled = nextScheduled;
       _rooms = nextRooms;
+      _castAlerts = nextCastAlerts;
       _nearbyStudents = nextNearby;
       _docEdAppointments = nextDocEdAppointments;
       _complaints = nextComplaints;
@@ -3771,6 +3851,7 @@ class _HomeTabState extends State<_HomeTab> {
       _studentNames = nextNames;
       _departmentName = nextDepartmentName;
       _studentCount = nextStudentCount;
+      _alertNow = DateTime.now();
     });
     await _syncCalendarFromSources(
       scheduled: nextScheduled,
@@ -3951,8 +4032,11 @@ class _HomeTabState extends State<_HomeTab> {
               scheduled: _scheduled,
               rooms: _rooms,
               history: _history,
+              castAlerts: _castAlerts,
+              now: _alertNow,
               onJoinRoom: _openRoomFromHome,
               onOpenConnected: widget.onOpenConnected,
+              onOpenCasts: _openCasts,
             ),
         ],
       ),
@@ -3967,8 +4051,11 @@ class _StudentDashboard extends StatelessWidget {
     required this.scheduled,
     required this.rooms,
     required this.history,
+    required this.castAlerts,
+    required this.now,
     this.onJoinRoom,
     this.onOpenConnected,
+    this.onOpenCasts,
   });
 
   final bool loading;
@@ -3976,8 +4063,11 @@ class _StudentDashboard extends StatelessWidget {
   final List<dynamic> scheduled;
   final List<dynamic> rooms;
   final List<dynamic> history;
+  final List<Map<String, dynamic>> castAlerts;
+  final DateTime now;
   final Future<void> Function(Map<String, dynamic> room)? onJoinRoom;
   final VoidCallback? onOpenConnected;
+  final VoidCallback? onOpenCasts;
   static const List<Map<String, String>> _upcomingEvents = [
     {
       "title": "Blood Donation Drive",
@@ -4002,11 +4092,52 @@ class _StudentDashboard extends StatelessWidget {
     },
   ];
 
+  DateTime? _parseAlertAt(Map<String, dynamic> alert) {
+    final raw = alert["schedule_at"]?.toString();
+    if (raw == null || raw.isEmpty) return null;
+    return TimeFormat.parseToIst(raw) ?? DateTime.tryParse(raw);
+  }
+
+  List<Map<String, dynamic>> _sortedAlerts() {
+    final filtered = castAlerts
+        .where((alert) => alert["active"] != false)
+        .toList(growable: false);
+    filtered.sort((a, b) {
+      final at = _parseAlertAt(a);
+      final bt = _parseAlertAt(b);
+      if (at == null && bt == null) return 0;
+      if (at == null) return 1;
+      if (bt == null) return -1;
+      return at.compareTo(bt);
+    });
+    return filtered;
+  }
+
+  String _formatCountdown(DateTime at) {
+    final diff = at.difference(now);
+    if (diff.inSeconds.abs() <= 60) return "Now";
+    if (diff.isNegative) return "Overdue";
+    final totalMinutes = diff.inMinutes;
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes.remainder(60);
+    if (hours > 0 && minutes > 0) return "In ${hours}h ${minutes}m";
+    if (hours > 0) return "In ${hours}h";
+    return "In ${minutes}m";
+  }
+
+  String _formatClock(DateTime time) {
+    final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+    final minute = time.minute.toString().padLeft(2, "0");
+    final period = time.hour >= 12 ? "PM" : "AM";
+    return "$hour:$minute $period";
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasActive = active.isNotEmpty;
     final liveRooms = _liveRooms(rooms);
     final todayMeetings = _todayMeetings(scheduled);
+    final upcomingAlerts = _sortedAlerts();
     return Column(
       children: [
         AppCard(
@@ -4063,6 +4194,95 @@ class _StudentDashboard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
         ],
+        AppCard(
+          gradient: LinearGradient(
+            colors: [
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.85),
+              Theme.of(context).colorScheme.secondary.withValues(alpha: 0.75),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.alarm_rounded, color: Colors.white),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      "Alert Studio",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  if (onOpenCasts != null)
+                    TextButton(
+                      onPressed: onOpenCasts,
+                      child: const Text(
+                        "Open",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (upcomingAlerts.isEmpty)
+                const Text(
+                  "No reminders yet. Schedule one from Casts.",
+                  style: TextStyle(color: Colors.white70),
+                )
+              else
+                Column(
+                  children: upcomingAlerts.take(3).map((alert) {
+                    final title = alert["title"]?.toString() ?? "Reminder";
+                    final at = _parseAlertAt(alert);
+                    final timeLabel =
+                        at == null ? "-" : "${_formatCountdown(at)} â€¢ ${_formatClock(at)}";
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.notifications_active_rounded,
+                              size: 16, color: Colors.white),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  timeLabel,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
         const SectionTitle("Upcoming Events"),
         const SizedBox(height: 10),
         SizedBox(

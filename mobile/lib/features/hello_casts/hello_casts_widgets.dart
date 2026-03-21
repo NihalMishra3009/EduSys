@@ -705,6 +705,131 @@ class HelloCastsAlertStudioCard extends StatelessWidget {
   }
 }
 
+class HelloCastsClockLayout extends StatelessWidget {
+  const HelloCastsClockLayout({
+    super.key,
+    required this.scheduledAt,
+    required this.onPick,
+    required this.onAdd15,
+    required this.onSub15,
+    required this.onAddHour,
+    required this.onSubHour,
+  });
+
+  final DateTime? scheduledAt;
+  final VoidCallback onPick;
+  final VoidCallback onAdd15;
+  final VoidCallback onSub15;
+  final VoidCallback onAddHour;
+  final VoidCallback onSubHour;
+
+  String _formatTime(DateTime? time) {
+    if (time == null) return "Set time";
+    final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+    final minute = time.minute.toString().padLeft(2, "0");
+    final period = time.hour >= 12 ? "PM" : "AM";
+    return "$hour:$minute $period";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final timeLabel = _formatTime(scheduledAt);
+    return AppCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.access_time_rounded, color: scheme.primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Clock",
+                      style: GoogleFonts.spaceGrotesk(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      timeLabel,
+                      style: GoogleFonts.manrope(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onPick,
+                icon: const Icon(Icons.edit_rounded, size: 16),
+                label: const Text("Pick"),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _ClockChip(label: "-15m", onTap: onSub15),
+              _ClockChip(label: "+15m", onTap: onAdd15),
+              _ClockChip(label: "-1h", onTap: onSubHour),
+              _ClockChip(label: "+1h", onTap: onAddHour),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClockChip extends StatelessWidget {
+  const _ClockChip({required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: scheme.primary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: scheme.primary.withValues(alpha: 0.25)),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.manrope(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: scheme.primary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class HelloCastsAlertTile extends StatelessWidget {
   const HelloCastsAlertTile({
     super.key,
