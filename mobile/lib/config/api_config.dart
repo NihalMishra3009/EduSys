@@ -8,4 +8,16 @@ class ApiConfig {
     "GOOGLE_WEB_CLIENT_ID",
     defaultValue: "",
   );
+  static const String turnUrls = String.fromEnvironment(
+    "TURN_URLS",
+    defaultValue: "",
+  );
+  static const String turnUsername = String.fromEnvironment(
+    "TURN_USERNAME",
+    defaultValue: "",
+  );
+  static const String turnCredential = String.fromEnvironment(
+    "TURN_CREDENTIAL",
+    defaultValue: "",
+  );
 }

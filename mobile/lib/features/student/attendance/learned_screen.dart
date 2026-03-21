@@ -15,6 +15,7 @@ import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:provider/provider.dart";
+import "package:url_launcher/url_launcher.dart";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LearnEd entry — subject list
@@ -981,7 +982,38 @@ class _PostCard extends StatelessWidget {
             if (attachUrl != null && attachUrl.isNotEmpty) ...[
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: () async {
+                  final uri = Uri.tryParse(attachUrl);
+                  if (uri == null) {
+                    GlassToast.show(
+                      context,
+                      "Invalid attachment URL.",
+                      icon: Icons.error_outline,
+                    );
+                    return;
+                  }
+                  try {
+                    final ok = await launchUrl(
+                      uri,
+                      mode: LaunchMode.externalApplication,
+                    );
+                    if (!ok && context.mounted) {
+                      GlassToast.show(
+                        context,
+                        "Unable to open attachment.",
+                        icon: Icons.error_outline,
+                      );
+                    }
+                  } catch (_) {
+                    if (context.mounted) {
+                      GlassToast.show(
+                        context,
+                        "Unable to open attachment.",
+                        icon: Icons.error_outline,
+                      );
+                    }
+                  }
+                },
                 icon: const Icon(Icons.attach_file_rounded, size: 15),
                 label: Text(attachName ?? "Attachment", overflow: TextOverflow.ellipsis),
                 style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),

@@ -14,6 +14,7 @@ from app.models.room_calibration import RoomCalibration
 from app.models.lecture_session import LectureSession
 from app.models.scan_event import ScanEvent
 from app.models.cast import Cast, CastAlert, CastMember, CastMemberRole, CastMessage, CastType
+from app.models.connected import ConnectedRoom, ConnectedSchedule
 
 __all__ = [
     "Base",
@@ -42,6 +43,8 @@ __all__ = [
     "CastMemberRole",
     "CastMessage",
     "CastType",
+    "ConnectedRoom",
+    "ConnectedSchedule",
 ]
 
 from app.models.learned import LearnedSubject, LearnedSubjectMember, LearnedPost, LearnedSubmission, LearnedSyllabus

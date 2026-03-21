@@ -30,6 +30,14 @@ class RoomOut(BaseModel):
     created_at: datetime
 
 
+class ScheduleOut(BaseModel):
+    id: int
+    title: str
+    scheduled_at: datetime
+    created_by: int
+    created_at: datetime
+
+
 class AssignmentCreate(BaseModel):
     subject: str
     title: str

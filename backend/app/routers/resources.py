@@ -21,18 +21,16 @@ from app.schemas.resource import (
     NoteOut,
     RoomCreate,
     RoomOut,
+    ScheduleOut,
     ShareItAppointmentCreate,
     ShareItAppointmentOut,
 )
+from app.models.connected import ConnectedRoom, ConnectedSchedule
 
 router = APIRouter()
 
 _notes: list[dict] = []
-_rooms: list[dict] = []
-_scheduled: list[dict] = []
 _note_id = 1
-_room_id = 1
-_schedule_id = 1
 _geofence_enabled = True
 _manual_marks: list[dict] = []
 _manual_mark_id = 1
@@ -165,45 +163,27 @@ _notes.extend(
         },
     ]
 )
-_rooms.extend(
-    [
-        {
-            "id": 1,
-            "title": "CS OOP Live Room",
-            "meeting_url": "https://meet.google.com/sample-oop-room",
-            "created_by": 2,
-            "created_at": datetime.utcnow(),
-        },
-        {
-            "id": 2,
-            "title": "Math Doubt Session",
-            "meeting_url": "https://meet.google.com/sample-math-room",
-            "created_by": 2,
-            "created_at": datetime.utcnow(),
-        },
-    ]
-)
-_scheduled.extend(
-    [
-        {
-            "id": 1,
-            "title": "Mathematics - Differential Equations",
-            "scheduled_at": "2026-02-21 10:00",
-            "created_by": 2,
-            "created_at": datetime.utcnow(),
-        },
-        {
-            "id": 2,
-            "title": "Computer Science - Data Structures",
-            "scheduled_at": "2026-02-22 12:00",
-            "created_by": 2,
-            "created_at": datetime.utcnow(),
-        },
-    ]
-)
 _note_id = len(_notes) + 1
-_room_id = len(_rooms) + 1
-_schedule_id = len(_scheduled) + 1
+
+
+def _room_out(room: ConnectedRoom) -> RoomOut:
+    return RoomOut(
+        id=room.id,
+        title=room.title,
+        meeting_url=room.meeting_url,
+        created_by=room.created_by_user_id,
+        created_at=room.created_at,
+    )
+
+
+def _schedule_out(row: ConnectedSchedule) -> ScheduleOut:
+    return ScheduleOut(
+        id=row.id,
+        title=row.title,
+        scheduled_at=row.scheduled_at,
+        created_by=row.created_by_user_id,
+        created_at=row.created_at,
+    )
 
 
 @router.post("/notes", response_model=NoteOut)
@@ -232,27 +212,38 @@ def list_notes(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/rooms", response_model=RoomOut)
-def create_room(payload: RoomCreate, current_user: User = Depends(get_current_user)):
-    global _room_id
+def create_room(
+    payload: RoomCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if current_user.role != UserRole.PROFESSOR:
         raise HTTPException(status_code=403, detail="Only professor can create online room")
-    room = {
-        "id": _room_id,
-        "title": payload.title,
-        "meeting_url": payload.meeting_url,
-        "created_by": current_user.id,
-        "created_at": datetime.utcnow(),
-    }
-    _room_id += 1
-    _rooms.insert(0, room)
-    return room
+    title = payload.title.strip()
+    meeting_url = payload.meeting_url.strip()
+    if not title or not meeting_url:
+        raise HTTPException(status_code=400, detail="title and meeting_url are required")
+    room = ConnectedRoom(
+        title=title,
+        meeting_url=meeting_url,
+        created_by_user_id=current_user.id,
+        created_at=datetime.utcnow(),
+    )
+    db.add(room)
+    db.commit()
+    db.refresh(room)
+    return _room_out(room)
 
 
 @router.get("/rooms", response_model=list[RoomOut])
-def list_rooms(current_user: User = Depends(get_current_user)):
+def list_rooms(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if current_user.role not in (UserRole.PROFESSOR, UserRole.STUDENT, UserRole.ADMIN):
         raise HTTPException(status_code=403, detail="Unauthorized")
-    return _rooms
+    rooms = db.query(ConnectedRoom).order_by(ConnectedRoom.created_at.desc()).all()
+    return [_room_out(r) for r in rooms]
 
 
 @router.get("/sample-lectures")
@@ -267,32 +258,42 @@ def sample_lectures(current_user: User = Depends(get_current_user)):
     ]
 
 
-@router.post("/schedule")
-def schedule_lecture(payload: dict, current_user: User = Depends(get_current_user)):
-    global _schedule_id
+@router.post("/schedule", response_model=ScheduleOut)
+def schedule_lecture(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if current_user.role != UserRole.PROFESSOR:
         raise HTTPException(status_code=403, detail="Only professor can schedule lecture")
     title = str(payload.get("title", "")).strip()
     scheduled_at = str(payload.get("scheduled_at", "")).strip()
     if not title or not scheduled_at:
         raise HTTPException(status_code=400, detail="title and scheduled_at are required")
-    item = {
-        "id": _schedule_id,
-        "title": title,
-        "scheduled_at": scheduled_at,
-        "created_by": current_user.id,
-        "created_at": datetime.utcnow(),
-    }
-    _schedule_id += 1
-    _scheduled.insert(0, item)
-    return item
+    parsed = _parse_iso_datetime(scheduled_at)
+    if parsed is None:
+        raise HTTPException(status_code=400, detail="scheduled_at must be a valid datetime")
+    row = ConnectedSchedule(
+        title=title,
+        scheduled_at=parsed,
+        created_by_user_id=current_user.id,
+        created_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _schedule_out(row)
 
 
-@router.get("/schedule")
-def list_scheduled(current_user: User = Depends(get_current_user)):
+@router.get("/schedule", response_model=list[ScheduleOut])
+def list_scheduled(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if current_user.role not in (UserRole.PROFESSOR, UserRole.STUDENT, UserRole.ADMIN):
         raise HTTPException(status_code=403, detail="Unauthorized")
-    return _scheduled
+    rows = db.query(ConnectedSchedule).order_by(ConnectedSchedule.scheduled_at.asc()).all()
+    return [_schedule_out(r) for r in rows]
 
 
 @router.get("/student-count")

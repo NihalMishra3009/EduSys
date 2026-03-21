@@ -274,9 +274,14 @@ def health_check():
 
 @app.websocket("/ws/meetings/{room_id}")
 async def meeting_signaling(websocket: WebSocket, room_id: str):
+    token = websocket.query_params.get("token", "").strip()
+    user = _auth_ws_user(token)
+    if user is None:
+        await websocket.close(code=1008)
+        return
     requested_peer_id = websocket.query_params.get("peer_id", "").strip()
-    display_name = websocket.query_params.get("display_name", "").strip() or requested_peer_id or "Participant"
-    role = websocket.query_params.get("role", "").strip()
+    display_name = websocket.query_params.get("display_name", "").strip() or user.name or requested_peer_id or "Participant"
+    role = websocket.query_params.get("role", "").strip() or (user.role or "")
     is_host = websocket.query_params.get("host", "0").strip() in ("1", "true", "True")
     peer_id = requested_peer_id or f"peer-{id(websocket)}"
     room_key = room_id.strip().lower() or "default-room"

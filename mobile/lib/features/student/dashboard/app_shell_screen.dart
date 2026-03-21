@@ -8,6 +8,7 @@ import "package:edusys_mobile/core/animations/app_transitions.dart";
 import "package:edusys_mobile/core/constants/app_colors.dart";
 import "package:edusys_mobile/core/utils/perf_config.dart";
 import "package:edusys_mobile/core/utils/time_format.dart";
+import "package:edusys_mobile/config/api_config.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/providers/theme_provider.dart";
 import "package:edusys_mobile/features/admin/dashboard/admin_dashboard_screen.dart";
@@ -7420,9 +7421,9 @@ class _LearningTabState extends State<_LearningTab> {
     final roomRes = await _api.listRooms();
     final lectureRes = await _api.sampleLectures();
     final schedRes = await _api.listScheduledLectures();
-    final isOffline = roomRes.statusCode >= 500 ||
-        lectureRes.statusCode >= 500 ||
-        schedRes.statusCode >= 500;
+    bool bad(dynamic res) =>
+        res.statusCode < 200 || res.statusCode >= 300;
+    final isOffline = bad(roomRes) || bad(lectureRes) || bad(schedRes);
 
     List<dynamic> nextRooms = _rooms;
     List<dynamic> nextLectures = _lectures;
@@ -7579,11 +7580,9 @@ class _LearningTabState extends State<_LearningTab> {
   }
 
   String _roomKey(Map<String, dynamic> room) {
-    final url = (room["meeting_url"] ?? "").toString().trim();
-    if (url.isNotEmpty) {
-      return url;
-    }
-    return (room["title"] ?? "meeting").toString().trim().toLowerCase();
+    final title = (room["title"] ?? "meeting").toString();
+    final raw = (room["meeting_url"] ?? "").toString().trim();
+    return roomCodeFromRaw(raw, title: title);
   }
 
   int _estimatedParticipants(Map<String, dynamic> room) {
@@ -7995,8 +7994,20 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   Future<void> _connectSignaling() async {
     final baseUrl = await ApiService().getBaseUrl();
     final wsBase = baseUrl.replaceFirst(RegExp(r"^http"), "ws");
+    final token = await ApiService().getToken();
+    if (token == null || token.isEmpty) {
+      if (mounted) {
+        setState(() => _error = "Login required to join the meeting.");
+      }
+      return;
+    }
     final uri = Uri.parse(
-      "$wsBase/ws/meetings/${Uri.encodeComponent(widget.roomCode)}?peer_id=$_peerId&display_name=${Uri.encodeComponent(widget.displayName)}&role=${Uri.encodeComponent(widget.role)}&host=${_isHost ? 1 : 0}",
+      "$wsBase/ws/meetings/${Uri.encodeComponent(widget.roomCode)}"
+      "?peer_id=$_peerId"
+      "&display_name=${Uri.encodeComponent(widget.displayName)}"
+      "&role=${Uri.encodeComponent(widget.role)}"
+      "&host=${_isHost ? 1 : 0}"
+      "&token=${Uri.encodeComponent(token)}",
     );
     _socket = await WebSocket.connect(uri.toString());
     _socket!.listen(
@@ -8034,6 +8045,16 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       {
         "iceServers": [
           {"urls": "stun:stun.l.google.com:19302"},
+          if (ApiConfig.turnUrls.trim().isNotEmpty)
+            {
+              "urls": ApiConfig.turnUrls
+                  .split(",")
+                  .map((e) => e.trim())
+                  .where((e) => e.isNotEmpty)
+                  .toList(),
+              "username": ApiConfig.turnUsername,
+              "credential": ApiConfig.turnCredential,
+            },
         ],
       },
       {
