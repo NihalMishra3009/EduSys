@@ -9,7 +9,6 @@ import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
 import "package:edusys_mobile/core/constants/app_colors.dart";
 
-import "hello_casts_call_screen.dart";
 
 class HelloCastsChatScreen extends StatefulWidget {
   const HelloCastsChatScreen({
@@ -37,7 +36,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   bool _loading = true;
   WebSocket? _ws;
   bool _showAttachMenu = false;
-  Map<String, dynamic>? _incomingCall; // non-null when ringing
   Timer? _reconnectTimer;
   Timer? _syncTimer;
   int _clientMessageCounter = 0;
@@ -378,14 +376,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             unawaited(_markRead());
           }
         }
-      } else if (type == "call_ring" && mounted) {
-        setState(() => _incomingCall = msg);
-      } else if (type == "call_rejected" && mounted) {
-        GlassToast.show(
-          context,
-          "${msg["by_name"] ?? "Someone"} declined the call",
-          icon: Icons.call_end_rounded,
-        );
       }
     } catch (_) {}
   }
@@ -455,44 +445,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         );
       }
     });
-  }
-
-  Future<void> _startCall({required bool isVideo}) async {
-    final roomCode =
-        "cast-${widget.castId}-${isVideo ? "video" : "voice"}-${DateTime.now().millisecondsSinceEpoch}";
-    // Notify all members currently connected to this cast's WebSocket.
-    if (_ws != null) {
-      try {
-        _ws!.add(jsonEncode({
-          "type": "call_invite",
-          "is_video": isVideo,
-          "room_code": roomCode,
-        }));
-      } catch (_) {}
-    } else {
-      try {
-        final wsUrl = await _api.castsGetWsUrl(widget.castId);
-        final ws = await WebSocket.connect(wsUrl);
-        ws.add(jsonEncode({
-          "type": "call_invite",
-          "is_video": isVideo,
-          "room_code": roomCode,
-        }));
-        await Future.delayed(const Duration(milliseconds: 300));
-        await ws.close();
-      } catch (_) {}
-    }
-    if (!mounted) return;
-    Navigator.push(
-      context,
-      buildHelloCastsCallRoute(
-        castId: widget.castId,
-        callTitle: widget.title,
-        callType: isVideo ? "Video" : "Voice",
-        isVideo: isVideo,
-        roomCode: roomCode,
-      ),
-    );
   }
 
   Map<String, dynamic> _decodeMessage(String raw) {
@@ -791,16 +743,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             ),
             actions: [
               IconButton(
-                icon: Icon(Icons.call_rounded, color: appBarFg),
-                onPressed: () => _startCall(isVideo: false),
-                tooltip: "Voice call",
-              ),
-              IconButton(
-                icon: Icon(Icons.videocam_rounded, color: appBarFg),
-                onPressed: () => _startCall(isVideo: true),
-                tooltip: "Video call",
-              ),
-              IconButton(
                 icon: Icon(Icons.person_add_rounded, color: appBarFg),
                 onPressed: _addMembers,
                 tooltip: "Add members",
@@ -908,36 +850,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             ],
           ),
         ),
-        if (_incomingCall != null)
-          _IncomingCallOverlay(
-            callerName:
-                _incomingCall!["caller_name"]?.toString() ?? "Someone",
-            isVideo: _incomingCall!["is_video"] == true,
-            onAccept: () {
-              final call = _incomingCall!;
-              setState(() => _incomingCall = null);
-              Navigator.push(
-                context,
-                buildHelloCastsCallRoute(
-                  castId: widget.castId,
-                  callTitle: widget.title,
-                  callType: call["is_video"] == true ? "Video" : "Voice",
-                  isVideo: call["is_video"] == true,
-                  roomCode: call["room_code"]?.toString(),
-                ),
-              );
-            },
-            onReject: () {
-              final call = _incomingCall!;
-              setState(() => _incomingCall = null);
-              try {
-                _ws?.add(jsonEncode({
-                  "type": "call_reject",
-                  "caller_peer_id": call["caller_peer_id"]?.toString() ?? "",
-                }));
-              } catch (_) {}
-            },
-          ),
       ],
     );
   }
@@ -1166,103 +1078,3 @@ class _AttachOption extends StatelessWidget {
   }
 }
 
-class _IncomingCallOverlay extends StatelessWidget {
-  const _IncomingCallOverlay({
-    required this.callerName,
-    required this.isVideo,
-    required this.onAccept,
-    required this.onReject,
-  });
-
-  final String callerName;
-  final bool isVideo;
-  final VoidCallback onAccept;
-  final VoidCallback onReject;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned.fill(
-      child: Container(
-        color: Colors.black87,
-        child: SafeArea(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircleAvatar(
-                radius: 48,
-                backgroundColor: Color(0xFF25D366),
-                child: Icon(Icons.person_rounded, size: 48, color: Colors.white),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                callerName,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                isVideo ? "Incoming video call" : "Incoming voice call",
-                style: const TextStyle(color: Colors.white70, fontSize: 15),
-              ),
-              const SizedBox(height: 48),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _OverlayCallButton(
-                    icon: Icons.call_end_rounded,
-                    label: "Decline",
-                    color: const Color(0xFFD94B4B),
-                    onTap: onReject,
-                  ),
-                  _OverlayCallButton(
-                    icon: isVideo ? Icons.videocam_rounded : Icons.call_rounded,
-                    label: "Accept",
-                    color: const Color(0xFF25D366),
-                    onTap: onAccept,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _OverlayCallButton extends StatelessWidget {
-  const _OverlayCallButton({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          onTap: onTap,
-          child: Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            child: Icon(icon, color: Colors.white, size: 30),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-      ],
-    );
-  }
-}

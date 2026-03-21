@@ -56,12 +56,10 @@ class HelloCastsQuickActions extends StatelessWidget {
     super.key,
     required this.onCreateCast,
     required this.onScheduleAlert,
-    required this.onStartCall,
   });
 
   final VoidCallback onCreateCast;
   final VoidCallback onScheduleAlert;
-  final VoidCallback onStartCall;
 
   @override
   Widget build(BuildContext context) {
@@ -82,15 +80,6 @@ class HelloCastsQuickActions extends StatelessWidget {
             icon: Icons.alarm_rounded,
             onTap: onScheduleAlert,
             tone: const Color(0xFFFF9A3D),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: HelloCastsActionPill(
-            label: "Call room",
-            icon: Icons.call_rounded,
-            onTap: onStartCall,
-            tone: const Color(0xFF2BC89B),
           ),
         ),
       ],

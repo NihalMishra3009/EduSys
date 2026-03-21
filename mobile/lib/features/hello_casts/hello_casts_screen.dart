@@ -1,14 +1,11 @@
 import "dart:async";
 import "dart:convert";
-import "dart:io";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
-import "package:edusys_mobile/shared/services/cast_call_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
 
-import "hello_casts_call_screen.dart";
 import "hello_casts_chat_screen.dart";
 import "hello_casts_widgets.dart";
 
@@ -33,7 +30,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   List<Map<String, dynamic>> _invites = [];
   List<Map<String, dynamic>> _directory = [];
 
-  static const _tabs = ["Chats", "Communities", "Calls", "Alerts"];
+  static const _tabs = ["Chats", "Communities", "Alerts"];
   static const _filters = ["All", "Community", "Group", "Individual"];
 
   @override
@@ -100,7 +97,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
           icon: Icons.wifi_off_rounded,
         );
       }
-      unawaited(CastCallService.instance.refresh());
     } catch (_) {
       if (!silent && mounted) {
         setState(() => _loading = false);
@@ -514,38 +510,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     }
   }
 
-  Future<void> _startCallFromList(Map<String, dynamic> cast,
-      {required bool isVideo}) async {
-    final castId = (cast["id"] as num).toInt();
-    final title = cast["name"]?.toString() ?? "Cast";
-    final roomCode =
-        "cast-$castId-${isVideo ? "video" : "voice"}-${DateTime.now().millisecondsSinceEpoch}";
-    // Send call_invite to notify cast members via a transient WS connection.
-    try {
-      final wsUrl = await _api.castsGetWsUrl(castId);
-      final ws = await WebSocket.connect(wsUrl);
-      ws.add(jsonEncode({
-        "type": "call_invite",
-        "is_video": isVideo,
-        "room_code": roomCode,
-      }));
-      // Brief delay to let the server broadcast, then close.
-      await Future.delayed(const Duration(milliseconds: 300));
-      await ws.close();
-    } catch (_) {}
-    if (!mounted) return;
-    Navigator.push(
-      context,
-      buildHelloCastsCallRoute(
-        castId: castId,
-        callTitle: title,
-        callType: isVideo ? "Video" : "Voice",
-        isVideo: isVideo,
-        roomCode: roomCode,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final tab = _tabs[_tabIndex];
@@ -568,21 +532,13 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
             children: [
               const HelloCastsHeader(
                 title: "Casts",
-                subtitle: "WhatsApp-style casts with alerts, calls & approvals",
+                subtitle: "Simple group & individual messaging",
               ),
               const SizedBox(height: 12),
-              HelloCastsQuickActions(
-                onCreateCast: _showNewCastMenu,
-                onScheduleAlert: _scheduleAlert,
-                onStartCall: () {
-                  if (_casts.isEmpty) {
-                    GlassToast.show(context, "Create a cast first",
-                        icon: Icons.info_outline);
-                    return;
-                  }
-                  _startCallFromList(_casts.first, isVideo: false);
-                },
-              ),
+      HelloCastsQuickActions(
+        onCreateCast: _showNewCastMenu,
+        onScheduleAlert: _scheduleAlert,
+      ),
               const SizedBox(height: 12),
               _TabBar(
                 tabs: _tabs,
@@ -665,21 +621,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                     ),
                                   );
                                 },
-                              ))
-                          .toList(),
-                )
-              else if (tab == "Calls")
-                Column(
-                  children: _casts.isEmpty
-                      ? [const _EmptyState(message: "No casts available")]
-                      : _casts
-                          .map((c) => _CallTile(
-                                title: c["name"]?.toString() ?? "Cast",
-                                subtitle: c["cast_type"]?.toString() ?? "",
-                                onVoice: () =>
-                                    _startCallFromList(c, isVideo: false),
-                                onVideo: () =>
-                                    _startCallFromList(c, isVideo: true),
                               ))
                           .toList(),
                 )
@@ -814,33 +755,6 @@ class _CastTile extends StatelessWidget {
       subtitle: Text(subtitle),
       trailing: trailing ?? const Icon(Icons.chevron_right_rounded),
       onTap: onTap,
-    );
-  }
-}
-
-class _CallTile extends StatelessWidget {
-  const _CallTile({required this.title, required this.subtitle, required this.onVoice, required this.onVideo});
-  final String title;
-  final String subtitle;
-  final VoidCallback onVoice;
-  final VoidCallback onVideo;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      leading: const CircleAvatar(
-        backgroundColor: Color(0xFF1F2C34),
-        child: Icon(Icons.call_rounded, color: Colors.white),
-      ),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-      subtitle: Text(subtitle),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(icon: const Icon(Icons.call_rounded), onPressed: onVoice),
-          IconButton(icon: const Icon(Icons.videocam_rounded), onPressed: onVideo),
-        ],
-      ),
     );
   }
 }
