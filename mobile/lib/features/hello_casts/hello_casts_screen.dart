@@ -4,9 +4,10 @@ import "dart:convert";
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
+import "package:google_fonts/google_fonts.dart";
 
-import "hello_casts_chat_screen.dart";
 import "hello_casts_call_screen.dart";
+import "hello_casts_chat_screen.dart";
 import "hello_casts_widgets.dart";
 
 class HelloCastsScreen extends StatefulWidget {
@@ -17,19 +18,20 @@ class HelloCastsScreen extends StatefulWidget {
 }
 
 class _HelloCastsScreenState extends State<HelloCastsScreen> {
-  int _tabIndex = 0;
-  String _chatFilter = "All";
   final ApiService _api = ApiService();
   Timer? _refreshTimer;
 
-  static const _tabs = ["Chats", "Communities", "Calls", "Alerts"];
-  static const _filters = ["All", "Community", "Group", "Individual"];
+  int _tabIndex = 0;
+  String _chatFilter = "All";
+  bool _loading = true;
 
-  List<Map<String, dynamic>> _chats = [];
-  List<Map<String, dynamic>> _communities = [];
-  List<Map<String, dynamic>> _calls = [];
+  List<Map<String, dynamic>> _casts = [];
   List<Map<String, dynamic>> _alerts = [];
   List<Map<String, dynamic>> _invites = [];
+  List<Map<String, dynamic>> _directory = [];
+
+  static const _tabs = ["Chats", "Communities", "Calls", "Alerts"];
+  static const _filters = ["All", "Community", "Group", "Individual"];
 
   @override
   void initState() {
@@ -48,253 +50,627 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
 
   Future<void> _loadData({bool silent = false}) async {
     try {
-      final castsRes = await _api.listCasts();
-      if (castsRes.statusCode >= 200 && castsRes.statusCode < 300) {
-        final list = jsonDecode(castsRes.body) as List<dynamic>;
-        final chats = <Map<String, dynamic>>[];
-        final communities = <Map<String, dynamic>>[];
-        for (final row in list) {
-          if (row is! Map<String, dynamic>) continue;
-          final name = row["name"]?.toString() ?? "Cast";
-          final type = row["cast_type"]?.toString() ?? "Group";
-          final lastMessage = row["last_message"]?.toString();
-          final lastAtRaw = row["last_message_at"]?.toString();
-          final lastAt = lastAtRaw != null ? DateTime.tryParse(lastAtRaw) : null;
-          final membersCount = (row["members_count"] as num?)?.toInt() ?? 0;
-          final unreadCount = (row["unread_count"] as num?)?.toInt() ?? 0;
-          chats.add({
-            "id": row["id"],
-            "name": name,
-            "type": type,
-            "subtitle": lastMessage ?? "No messages yet",
-            "time": _formatTime(lastAt),
-            "unread": unreadCount,
-          });
-          if (type == "Community") {
-            communities.add({
-              "name": name,
-              "members": "$membersCount members",
-              "groups": 0,
-              "highlight": lastMessage ?? "No updates yet",
-              "tone": "Community",
-            });
-          }
-        }
-        _chats = chats;
-        _communities = communities;
-      }
+      final res = await _api.listCasts();
+      final invites = await _api.listCastInvites();
+      final alerts = await _api.listCastAlerts();
+      final dir = await _api.userDirectory();
 
-      final alertsRes = await _api.listCastAlerts();
-      if (alertsRes.statusCode >= 200 && alertsRes.statusCode < 300) {
-        final list = jsonDecode(alertsRes.body) as List<dynamic>;
-        final alerts = <Map<String, dynamic>>[];
-        for (final row in list) {
-          if (row is! Map<String, dynamic>) continue;
-          final title = row["title"]?.toString() ?? "Alert";
-          final castId = row["cast_id"];
-          final scheduleRaw = row["schedule_at"]?.toString();
-          final scheduleAt =
-              scheduleRaw != null ? DateTime.tryParse(scheduleRaw) : null;
-          final interval = row["interval_minutes"];
-          final mode = interval is num
-              ? "Every ${interval.toInt()} min"
-              : "At ${_formatTime(scheduleAt)}";
-          alerts.add({
-            "title": title,
-            "audience": _castName(castId),
-            "mode": mode,
-            "next": scheduleAt != null
-                ? _formatDate(scheduleAt)
-                : "Scheduled",
-            "active": row["active"] == true,
-          });
-        }
-        _alerts = alerts;
-      }
+      final casts = res.statusCode >= 200 && res.statusCode < 300
+          ? (jsonDecode(res.body) as List)
+              .whereType<Map<String, dynamic>>()
+              .toList()
+          : <Map<String, dynamic>>[];
+      final inviteRows = invites.statusCode >= 200 && invites.statusCode < 300
+          ? (jsonDecode(invites.body) as List)
+              .whereType<Map<String, dynamic>>()
+              .toList()
+          : <Map<String, dynamic>>[];
+      final alertRows = alerts.statusCode >= 200 && alerts.statusCode < 300
+          ? (jsonDecode(alerts.body) as List)
+              .whereType<Map<String, dynamic>>()
+              .toList()
+          : <Map<String, dynamic>>[];
+      final directoryRows =
+          dir.statusCode >= 200 && dir.statusCode < 300
+              ? (jsonDecode(dir.body) as List)
+                  .whereType<Map<String, dynamic>>()
+                  .toList()
+              : <Map<String, dynamic>>[];
 
-      final invitesRes = await _api.listCastInvites();
-      if (invitesRes.statusCode >= 200 && invitesRes.statusCode < 300) {
-        final list = jsonDecode(invitesRes.body) as List<dynamic>;
-        _invites = list
-            .whereType<Map<String, dynamic>>()
-            .map((row) => {
-                  "id": row["id"],
-                  "cast_id": row["cast_id"],
-                  "cast_name": row["cast_name"],
-                  "cast_type": row["cast_type"],
-                  "inviter_name": row["inviter_name"],
-                  "created_at": row["created_at"],
-                })
-            .toList();
-      } else {
-        _invites = [];
+      if (!mounted) return;
+      setState(() {
+        _casts = casts;
+        _invites = inviteRows;
+        _alerts = alertRows;
+        _directory = directoryRows;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!silent && mounted) {
+        setState(() => _loading = false);
       }
-    } catch (_) {}
-    if (mounted) {
-      setState(() {});
     }
   }
 
-  String _castName(dynamic id) {
-    final match = _chats.firstWhere(
-      (c) => c["id"] == id,
-      orElse: () => const {},
-    );
-    return match["name"]?.toString() ?? "Cast";
+  List<Map<String, dynamic>> _filteredCasts(String type) {
+    if (type == "All") return _casts;
+    return _casts
+        .where((c) =>
+            (c["cast_type"] ?? "").toString().toLowerCase() ==
+            type.toLowerCase())
+        .toList();
   }
 
-  String _formatTime(DateTime? time) {
-    if (time == null) return "";
-    final now = DateTime.now();
-    final diff = now.difference(time);
-    if (diff.inDays >= 1) {
-      return diff.inDays == 1 ? "Yesterday" : "${diff.inDays}d";
+  Future<void> _showInvites() async {
+    if (_invites.isEmpty) {
+      GlassToast.show(context, "No pending invites",
+          icon: Icons.info_outline);
+      return;
     }
-    return "${time.hour.toString().padLeft(2, "0")}:${time.minute.toString().padLeft(2, "0")}";
-  }
-
-  String _formatDate(DateTime time) {
-    return "${time.day.toString().padLeft(2, "0")}/"
-        "${time.month.toString().padLeft(2, "0")}";
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      type: MaterialType.transparency,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    scheme.brightness == Brightness.dark
-                        ? const Color(0xFF0E1524)
-                        : const Color(0xFFF0F6FF),
-                    scheme.brightness == Brightness.dark
-                        ? const Color(0xFF0B1B2E)
-                        : const Color(0xFFFDF6EC),
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.mail_rounded),
+                    const SizedBox(width: 8),
+                    Text("Pending invites (${_invites.length})",
+                        style: GoogleFonts.spaceGrotesk(
+                            fontSize: 18, fontWeight: FontWeight.w700)),
                   ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
                 ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: -60,
-            top: -40,
-            child: HelloCastsGlowOrb(
-              size: 200,
-              color: scheme.brightness == Brightness.dark
-                  ? const Color(0xFF1B6EF3)
-                  : const Color(0xFF6BB6FF),
-            ),
-          ),
-          Positioned(
-            left: -50,
-            bottom: 120,
-            child: HelloCastsGlowOrb(
-              size: 180,
-              color: scheme.brightness == Brightness.dark
-                  ? const Color(0xFF23C6B8)
-                  : const Color(0xFF9EE7DA),
-            ),
-          ),
-          ListView(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 20 + 96),
-            children: [
-              const HelloCastsHeader(
-                title: "Casts",
-                subtitle: "Community, group, and personal channels in one space.",
-              ),
-              const SizedBox(height: 12),
-              HelloCastsQuickActions(
-                onCreateCast: () => _openCreateCastFlow(context),
-                onScheduleAlert: () => _openAlertStudio(context),
-                onStartCall: () => _openCallStudio(context),
-              ),
-              const SizedBox(height: 16),
-              HelloCastsSegmentedTabs(
-                tabs: _tabs,
-                index: _tabIndex,
-                onChanged: (value) => setState(() => _tabIndex = value),
-              ),
-              const SizedBox(height: 12),
-              if (_tabIndex == 0) ...[
-                HelloCastsFilterRow(
-                  value: _chatFilter,
-                  options: _filters,
-                  onChanged: (value) => setState(() => _chatFilter = value),
-                ),
-                const SizedBox(height: 12),
-                if (_invites.isNotEmpty) ...[
-                  _InvitePanel(
-                    invites: _invites,
-                    onAccept: _acceptInvite,
-                    onReject: _rejectInvite,
+                const SizedBox(height: 10),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 420),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _invites.length,
+                    itemBuilder: (_, i) {
+                      final inv = _invites[i];
+                      final name = inv["cast_name"]?.toString() ?? "Cast";
+                      final type = inv["cast_type"]?.toString() ?? "";
+                      return ListTile(
+                        leading: CircleAvatar(
+                          child: Text(
+                              name.isNotEmpty ? name[0].toUpperCase() : "?"),
+                        ),
+                        title: Text(name,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w700)),
+                        subtitle: Text(type),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton(
+                              onPressed: () async {
+                                await _api.respondCastInvite(
+                                  inviteId:
+                                      (inv["id"] as num?)?.toInt() ?? 0,
+                                  action: "ACCEPT",
+                                );
+                                if (mounted) {
+                                  Navigator.pop(ctx);
+                                  _loadData();
+                                }
+                              },
+                              child: const Text("Accept",
+                                  style: TextStyle(color: Colors.green)),
+                            ),
+                            TextButton(
+                              onPressed: () async {
+                                await _api.respondCastInvite(
+                                  inviteId:
+                                      (inv["id"] as num?)?.toInt() ?? 0,
+                                  action: "REJECT",
+                                );
+                                if (mounted) {
+                                  Navigator.pop(ctx);
+                                  _loadData();
+                                }
+                              },
+                              child: const Text("Decline",
+                                  style: TextStyle(color: Colors.red)),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
-                  const SizedBox(height: 12),
-                ],
-                ..._filteredChats().map((chat) => HelloCastsChatTile(
-                      data: chat,
-                      onTap: () => _openChat(context, chat),
-                    )),
-              ] else if (_tabIndex == 1) ...[
-                HelloCastsCommunityHeroCard(
-                  onTap: () => _openCreateCommunity(context),
                 ),
-                const SizedBox(height: 12),
-                ..._communities.map(
-                  (community) => HelloCastsCommunityTile(data: community),
-                ),
-              ] else if (_tabIndex == 2) ...[
-                HelloCastsCallStudioCard(onTap: () => _openCallStudio(context)),
-                const SizedBox(height: 12),
-                ..._calls.map((call) => HelloCastsCallTile(data: call)),
-              ] else ...[
-                HelloCastsAlertStudioCard(onTap: () => _openAlertStudio(context)),
-                const SizedBox(height: 12),
-                ..._alerts.map((alert) => HelloCastsAlertTile(data: alert)),
               ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showNewCastMenu() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _NewCastOption(
+                icon: Icons.person_rounded,
+                label: "New Individual Cast",
+                subtitle: "One-to-one private cast",
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _createCastFlow("Individual");
+                },
+              ),
+              _NewCastOption(
+                icon: Icons.group_rounded,
+                label: "New Group Cast",
+                subtitle: "Team or class group chat",
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _createCastFlow("Group");
+                },
+              ),
+              _NewCastOption(
+                icon: Icons.campaign_rounded,
+                label: "New Community Cast",
+                subtitle: "Large broadcast community",
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _createCastFlow("Community");
+                },
+              ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  List<Map<String, dynamic>> _filteredChats() {
-    if (_chatFilter == "All") {
-      return _chats;
+  Future<void> _createCastFlow(String type) async {
+    if (_directory.isEmpty) {
+      await _loadData();
     }
-    return _chats.where((row) => row["type"] == _chatFilter).toList();
+    final nameCtrl = TextEditingController();
+    final selected = <int>{};
+    final isIndividual = type.toLowerCase() == "individual";
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final filtered = _directory
+              .where((u) => u["id"] != null)
+              .toList(growable: false);
+          return AlertDialog(
+            title: Text("Create $type Cast"),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "Cast name",
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      "Select members",
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: filtered.length,
+                      itemBuilder: (_, i) {
+                        final u = filtered[i];
+                        final id = (u["id"] as num?)?.toInt() ?? 0;
+                        final name = u["name"]?.toString() ?? "User";
+                        final isSelected = selected.contains(id);
+                        return CheckboxListTile(
+                          value: isSelected,
+                          onChanged: (v) {
+                            setLocal(() {
+                              if (isIndividual) {
+                                selected.clear();
+                                if (v == true) selected.add(id);
+                              } else {
+                                if (v == true) {
+                                  selected.add(id);
+                                } else {
+                                  selected.remove(id);
+                                }
+                              }
+                            });
+                          },
+                          title: Text(name),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Create")),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (ok != true) return;
+    final name = nameCtrl.text.trim();
+    if (name.isEmpty) {
+      GlassToast.show(context, "Name required", icon: Icons.error_outline);
+      return;
+    }
+    if (isIndividual && selected.length != 1) {
+      GlassToast.show(context, "Select exactly one member", icon: Icons.error_outline);
+      return;
+    }
+    final res = await _api.createCast(
+      name: name,
+      castType: type,
+      memberIds: selected.toList(),
+    );
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      GlassToast.show(context, "Cast created", icon: Icons.check_circle_rounded);
+      _loadData();
+    } else {
+      GlassToast.show(context, "Unable to create cast", icon: Icons.error_outline);
+    }
   }
 
-  void _openChat(BuildContext context, Map<String, dynamic> chat) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 260),
-        reverseTransitionDuration: const Duration(milliseconds: 220),
-        pageBuilder: (context, animation, secondaryAnimation) {
-          return FadeTransition(
-            opacity: CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
+  Future<void> _scheduleAlert() async {
+    if (_casts.isEmpty) {
+      GlassToast.show(context, "Create a cast first", icon: Icons.info_outline);
+      return;
+    }
+    final castId = ValueNotifier<int?>(null);
+    final titleCtrl = TextEditingController();
+    final messageCtrl = TextEditingController();
+    DateTime? scheduleAt;
+    String repeat = "ONCE";
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return AlertDialog(
+            title: const Text("Schedule Alert"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: castId.value,
+                  decoration: const InputDecoration(labelText: "Cast"),
+                  items: _casts.map((c) {
+                    return DropdownMenuItem<int>(
+                      value: (c["id"] as num?)?.toInt(),
+                      child: Text(c["name"]?.toString() ?? "Cast"),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setLocal(() => castId.value = v),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: titleCtrl,
+                  decoration: const InputDecoration(labelText: "Title"),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: messageCtrl,
+                  decoration: const InputDecoration(labelText: "Message"),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final d = await showDatePicker(
+                      context: ctx,
+                      initialDate: DateTime.now().add(const Duration(minutes: 5)),
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime(2100),
+                    );
+                    if (d == null) return;
+                    final t = await showTimePicker(
+                      context: ctx,
+                      initialTime: TimeOfDay.now(),
+                    );
+                    if (t == null) return;
+                    setLocal(() {
+                      scheduleAt = DateTime(d.year, d.month, d.day, t.hour, t.minute);
+                    });
+                  },
+                  icon: const Icon(Icons.schedule_rounded),
+                  label: Text(scheduleAt == null
+                      ? "Set date & time"
+                      : "${scheduleAt!.day}/${scheduleAt!.month} ${scheduleAt!.hour}:${scheduleAt!.minute.toString().padLeft(2, '0')}"),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: repeat,
+                  decoration: const InputDecoration(labelText: "Repeat"),
+                  items: const [
+                    "ONCE",
+                    "EVERY_2H",
+                    "DAILY",
+                    "WEEKLY",
+                  ].map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
+                  onChanged: (v) => setLocal(() => repeat = v ?? "ONCE"),
+                ),
+              ],
             ),
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0.06, 0.02),
-                end: Offset.zero,
-              ).animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Schedule")),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (ok != true || scheduleAt == null || castId.value == null) return;
+
+    final intervalMinutes = switch (repeat) {
+      "EVERY_2H" => 120,
+      "DAILY" => 1440,
+      "WEEKLY" => 10080,
+      _ => null,
+    };
+
+    final res = await _api.createCastAlert(
+      castId: castId.value!,
+      title: titleCtrl.text.trim(),
+      message: messageCtrl.text.trim().isEmpty ? null : messageCtrl.text.trim(),
+      scheduleAt: scheduleAt!,
+      intervalMinutes: intervalMinutes,
+      active: true,
+    );
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      GlassToast.show(context, "Alert scheduled", icon: Icons.check_circle_rounded);
+      _loadData();
+    } else {
+      GlassToast.show(context, "Unable to schedule", icon: Icons.error_outline);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tab = _tabs[_tabIndex];
+    final chats = _filteredCasts(_chatFilter)
+        .where((c) => (c["cast_type"] ?? "").toString().toLowerCase() != "community")
+        .toList();
+    final communities = _filteredCasts("Community");
+
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: const Color(0xFF25D366),
+        onPressed: _showNewCastMenu,
+        child: const Icon(Icons.add_rounded, color: Colors.white),
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadData,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          children: [
+            const HelloCastsHeader(
+              title: "Casts",
+              subtitle: "WhatsApp-style casts with alerts, calls & approvals",
+            ),
+            const SizedBox(height: 12),
+            HelloCastsQuickActions(
+              onCreateCast: _showNewCastMenu,
+              onScheduleAlert: _scheduleAlert,
+              onStartCall: () {
+                if (_casts.isEmpty) {
+                  GlassToast.show(context, "Create a cast first", icon: Icons.info_outline);
+                  return;
+                }
+                final first = _casts.first;
+                Navigator.push(
+                  context,
+                  buildHelloCastsCallRoute(
+                    castId: (first["id"] as num).toInt(),
+                    callTitle: first["name"]?.toString() ?? "Cast",
+                    callType: "Voice",
+                    isVideo: false,
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _TabBar(
+              tabs: _tabs,
+              index: _tabIndex,
+              onChanged: (i) => setState(() => _tabIndex = i),
+            ),
+            const SizedBox(height: 10),
+            if (_invites.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _InviteBanner(
+                  count: _invites.length,
+                  onTap: _showInvites,
+                ),
               ),
-              child: HelloCastsChatScreen(
-                title: chat["name"].toString(),
-                castType: chat["type"].toString(),
-                castId: (chat["id"] as num?)?.toInt() ?? 0,
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.only(top: 30),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (tab == "Chats")
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _FilterBar(
+                    filters: _filters,
+                    current: _chatFilter,
+                    onChanged: (v) => setState(() => _chatFilter = v),
+                  ),
+                  const SizedBox(height: 10),
+                  if (chats.isEmpty)
+                    const _EmptyState(message: "No casts yet")
+                  else
+                    ...chats.map((c) => _CastTile(
+                          title: c["name"]?.toString() ?? "Cast",
+                          subtitle: c["last_message"]?.toString() ?? "Tap to open",
+                          trailing: c["unread_count"] != null &&
+                                  (c["unread_count"] as num).toInt() > 0
+                              ? _UnreadBadge(count: (c["unread_count"] as num).toInt())
+                              : null,
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => HelloCastsChatScreen(
+                                  castId: (c["id"] as num).toInt(),
+                                  title: c["name"]?.toString() ?? "Cast",
+                                  castType: c["cast_type"]?.toString() ?? "Group",
+                                ),
+                              ),
+                            );
+                          },
+                        )),
+                ],
+              )
+            else if (tab == "Communities")
+              Column(
+                children: communities.isEmpty
+                    ? [const _EmptyState(message: "No communities yet")]
+                    : communities
+                        .map((c) => _CastTile(
+                              title: c["name"]?.toString() ?? "Community",
+                              subtitle: "Community cast",
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => HelloCastsChatScreen(
+                                      castId: (c["id"] as num).toInt(),
+                                      title: c["name"]?.toString() ?? "Community",
+                                      castType: c["cast_type"]?.toString() ?? "Community",
+                                    ),
+                                  ),
+                                );
+                              },
+                            ))
+                        .toList(),
+              )
+            else if (tab == "Calls")
+              Column(
+                children: _casts.isEmpty
+                    ? [const _EmptyState(message: "No casts available")]
+                    : _casts
+                        .map((c) => _CallTile(
+                              title: c["name"]?.toString() ?? "Cast",
+                              subtitle: c["cast_type"]?.toString() ?? "",
+                              onVoice: () {
+                                Navigator.push(
+                                  context,
+                                  buildHelloCastsCallRoute(
+                                    castId: (c["id"] as num).toInt(),
+                                    callTitle: c["name"]?.toString() ?? "Cast",
+                                    callType: "Voice",
+                                    isVideo: false,
+                                  ),
+                                );
+                              },
+                              onVideo: () {
+                                Navigator.push(
+                                  context,
+                                  buildHelloCastsCallRoute(
+                                    castId: (c["id"] as num).toInt(),
+                                    callTitle: c["name"]?.toString() ?? "Cast",
+                                    callType: "Video",
+                                    isVideo: true,
+                                  ),
+                                );
+                              },
+                            ))
+                        .toList(),
+              )
+            else
+              Column(
+                children: _alerts.isEmpty
+                    ? [const _EmptyState(message: "No alerts scheduled")]
+                    : _alerts.map((a) {
+                        final title = a["title"]?.toString() ?? "Alert";
+                        final when = a["schedule_at"]?.toString() ?? "";
+                        return _AlertTile(title: title, subtitle: when);
+                      }).toList(),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TabBar extends StatelessWidget {
+  const _TabBar({required this.tabs, required this.index, required this.onChanged});
+  final List<String> tabs;
+  final int index;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: tabs.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final active = i == index;
+          return GestureDetector(
+            onTap: () => onChanged(i),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: active ? const Color(0xFF25D366) : Colors.transparent,
+                borderRadius: BorderRadius.circular(99),
+                border: Border.all(color: const Color(0xFF25D366).withValues(alpha: 0.4)),
+              ),
+              child: Text(
+                tabs[i],
+                style: TextStyle(
+                  color: active ? Colors.white : const Color(0xFF25D366),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           );
@@ -302,471 +678,182 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       ),
     );
   }
-
-  void _openCreateCast(BuildContext context) {
-    _openCreateCastFlow(context);
-  }
-
-  void _openCreateCommunity(BuildContext context) {
-    _openCreateCastFlow(context, initialType: "Community");
-  }
-
-  void _openCallStudio(BuildContext context) {
-    if (_chats.isEmpty) {
-      return;
-    }
-    final callTypeController = ValueNotifier<String>("Voice");
-    int castId = (_chats.first["id"] as num?)?.toInt() ?? 0;
-    final castNameController = ValueNotifier<String>(_chats.first["name"].toString());
-    showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text("Start Call"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<int>(
-                value: castId,
-                items: _chats
-                    .map((c) => DropdownMenuItem<int>(
-                          value: (c["id"] as num?)?.toInt() ?? 0,
-                          child: Text(c["name"]?.toString() ?? "Cast"),
-                        ))
-                    .toList(),
-                onChanged: (value) {
-                  if (value == null) return;
-                  castId = value;
-                  final match = _chats.firstWhere(
-                    (c) => (c["id"] as num?)?.toInt() == value,
-                    orElse: () => const {},
-                  );
-                  castNameController.value =
-                      match["name"]?.toString() ?? "Cast";
-                },
-                decoration: const InputDecoration(labelText: "Cast"),
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                value: callTypeController.value,
-                items: const [
-                  DropdownMenuItem(value: "Voice", child: Text("Voice call")),
-                  DropdownMenuItem(value: "Video", child: Text("Video call")),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  callTypeController.value = value;
-                },
-                decoration: const InputDecoration(labelText: "Call type"),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text("Cancel"),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                final isVideo = callTypeController.value == "Video";
-                Navigator.of(context).push(
-                  buildHelloCastsCallRoute(
-                    castId: castId,
-                    callTitle: castNameController.value,
-                    callType: isVideo ? "Video Call" : "Voice Call",
-                    isVideo: isVideo,
-                  ),
-                );
-              },
-              child: const Text("Start"),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _openAlertStudio(BuildContext context) {
-    _showCreateAlertDialog(context);
-  }
-
-  Future<void> _openCreateCastFlow(BuildContext context,
-      {String initialType = "Group"}) async {
-    final nameController = TextEditingController();
-    String castType = initialType;
-    final directory = await _fetchDirectory();
-    if (!mounted) return;
-    final created = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text("Create Cast"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: "Cast name"),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: castType,
-                items: const [
-                  DropdownMenuItem(value: "Individual", child: Text("Individual")),
-                  DropdownMenuItem(value: "Group", child: Text("Group")),
-                  DropdownMenuItem(value: "Community", child: Text("Community")),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  castType = value;
-                },
-                decoration: const InputDecoration(labelText: "Cast type"),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text("Cancel"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text("Next"),
-            ),
-          ],
-        );
-      },
-    );
-    if (created != true) return;
-    var name = nameController.text.trim();
-
-    final memberIds = await _pickUsersSheet(
-      title: castType == "Individual"
-          ? "Choose a person"
-          : "Invite members",
-      users: directory,
-      allowMulti: castType != "Individual",
-      allowSelectAll: castType != "Individual",
-    );
-    if (memberIds.isEmpty) return;
-    if (name.isEmpty && castType == "Individual" && memberIds.length == 1) {
-      final match = directory.firstWhere(
-        (u) => (u["id"] as num?)?.toInt() == memberIds.first,
-        orElse: () => const {},
-      );
-      name = match["name"]?.toString() ?? "Chat";
-    }
-    if (name.isEmpty) return;
-
-    try {
-      final res = await _api.createCast(
-        name: name,
-        castType: castType,
-        memberIds: memberIds,
-      );
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        if (mounted) {
-          GlassToast.show(
-            context,
-            "Cast created. Invites sent for approval.",
-            icon: Icons.check_circle_outline,
-          );
-        }
-        await _loadData();
-      }
-    } catch (_) {}
-  }
-
-  Future<List<Map<String, dynamic>>> _fetchDirectory() async {
-    try {
-      final res = await _api.userDirectory();
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final list = jsonDecode(res.body) as List<dynamic>;
-        return list.whereType<Map<String, dynamic>>().toList();
-      }
-    } catch (_) {}
-    return [];
-  }
-
-  Future<List<int>> _pickUsersSheet({
-    required String title,
-    required List<Map<String, dynamic>> users,
-    required bool allowMulti,
-    bool allowSelectAll = false,
-  }) async {
-    final selected = <int>{};
-    final search = TextEditingController();
-    final result = await showModalBottomSheet<List<int>>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: EdgeInsets.only(
-              left: 16,
-              right: 16,
-              top: 12,
-              bottom: MediaQuery.of(ctx).viewInsets.bottom + 12,
-            ),
-            child: StatefulBuilder(
-              builder: (ctx, setLocal) {
-                final filtered = users.where((u) {
-                  final name = (u["name"] ?? "").toString().toLowerCase();
-                  final email = (u["email"] ?? "").toString().toLowerCase();
-                  final q = search.text.trim().toLowerCase();
-                  if (q.isEmpty) return true;
-                  return name.contains(q) || email.contains(q);
-                }).toList();
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.of(ctx).pop(selected.toList()),
-                          child: const Text("Done"),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: search,
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search_rounded),
-                        labelText: "Search users",
-                      ),
-                      onChanged: (_) => setLocal(() {}),
-                    ),
-                    if (allowSelectAll)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () {
-                            selected
-                              ..clear()
-                              ..addAll(filtered
-                                  .map((u) => (u["id"] as num?)?.toInt() ?? 0)
-                                  .where((id) => id != 0));
-                            setLocal(() {});
-                          },
-                          child: const Text("Select all"),
-                        ),
-                      ),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 360),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: filtered.length,
-                        itemBuilder: (ctx, index) {
-                          final user = filtered[index];
-                          final id = (user["id"] as num?)?.toInt() ?? 0;
-                          final checked = selected.contains(id);
-                          return ListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(user["name"]?.toString() ?? "User"),
-                            subtitle: Text(user["email"]?.toString() ?? ""),
-                            trailing: allowMulti
-                                ? Checkbox(
-                                    value: checked,
-                                    onChanged: (value) {
-                                      if (value == true) {
-                                        selected.add(id);
-                                      } else {
-                                        selected.remove(id);
-                                      }
-                                      setLocal(() {});
-                                    },
-                                  )
-                                : IconButton(
-                                    icon: const Icon(Icons.add_circle_rounded),
-                                    onPressed: () {
-                                      selected
-                                        ..clear()
-                                        ..add(id);
-                                      Navigator.of(ctx).pop(selected.toList());
-                                    },
-                                  ),
-                            onTap: () {
-                              if (!allowMulti) {
-                                selected
-                                  ..clear()
-                                  ..add(id);
-                                Navigator.of(ctx).pop(selected.toList());
-                              } else {
-                                if (checked) {
-                                  selected.remove(id);
-                                } else {
-                                  selected.add(id);
-                                }
-                                setLocal(() {});
-                              }
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-    search.dispose();
-    return result ?? [];
-  }
-
-  Future<void> _acceptInvite(int inviteId) async {
-    await _api.respondCastInvite(inviteId: inviteId, action: "ACCEPT");
-    await _loadData();
-  }
-
-  Future<void> _rejectInvite(int inviteId) async {
-    await _api.respondCastInvite(inviteId: inviteId, action: "REJECT");
-    await _loadData();
-  }
-
-  Future<void> _showCreateAlertDialog(BuildContext context) async {
-    if (_chats.isEmpty) {
-      return;
-    }
-    final titleController = TextEditingController();
-    final messageController = TextEditingController();
-    final minutesController = TextEditingController(text: "10");
-    final intervalController = TextEditingController();
-    int castId = (_chats.first["id"] as num?)?.toInt() ?? 0;
-    final created = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text("Schedule Alert"),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<int>(
-                  value: castId,
-                  items: _chats
-                      .map((c) => DropdownMenuItem<int>(
-                            value: (c["id"] as num?)?.toInt() ?? 0,
-                            child: Text(c["name"]?.toString() ?? "Cast"),
-                          ))
-                      .toList(),
-                  onChanged: (value) {
-                    if (value != null) castId = value;
-                  },
-                  decoration: const InputDecoration(labelText: "Cast"),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: titleController,
-                  decoration: const InputDecoration(labelText: "Alert title"),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: messageController,
-                  decoration: const InputDecoration(labelText: "Message (optional)"),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: minutesController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "Minutes from now"),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: intervalController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "Repeat every (minutes, optional)"),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text("Cancel"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text("Schedule"),
-            ),
-          ],
-        );
-      },
-    );
-    if (created != true) return;
-    final title = titleController.text.trim();
-    if (title.isEmpty || castId == 0) return;
-    final minutes = int.tryParse(minutesController.text.trim()) ?? 10;
-    final interval = int.tryParse(intervalController.text.trim());
-    final scheduleAt = DateTime.now().add(Duration(minutes: minutes));
-    try {
-      final res = await _api.createCastAlert(
-        castId: castId,
-        title: title,
-        message: messageController.text.trim().isEmpty
-            ? null
-            : messageController.text.trim(),
-        scheduleAt: scheduleAt,
-        intervalMinutes: interval,
-      );
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        await _loadData();
-      }
-    } catch (_) {}
-  }
 }
 
-class _InvitePanel extends StatelessWidget {
-  const _InvitePanel({
-    required this.invites,
-    required this.onAccept,
-    required this.onReject,
-  });
-
-  final List<Map<String, dynamic>> invites;
-  final Future<void> Function(int inviteId) onAccept;
-  final Future<void> Function(int inviteId) onReject;
+class _FilterBar extends StatelessWidget {
+  const _FilterBar({required this.filters, required this.current, required this.onChanged});
+  final List<String> filters;
+  final String current;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Cast Invites",
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+    return Wrap(
+      spacing: 8,
+      children: filters.map((f) {
+        final active = f == current;
+        return ChoiceChip(
+          selected: active,
+          label: Text(f),
+          onSelected: (_) => onChanged(f),
+          selectedColor: const Color(0xFF25D366).withValues(alpha: 0.2),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _InviteBanner extends StatelessWidget {
+  const _InviteBanner({required this.count, required this.onTap});
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF3CD),
+          borderRadius: BorderRadius.circular(12),
         ),
-        const SizedBox(height: 8),
-        ...invites.map((invite) {
-          final id = (invite["id"] as num?)?.toInt() ?? 0;
-          final name = invite["cast_name"]?.toString() ?? "Cast";
-          final inviter = invite["inviter_name"]?.toString() ?? "Member";
-          final type = invite["cast_type"]?.toString() ?? "Group";
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: HelloCastsInviteTile(
-              title: name,
-              subtitle: "$type • Invited by $inviter",
-              onAccept: () => onAccept(id),
-              onReject: () => onReject(id),
+        child: Row(
+          children: [
+            const Icon(Icons.mail_rounded, color: Colors.orange),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text("$count pending cast invite${count > 1 ? "s" : ""}",
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
             ),
-          );
-        }),
-      ],
+            const Icon(Icons.chevron_right_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CastTile extends StatelessWidget {
+  const _CastTile({required this.title, required this.subtitle, this.trailing, required this.onTap});
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: const Color(0xFF25D366).withValues(alpha: 0.15),
+        child: Text(title.isNotEmpty ? title[0].toUpperCase() : "?"),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(subtitle),
+      trailing: trailing ?? const Icon(Icons.chevron_right_rounded),
+      onTap: onTap,
+    );
+  }
+}
+
+class _CallTile extends StatelessWidget {
+  const _CallTile({required this.title, required this.subtitle, required this.onVoice, required this.onVideo});
+  final String title;
+  final String subtitle;
+  final VoidCallback onVoice;
+  final VoidCallback onVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: const CircleAvatar(
+        backgroundColor: Color(0xFF1F2C34),
+        child: Icon(Icons.call_rounded, color: Colors.white),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(subtitle),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(icon: const Icon(Icons.call_rounded), onPressed: onVoice),
+          IconButton(icon: const Icon(Icons.videocam_rounded), onPressed: onVideo),
+        ],
+      ),
+    );
+  }
+}
+
+class _AlertTile extends StatelessWidget {
+  const _AlertTile({required this.title, required this.subtitle});
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: const CircleAvatar(
+        backgroundColor: Color(0xFFFF9A3D),
+        child: Icon(Icons.alarm_rounded, color: Colors.white),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(subtitle),
+    );
+  }
+}
+
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF25D366),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        "$count",
+        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40),
+      child: Center(
+        child: Text(message, style: TextStyle(color: Theme.of(context).hintColor)),
+      ),
+    );
+  }
+}
+
+class _NewCastOption extends StatelessWidget {
+  const _NewCastOption({required this.icon, required this.label, required this.subtitle, required this.onTap});
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: const Color(0xFF25D366).withValues(alpha: 0.15),
+        child: Icon(icon, color: const Color(0xFF25D366)),
+      ),
+      title: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(subtitle),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: onTap,
     );
   }
 }

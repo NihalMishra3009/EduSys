@@ -4,6 +4,7 @@ import "dart:io";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
+import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
 
@@ -12,617 +13,343 @@ import "hello_casts_call_screen.dart";
 class HelloCastsChatScreen extends StatefulWidget {
   const HelloCastsChatScreen({
     super.key,
+    required this.castId,
     required this.title,
     required this.castType,
-    required this.castId,
   });
 
+  final int castId;
   final String title;
   final String castType;
-  final int castId;
 
   @override
   State<HelloCastsChatScreen> createState() => _HelloCastsChatScreenState();
 }
 
 class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
-  final TextEditingController _composer = TextEditingController();
-  final ApiService _api = ApiService();
-  final List<Map<String, dynamic>> _messages = [];
-  Timer? _pollTimer;
-  WebSocket? _socket;
-  bool _socketReady = false;
-  final Set<String> _messageIds = {};
-  final Set<String> _pendingClientIds = {};
-  int? _currentUserId;
-  bool _isAdmin = false;
-
-  @override
-  void dispose() {
-    _pollTimer?.cancel();
-    _socket?.close();
-    _composer.dispose();
-    super.dispose();
-  }
+  final _api = ApiService();
+  final _msgCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+  List<Map<String, dynamic>> _messages = [];
+  List<Map<String, dynamic>> _scheduled = [];
+  bool _loading = true;
+  WebSocket? _ws;
+  bool _showAttachMenu = false;
 
   @override
   void initState() {
     super.initState();
-    _loadMessages();
-    _connectSocket();
-    _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
-      _loadMessages(silent: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadMessages();
+      await _connectWs();
     });
-  }
-
-  Future<int?> _ensureUserId() async {
-    if (_currentUserId != null) return _currentUserId;
-    try {
-      final res = await _api.me();
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final decoded = jsonDecode(res.body);
-        if (decoded is Map<String, dynamic>) {
-          final id = decoded["id"];
-          if (id is num) {
-            _currentUserId = id.toInt();
-            return _currentUserId;
-          }
-        }
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  Future<void> _loadMessages({bool silent = false}) async {
-    if (widget.castId == 0) return;
-    try {
-      final userId = await _ensureUserId();
-      final res = await _api.listCastMessages(castId: widget.castId);
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final list = jsonDecode(res.body) as List<dynamic>;
-        final items = <Map<String, dynamic>>[];
-        for (final row in list) {
-          if (row is! Map<String, dynamic>) continue;
-          final senderId = (row["sender_id"] as num?)?.toInt();
-          final createdRaw = row["created_at"]?.toString();
-          final createdAt =
-              createdRaw != null ? DateTime.tryParse(createdRaw) : null;
-          final messageId = row["id"]?.toString() ?? "";
-          items.add({
-            "fromMe": userId != null && senderId == userId,
-            "sender": row["sender_name"]?.toString(),
-            "text": row["message"]?.toString() ?? "",
-            "time": _formatTime(createdAt),
-            "id": messageId,
-          });
-          if (messageId.isNotEmpty) {
-            _messageIds.add(messageId);
-          }
-        }
-        if (mounted) {
-          setState(() {
-            _messages
-              ..clear()
-              ..addAll(items);
-          });
-        }
-        await _api.markCastRead(castId: widget.castId);
-      }
-    } catch (_) {
-      if (!silent) {
-        // ignore, keep existing messages
-      }
-    }
-  }
-
-  Future<void> _sendMessage() async {
-    final text = _composer.text.trim();
-    if (text.isEmpty) {
-      return;
-    }
-    final clientId = "c${DateTime.now().millisecondsSinceEpoch}";
-    _pendingClientIds.add(clientId);
-    setState(() {
-      _messages.add({
-        "fromMe": true,
-        "sender": null,
-        "text": text,
-        "time": _formatTime(DateTime.now()),
-        "id": clientId,
-      });
-    });
-    if (_socketReady) {
-      try {
-        _socket?.add(jsonEncode({
-          "type": "message",
-          "message": text,
-          "client_id": clientId,
-        }));
-      } catch (_) {}
-    } else {
-      try {
-        final res = await _api.sendCastMessage(
-          castId: widget.castId,
-          message: text,
-        );
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          await _loadMessages();
-        }
-      } catch (_) {}
-    }
-    _composer.clear();
-  }
-
-  Future<void> _connectSocket() async {
-    if (widget.castId == 0) return;
-    try {
-      final baseUrl = await _api.getBaseUrl();
-      final token = await _api.getToken();
-      if (token == null || token.isEmpty) return;
-      final peerId = "p${DateTime.now().microsecondsSinceEpoch}";
-      Uri? baseUri = Uri.tryParse(baseUrl);
-      if (baseUri == null || baseUri.host.isEmpty) {
-        baseUri = Uri.tryParse("https://$baseUrl");
-      }
-      final isSecure = (baseUri?.scheme ?? "https") == "https";
-      final wsScheme = isSecure ? "wss" : "ws";
-      final host = baseUri?.host ?? baseUrl;
-      final port = (baseUri?.hasPort ?? false) && baseUri!.port != 0
-          ? baseUri.port
-          : null;
-      final uri = Uri(
-        scheme: wsScheme,
-        host: host,
-        port: port,
-        path: "/ws/casts/${widget.castId}",
-        queryParameters: {
-          "peer_id": peerId,
-          "token": token,
-        },
-      );
-      _socket = await WebSocket.connect(uri.toString());
-      _socketReady = true;
-      _socket!.listen(
-        _handleSocketMessage,
-        onDone: () => _socketReady = false,
-        onError: (_) => _socketReady = false,
-      );
-    } catch (_) {
-      _socketReady = false;
-    }
-  }
-
-  void _handleSocketMessage(dynamic raw) {
-    try {
-      final decoded = jsonDecode(raw.toString());
-      if (decoded is! Map<String, dynamic>) return;
-      if (decoded["type"] != "message") return;
-      final msg = decoded["message"];
-      if (msg is! Map<String, dynamic>) return;
-      final messageId = msg["id"]?.toString() ?? "";
-      final clientId = msg["client_id"]?.toString();
-      if (clientId != null && _pendingClientIds.contains(clientId)) {
-        _pendingClientIds.remove(clientId);
-      }
-      if (messageId.isNotEmpty && _messageIds.contains(messageId)) {
-        return;
-      }
-      if (messageId.isNotEmpty) {
-        _messageIds.add(messageId);
-      }
-      final senderId = (msg["sender_id"] as num?)?.toInt();
-      final createdRaw = msg["created_at"]?.toString();
-      final createdAt =
-          createdRaw != null ? DateTime.tryParse(createdRaw) : null;
-      final isMe = _currentUserId != null && senderId == _currentUserId;
-      setState(() {
-        _messages.add({
-          "fromMe": isMe,
-          "sender": msg["sender_name"]?.toString(),
-          "text": msg["message"]?.toString() ?? "",
-          "time": _formatTime(createdAt ?? DateTime.now()),
-          "id": messageId.isNotEmpty ? messageId : clientId ?? "",
-        });
-      });
-      _api.markCastRead(castId: widget.castId);
-    } catch (_) {}
-  }
-
-  String _formatTime(DateTime? time) {
-    if (time == null) return "";
-    return "${time.hour.toString().padLeft(2, "0")}:${time.minute.toString().padLeft(2, "0")}";
-  }
-
-  Future<void> _showMembersSheet() async {
-    final members = await _fetchMembers();
-    if (!mounted) return;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        "Members",
-                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                      ),
-                    ),
-                    if (_isAdmin)
-                      TextButton(
-                        onPressed: () async {
-                          Navigator.of(ctx).pop();
-                          await _promptAddMember();
-                        },
-                        child: const Text("Add"),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (members.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text("No members found."),
-                  )
-                else
-                  ...members.map((m) {
-                    final isSelf =
-                        _currentUserId != null && m["user_id"] == _currentUserId;
-                    final role = m["role"]?.toString() ?? "";
-                    return ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(m["name"]?.toString() ?? "Member"),
-                      subtitle: Text(role),
-                      trailing: _isAdmin && !isSelf
-                          ? IconButton(
-                              icon: const Icon(Icons.remove_circle_outline),
-                              onPressed: () async {
-                                await _removeMember(m["user_id"] as int);
-                                if (mounted) {
-                                  Navigator.of(ctx).pop();
-                                  _showMembersSheet();
-                                }
-                              },
-                            )
-                          : null,
-                    );
-                  }),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<List<Map<String, dynamic>>> _fetchMembers() async {
-    try {
-      final res = await _api.listCastMembers(castId: widget.castId);
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final list = jsonDecode(res.body) as List<dynamic>;
-        final members = <Map<String, dynamic>>[];
-        for (final row in list) {
-          if (row is! Map<String, dynamic>) continue;
-          members.add({
-            "id": row["id"],
-            "user_id": row["user_id"],
-            "name": row["name"],
-            "role": row["role"],
-          });
-        }
-        final me = members.firstWhere(
-          (m) => _currentUserId != null && m["user_id"] == _currentUserId,
-          orElse: () => const {},
-        );
-        _isAdmin = (me["role"]?.toString() ?? "") == "ADMIN";
-        return members;
-      }
-    } catch (_) {}
-    return [];
-  }
-
-  Future<void> _promptAddMember() async {
-    final members = await _fetchMembers();
-    final existing = members
-        .map((m) => m["user_id"] as int?)
-        .whereType<int>()
-        .toSet();
-    final directory = await _fetchDirectory();
-    if (!mounted) return;
-    final candidates =
-        directory.where((u) => !existing.contains(u["id"])).toList();
-    if (candidates.isEmpty) {
-      GlassToast.show(context, "No users to invite.", icon: Icons.info_outline);
-      return;
-    }
-    final selected = await _pickUsersSheet(
-      title: "Invite members",
-      users: candidates,
-      allowMulti: true,
-    );
-    if (selected.isEmpty) return;
-    await _api.inviteCastMembers(
-      castId: widget.castId,
-      memberIds: selected,
-    );
-    if (mounted) {
-      GlassToast.show(
-        context,
-        "Invites sent for ${selected.length} member(s).",
-        icon: Icons.check_circle_outline,
-      );
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> _fetchDirectory() async {
-    try {
-      final res = await _api.userDirectory();
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final list = jsonDecode(res.body) as List<dynamic>;
-        return list.whereType<Map<String, dynamic>>().toList();
-      }
-    } catch (_) {}
-    return [];
-  }
-
-  Future<List<int>> _pickUsersSheet({
-    required String title,
-    required List<Map<String, dynamic>> users,
-    required bool allowMulti,
-  }) async {
-    final selected = <int>{};
-    final search = TextEditingController();
-    final result = await showModalBottomSheet<List<int>>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: EdgeInsets.only(
-              left: 16,
-              right: 16,
-              top: 12,
-              bottom: MediaQuery.of(ctx).viewInsets.bottom + 12,
-            ),
-            child: StatefulBuilder(
-              builder: (ctx, setLocal) {
-                final filtered = users.where((u) {
-                  final name = (u["name"] ?? "").toString().toLowerCase();
-                  final email = (u["email"] ?? "").toString().toLowerCase();
-                  final q = search.text.trim().toLowerCase();
-                  if (q.isEmpty) return true;
-                  return name.contains(q) || email.contains(q);
-                }).toList();
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.of(ctx).pop(selected.toList()),
-                          child: const Text("Done"),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: search,
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search_rounded),
-                        labelText: "Search users",
-                      ),
-                      onChanged: (_) => setLocal(() {}),
-                    ),
-                    const SizedBox(height: 8),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 360),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: filtered.length,
-                        itemBuilder: (ctx, index) {
-                          final user = filtered[index];
-                          final id = (user["id"] as num?)?.toInt() ?? 0;
-                          final checked = selected.contains(id);
-                          return ListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(user["name"]?.toString() ?? "User"),
-                            subtitle: Text(user["email"]?.toString() ?? ""),
-                            trailing: allowMulti
-                                ? Checkbox(
-                                    value: checked,
-                                    onChanged: (value) {
-                                      if (value == true) {
-                                        selected.add(id);
-                                      } else {
-                                        selected.remove(id);
-                                      }
-                                      setLocal(() {});
-                                    },
-                                  )
-                                : IconButton(
-                                    icon: const Icon(Icons.add_circle_rounded),
-                                    onPressed: () {
-                                      selected
-                                        ..clear()
-                                        ..add(id);
-                                      Navigator.of(ctx).pop(selected.toList());
-                                    },
-                                  ),
-                            onTap: () {
-                              if (!allowMulti) {
-                                selected
-                                  ..clear()
-                                  ..add(id);
-                                Navigator.of(ctx).pop(selected.toList());
-                              } else {
-                                if (checked) {
-                                  selected.remove(id);
-                                } else {
-                                  selected.add(id);
-                                }
-                                setLocal(() {});
-                              }
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-    search.dispose();
-    return result ?? [];
-  }
-
-  Future<void> _removeMember(int userId) async {
-    await _api.removeCastMember(castId: widget.castId, memberId: userId);
-  }
-
-  Future<void> _showAlertDialog() async {
-    final titleCtrl = TextEditingController();
-    final msgCtrl = TextEditingController();
-    final minutesCtrl = TextEditingController(text: "10");
-    final intervalCtrl = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text("Schedule Alert"),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleCtrl,
-                  decoration: const InputDecoration(labelText: "Alert title"),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: msgCtrl,
-                  decoration:
-                      const InputDecoration(labelText: "Message (optional)"),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: minutesCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration:
-                      const InputDecoration(labelText: "Minutes from now"),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: intervalCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                      labelText: "Repeat every (minutes, optional)"),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text("Cancel"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text("Schedule"),
-            ),
-          ],
-        );
-      },
-    );
-    if (ok != true) return;
-    final title = titleCtrl.text.trim();
-    if (title.isEmpty) return;
-    final minutes = int.tryParse(minutesCtrl.text.trim()) ?? 10;
-    final interval = int.tryParse(intervalCtrl.text.trim());
-    final scheduleAt = DateTime.now().add(Duration(minutes: minutes));
-    final res = await _api.createCastAlert(
-      castId: widget.castId,
-      title: title,
-      message: msgCtrl.text.trim().isEmpty ? null : msgCtrl.text.trim(),
-      scheduleAt: scheduleAt,
-      intervalMinutes: interval,
-    );
-    if (res.statusCode >= 200 && res.statusCode < 300 && mounted) {
-      GlassToast.show(
-        context,
-        "Alert scheduled.",
-        icon: Icons.check_circle_outline,
-      );
-    } else if (mounted) {
-      GlassToast.show(
-        context,
-        "Unable to schedule alert.",
-        icon: Icons.error_outline,
-      );
-    }
   }
 
   @override
+  void dispose() {
+    _msgCtrl.dispose();
+    _scrollCtrl.dispose();
+    _ws?.close();
+    super.dispose();
+  }
+
+  Future<void> _loadMessages() async {
+    final res = await _api.listCastMessages(castId: widget.castId);
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      final list = (jsonDecode(res.body) as List)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      setState(() {
+        _messages = list;
+        _loading = false;
+      });
+      _scrollToBottom();
+    } else {
+      setState(() => _loading = false);
+    }
+    final sched = await _api.listCastAlerts();
+    if (mounted && sched.statusCode >= 200 && sched.statusCode < 300) {
+      final list = (jsonDecode(sched.body) as List)
+          .whereType<Map<String, dynamic>>()
+          .where((row) => (row["cast_id"] as num?)?.toInt() == widget.castId)
+          .toList();
+      setState(() => _scheduled = list);
+    }
+  }
+
+  Future<void> _connectWs() async {
+    try {
+      final peerId = "p${DateTime.now().microsecondsSinceEpoch}";
+      final url = await _api.castsGetWsUrl(widget.castId, peerId: peerId);
+      _ws = await WebSocket.connect(url);
+      _ws!.listen((raw) {
+        try {
+          final msg = jsonDecode(raw.toString()) as Map<String, dynamic>;
+          if (msg["type"] == "message") {
+            final m = msg["message"];
+            if (m is Map<String, dynamic> && mounted) {
+              setState(() => _messages.add(m));
+              _scrollToBottom();
+            }
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Map<String, dynamic> _decodeMessage(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+    } catch (_) {}
+    return {"type": "TEXT", "body": raw};
+  }
+
+  Future<void> _send({
+    String type = "TEXT",
+    String? body,
+    String? attachUrl,
+    String? attachName,
+    int? durationSecs,
+  }) async {
+    final text = body ?? _msgCtrl.text.trim();
+    if (text.isEmpty && attachUrl == null) return;
+    _msgCtrl.clear();
+
+    final payload = {
+      "type": type,
+      "body": text.isEmpty ? null : text,
+      "attachment_url": attachUrl,
+      "attachment_name": attachName,
+      "duration_secs": durationSecs,
+    };
+
+    final messageText = type == "TEXT" && attachUrl == null
+        ? (text.isEmpty ? "" : text)
+        : jsonEncode(payload);
+
+    final now = DateTime.now().toIso8601String();
+    final opt = {
+      "id": -DateTime.now().millisecondsSinceEpoch,
+      "cast_id": widget.castId,
+      "sender_name": "Me",
+      "message": messageText,
+      "created_at": now,
+      "_pending": true,
+    };
+    setState(() => _messages.add(opt));
+    _scrollToBottom();
+
+    if (_ws != null) {
+      try {
+        _ws!.add(jsonEncode({"type": "message", "message": messageText}));
+        return;
+      } catch (_) {}
+    }
+
+    final res = await _api.sendCastMessage(
+      castId: widget.castId,
+      message: messageText,
+    );
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      final sent = jsonDecode(res.body) as Map<String, dynamic>;
+      setState(() {
+        _messages.removeWhere((m) => m["_pending"] == true);
+        _messages.add(sent);
+      });
+    } else {
+      setState(() => _messages.removeWhere((m) => m["_pending"] == true));
+      GlassToast.show(context, "Failed to send", icon: Icons.error_outline);
+    }
+  }
+
+  Future<void> _sendScheduled() async {
+    final bodyCtrl = TextEditingController();
+    DateTime? scheduledAt;
+    String repeat = "ONCE";
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text("Schedule alert / reminder"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: bodyCtrl,
+                decoration: const InputDecoration(labelText: "Message"),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final d = await showDatePicker(
+                    context: ctx,
+                    initialDate: DateTime.now().add(const Duration(minutes: 5)),
+                    firstDate: DateTime.now(),
+                    lastDate: DateTime(2100),
+                  );
+                  if (d == null) return;
+                  final t = await showTimePicker(
+                    context: ctx,
+                    initialTime: TimeOfDay.now(),
+                  );
+                  if (t == null) return;
+                  setLocal(() => scheduledAt =
+                      DateTime(d.year, d.month, d.day, t.hour, t.minute));
+                },
+                icon: const Icon(Icons.schedule_rounded),
+                label: Text(scheduledAt == null
+                    ? "Set date & time"
+                    : "${scheduledAt!.day}/${scheduledAt!.month} ${scheduledAt!.hour}:${scheduledAt!.minute.toString().padLeft(2, '0')}"),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: repeat,
+                decoration: const InputDecoration(labelText: "Repeat"),
+                items: const ["ONCE", "EVERY_2H", "DAILY", "WEEKLY"]
+                    .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                    .toList(),
+                onChanged: (v) => setLocal(() => repeat = v ?? "ONCE"),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text("Cancel"),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text("Schedule"),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || scheduledAt == null || !mounted) return;
+
+    final intervalMinutes = switch (repeat) {
+      "EVERY_2H" => 120,
+      "DAILY" => 1440,
+      "WEEKLY" => 10080,
+      _ => null,
+    };
+
+    final res = await _api.createCastAlert(
+      castId: widget.castId,
+      title: "Alert",
+      message: bodyCtrl.text.trim(),
+      scheduleAt: scheduledAt!,
+      intervalMinutes: intervalMinutes,
+      active: true,
+    );
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      GlassToast.show(context, "Alert scheduled!", icon: Icons.alarm_on_rounded);
+      await _loadMessages();
+    }
+  }
+
+  Future<void> _pickAndSendFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: [
+        "pdf",
+        "doc",
+        "docx",
+        "ppt",
+        "pptx",
+        "xls",
+        "xlsx",
+        "png",
+        "jpg",
+        "jpeg",
+        "txt",
+        "mp3",
+        "m4a",
+        "wav"
+      ],
+    );
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) return;
+    GlassToast.show(context, "Uploading...", icon: Icons.upload_rounded);
+    final res = await _api.uploadAttachment(filePath: path, purpose: "cast");
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final url = data["url"]?.toString();
+      if (url == null || url.isEmpty) return;
+      await _send(
+        type: path.toLowerCase().endsWith(".mp3") ||
+                path.toLowerCase().endsWith(".wav") ||
+                path.toLowerCase().endsWith(".m4a")
+            ? "VOICE_NOTE"
+            : "FILE",
+        attachUrl: url,
+        attachName: result.files.single.name,
+      );
+    } else {
+      GlassToast.show(context, "Upload failed", icon: Icons.error_outline);
+    }
+  }
+
+  bool _isMe(Map<String, dynamic> msg) =>
+      msg["_pending"] == true || msg["sender_name"] == "Me";
+
+  @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
+      backgroundColor: dark ? const Color(0xFF0B141A) : const Color(0xFFECE5DD),
       appBar: AppBar(
-        backgroundColor: scheme.surface.withValues(alpha: 0.92),
+        backgroundColor: dark ? const Color(0xFF1F2C34) : const Color(0xFF075E54),
+        foregroundColor: Colors.white,
         titleSpacing: 0,
         title: Row(
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundColor: scheme.primary.withValues(alpha: 0.12),
+              backgroundColor: Colors.white24,
               child: Text(
-                widget.title.substring(0, 1).toUpperCase(),
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: scheme.primary,
-                ),
+                widget.title.isNotEmpty ? widget.title[0].toUpperCase() : "?",
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w700),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     widget.title,
+                    style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
                   ),
-                  Text(
-                    "${widget.castType} Cast",
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: scheme.onSurface.withValues(alpha: 0.6)),
-                  ),
+                  Text(widget.castType,
+                      style: const TextStyle(
+                          color: Colors.white70, fontSize: 12)),
                 ],
               ),
             ),
@@ -630,74 +357,129 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: "Members",
-            icon: const Icon(Icons.people_alt_rounded),
-            onPressed: _showMembersSheet,
-          ),
-          IconButton(
+            icon: const Icon(Icons.call_rounded, color: Colors.white),
+            onPressed: () => Navigator.push(
+              context,
+              buildHelloCastsCallRoute(
+                castId: widget.castId,
+                callTitle: widget.title,
+                callType: "Voice",
+                isVideo: false,
+              ),
+            ),
             tooltip: "Voice call",
-            icon: const Icon(Icons.call_rounded),
-            onPressed: () {
-              Navigator.of(context).push(
-                buildHelloCastsCallRoute(
-                  castId: widget.castId,
-                  callTitle: widget.title,
-                  callType: "Voice Call",
-                  isVideo: false,
-                ),
-              );
-            },
           ),
           IconButton(
-            tooltip: "Group call",
-            icon: const Icon(Icons.groups_rounded),
-            onPressed: () {
-              Navigator.of(context).push(
-                buildHelloCastsCallRoute(
-                  castId: widget.castId,
-                  callTitle: widget.title,
-                  callType: "Group Voice Call",
-                  isVideo: false,
-                ),
-              );
-            },
-          ),
-          IconButton(
-            tooltip: "Alert",
-            icon: const Icon(Icons.alarm_rounded),
-            onPressed: _showAlertDialog,
-          ),
-          IconButton(
+            icon: const Icon(Icons.videocam_rounded, color: Colors.white),
+            onPressed: () => Navigator.push(
+              context,
+              buildHelloCastsCallRoute(
+                castId: widget.castId,
+                callTitle: widget.title,
+                callType: "Video",
+                isVideo: true,
+              ),
+            ),
             tooltip: "Video call",
-            icon: const Icon(Icons.videocam_rounded),
-            onPressed: () {
-              Navigator.of(context).push(
-                buildHelloCastsCallRoute(
-                  castId: widget.castId,
-                  callTitle: widget.title,
-                  callType: "Video Call",
-                  isVideo: true,
-                ),
-              );
-            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.alarm_add_rounded, color: Colors.white),
+            onPressed: _sendScheduled,
+            tooltip: "Schedule alert",
           ),
         ],
       ),
       body: Column(
         children: [
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final message = _messages[index];
-                return _MessageBubble(message: message);
-              },
+          if (_scheduled.isNotEmpty)
+            Container(
+              color: dark ? const Color(0xFF1F2C34) : const Color(0xFFFFF9C4),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.alarm_rounded,
+                      size: 16, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      "${_scheduled.length} scheduled alert${_scheduled.length > 1 ? "s" : ""}",
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  TextButton(onPressed: () {}, child: const Text("View")),
+                ],
+              ),
             ),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : ListView.builder(
+                    controller: _scrollCtrl,
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                    itemCount: _messages.length,
+                    itemBuilder: (_, i) => _MessageBubble(
+                      msg: _messages[i],
+                      isMe: _isMe(_messages[i]),
+                      decode: _decodeMessage,
+                    ),
+                  ),
           ),
-          HelloCastsComposerBar(
-            controller: _composer,
-            onSend: _sendMessage,
+          Container(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+            color: dark ? const Color(0xFF1F2C34) : const Color(0xFFF0F2F5),
+            child: Column(
+              children: [
+                if (_showAttachMenu)
+                  _AttachMenu(
+                    onFile: () {
+                      setState(() => _showAttachMenu = false);
+                      _pickAndSendFile();
+                    },
+                    onClose: () => setState(() => _showAttachMenu = false),
+                  ),
+                Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        _showAttachMenu
+                            ? Icons.close_rounded
+                            : Icons.attach_file_rounded,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () =>
+                          setState(() => _showAttachMenu = !_showAttachMenu),
+                    ),
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color:
+                              dark ? const Color(0xFF2A3942) : Colors.white,
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: TextField(
+                          controller: _msgCtrl,
+                          decoration: const InputDecoration(
+                            hintText: "Message",
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 10),
+                          ),
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _send(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FloatingActionButton.small(
+                      backgroundColor: const Color(0xFF25D366),
+                      onPressed: _send,
+                      child: const Icon(Icons.send_rounded, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -706,69 +488,132 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
-
-  final Map<String, dynamic> message;
+  const _MessageBubble({
+    required this.msg,
+    required this.isMe,
+    required this.decode,
+  });
+  final Map<String, dynamic> msg;
+  final bool isMe;
+  final Map<String, dynamic> Function(String raw) decode;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final isMe = message["fromMe"] == true;
-    final bubbleColor = isMe
-        ? scheme.primary.withValues(alpha: 0.14)
-        : scheme.surface.withValues(alpha: 0.9);
-    final alignment = isMe ? Alignment.centerRight : Alignment.centerLeft;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final messageRaw = msg["message"]?.toString() ?? "";
+    final decoded = decode(messageRaw);
+    final type = decoded["type"]?.toString() ?? "TEXT";
+    final body = decoded["body"]?.toString();
+    final attachName = decoded["attachment_name"]?.toString();
+    final senderName = msg["sender_name"]?.toString();
+    final isPending = msg["_pending"] == true;
+    final isAlert = type == "ALERT" || type == "REMINDER";
+    final bubbleBg = isMe
+        ? (dark ? const Color(0xFF005C4B) : const Color(0xFFDCF8C6))
+        : (dark ? const Color(0xFF1F2C34) : Colors.white);
     final radius = BorderRadius.only(
-      topLeft: const Radius.circular(16),
-      topRight: const Radius.circular(16),
-      bottomLeft: Radius.circular(isMe ? 16 : 4),
-      bottomRight: Radius.circular(isMe ? 4 : 16),
+      topLeft: const Radius.circular(18),
+      topRight: const Radius.circular(18),
+      bottomLeft: Radius.circular(isMe ? 18 : 4),
+      bottomRight: Radius.circular(isMe ? 4 : 18),
     );
+    String timeStr = "";
+    try {
+      final dt = DateTime.parse(msg["created_at"].toString()).toLocal();
+      timeStr =
+          "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+    } catch (_) {}
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.only(
+          left: isMe ? 60 : 0, right: isMe ? 0 : 60, bottom: 4),
       child: Align(
-        alignment: alignment,
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 280),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: bubbleColor,
-            borderRadius: radius,
-            border: Border.all(
-              color: scheme.onSurface.withValues(alpha: 0.08),
-            ),
-          ),
+          constraints: const BoxConstraints(maxWidth: 300),
+          decoration: BoxDecoration(color: bubbleBg, borderRadius: radius),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (!isMe && message["sender"] != null) ...[
-                Text(
-                  message["sender"].toString(),
-                  style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11,
-                    color: scheme.primary,
-                  ),
+              if (!isMe && senderName != null && senderName.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(senderName,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Theme.of(context).colorScheme.primary)),
                 ),
-                const SizedBox(height: 6),
+              if (isAlert) ...[
+                Row(
+                  children: [
+                    const Icon(Icons.alarm_rounded,
+                        size: 16, color: Colors.orange),
+                    const SizedBox(width: 6),
+                    const Text("Scheduled alert",
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.orange,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                const SizedBox(height: 4),
               ],
-              Text(
-                message["text"].toString(),
-                style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  color: scheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.bottomRight,
-                child: Text(
-                  message["time"].toString(),
-                  style: GoogleFonts.manrope(
-                    fontSize: 10,
-                    color: scheme.onSurface.withValues(alpha: 0.5),
-                  ),
-                ),
+              if (type == "VOICE_NOTE")
+                Row(
+                  children: [
+                    const Icon(Icons.mic_rounded,
+                        size: 20, color: Color(0xFF25D366)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Container(
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withValues(alpha: 0.4),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text("${decoded["duration_secs"] ?? 0}s",
+                        style: const TextStyle(fontSize: 12)),
+                  ],
+                )
+              else if (type == "FILE" || type == "IMAGE")
+                Row(
+                  children: [
+                    const Icon(Icons.attach_file_rounded, size: 18),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(attachName ?? "File",
+                          style: const TextStyle(fontSize: 13),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                  ],
+                )
+              else if (body != null && body.isNotEmpty)
+                Text(body, style: const TextStyle(fontSize: 14)),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(timeStr,
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.withValues(alpha: 0.8))),
+                  if (isMe) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      isPending
+                          ? Icons.access_time_rounded
+                          : Icons.done_all_rounded,
+                      size: 14,
+                      color:
+                          isPending ? Colors.grey : const Color(0xFF53BDEB),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),
@@ -778,63 +623,74 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class HelloCastsComposerBar extends StatelessWidget {
-  const HelloCastsComposerBar({
-    super.key,
-    required this.controller,
-    required this.onSend,
-  });
-
-  final TextEditingController controller;
-  final VoidCallback onSend;
+class _AttachMenu extends StatelessWidget {
+  const _AttachMenu({required this.onFile, required this.onClose});
+  final VoidCallback onFile;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      decoration: BoxDecoration(
-        color: scheme.surface.withValues(alpha: 0.95),
-        border: Border(
-          top: BorderSide(color: scheme.onSurface.withValues(alpha: 0.08)),
-        ),
-      ),
-      child: Row(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+      child: Wrap(
+        spacing: 12,
         children: [
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline_rounded),
-            onPressed: () {},
-          ),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => onSend(),
-              decoration: InputDecoration(
-                hintText: "Type a message",
-                hintStyle: GoogleFonts.manrope(
-                  color: scheme.onSurface.withValues(alpha: 0.5),
-                ),
-                filled: true,
-                fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
+          _AttachOption(
+              icon: Icons.insert_drive_file_rounded,
+              label: "Document",
+              color: Colors.indigo,
+              onTap: onFile),
+          _AttachOption(
+              icon: Icons.image_rounded,
+              label: "Photo",
+              color: Colors.pink,
+              onTap: onFile),
+          _AttachOption(
+              icon: Icons.alarm_rounded,
+              label: "Alert",
+              color: Colors.orange,
+              onTap: onClose),
+          _AttachOption(
+              icon: Icons.mic_rounded,
+              label: "Voice note",
+              color: const Color(0xFF25D366),
+              onTap: onClose),
+        ],
+      ),
+    );
+  }
+}
+
+class _AttachOption extends StatelessWidget {
+  const _AttachOption({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
             ),
+            child: Icon(icon, color: color),
           ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.alarm_add_rounded),
-            onPressed: () {},
-          ),
-          IconButton(
-            icon: const Icon(Icons.send_rounded),
-            onPressed: onSend,
-          ),
+          const SizedBox(height: 4),
+          Text(label, style: const TextStyle(fontSize: 11)),
         ],
       ),
     );

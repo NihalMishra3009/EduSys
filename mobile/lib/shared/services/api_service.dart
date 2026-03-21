@@ -1293,6 +1293,34 @@ class ApiService {
     );
   }
 
+  Future<String> castsGetWsUrl(int castId, {String? peerId}) async {
+    final baseUrl = await getBaseUrl();
+    final token = await getToken();
+    if (token == null || token.isEmpty) {
+      throw Exception("Login required");
+    }
+    Uri? baseUri = Uri.tryParse(baseUrl);
+    if (baseUri == null || baseUri.host.isEmpty) {
+      baseUri = Uri.tryParse("https://$baseUrl");
+    }
+    final isSecure = (baseUri?.scheme ?? "https") == "https";
+    final wsScheme = isSecure ? "wss" : "ws";
+    final host = baseUri?.host ?? baseUrl;
+    final port =
+        (baseUri?.hasPort ?? false) && baseUri!.port != 0 ? baseUri.port : null;
+    final pid = peerId ?? "p${DateTime.now().microsecondsSinceEpoch}";
+    return Uri(
+      scheme: wsScheme,
+      host: host,
+      port: port,
+      path: "/ws/casts/$castId",
+      queryParameters: {
+        "token": token,
+        "peer_id": pid,
+      },
+    ).toString();
+  }
+
   Future<http.Response> listCastAlerts() async {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
