@@ -626,6 +626,35 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     );
   }
 
+  Future<void> _openAttachment(String? url) async {
+    if (url == null || url.isEmpty) {
+      GlassToast.show(context, "No attachment link",
+          icon: Icons.error_outline);
+      return;
+    }
+    Uri? uri = Uri.tryParse(url);
+    if (uri == null) {
+      GlassToast.show(context, "Invalid attachment link",
+          icon: Icons.error_outline);
+      return;
+    }
+    if (uri.scheme.isEmpty) {
+      uri = Uri.tryParse("https://$url");
+    }
+    if (uri == null) {
+      GlassToast.show(context, "Invalid attachment link",
+          icon: Icons.error_outline);
+      return;
+    }
+    final ok = await canLaunchUrl(uri);
+    if (!ok) {
+      GlassToast.show(context, "Unable to open attachment",
+          icon: Icons.error_outline);
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _markRead() async {
     try {
       _ws?.add(jsonEncode({"type": "read"}));
@@ -1011,6 +1040,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                           decode: _decodeMessage,
                           onLongPress: () =>
                               _showMessageActions(_messages[i], _isMe(_messages[i])),
+                          onOpenAttachment: _openAttachment,
                         ),
                       ),
               ),
@@ -1084,18 +1114,13 @@ class _MessageBubble extends StatelessWidget {
     required this.isMe,
     required this.decode,
     required this.onLongPress,
+    required this.onOpenAttachment,
   });
   final Map<String, dynamic> msg;
   final bool isMe;
   final Map<String, dynamic> Function(String raw) decode;
   final VoidCallback onLongPress;
-
-  Future<void> _openAttachment(String? url) async {
-    if (url == null || url.isEmpty) return;
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
+  final Future<void> Function(String? url) onOpenAttachment;
 
   @override
   Widget build(BuildContext context) {
@@ -1166,7 +1191,7 @@ class _MessageBubble extends StatelessWidget {
                 ],
                 if (type == "VOICE_NOTE")
                   InkWell(
-                    onTap: () => _openAttachment(attachUrl),
+                    onTap: () => onOpenAttachment(attachUrl),
                     borderRadius: BorderRadius.circular(10),
                     child: Row(
                       children: [
@@ -1199,7 +1224,7 @@ class _MessageBubble extends StatelessWidget {
                   )
                 else if (type == "FILE" || type == "IMAGE")
                   InkWell(
-                    onTap: () => _openAttachment(attachUrl),
+                    onTap: () => onOpenAttachment(attachUrl),
                     borderRadius: BorderRadius.circular(10),
                     child: Row(
                       children: [
