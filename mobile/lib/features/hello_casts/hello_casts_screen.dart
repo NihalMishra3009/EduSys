@@ -2,10 +2,11 @@ import "dart:async";
 import "dart:convert";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 
 import "hello_casts_chat_screen.dart";
-import "hello_casts_bottom_sheets.dart";
+import "hello_casts_call_screen.dart";
 import "hello_casts_widgets.dart";
 
 class HelloCastsScreen extends StatefulWidget {
@@ -28,6 +29,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   List<Map<String, dynamic>> _communities = [];
   List<Map<String, dynamic>> _calls = [];
   List<Map<String, dynamic>> _alerts = [];
+  List<Map<String, dynamic>> _invites = [];
 
   @override
   void initState() {
@@ -108,6 +110,24 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
           });
         }
         _alerts = alerts;
+      }
+
+      final invitesRes = await _api.listCastInvites();
+      if (invitesRes.statusCode >= 200 && invitesRes.statusCode < 300) {
+        final list = jsonDecode(invitesRes.body) as List<dynamic>;
+        _invites = list
+            .whereType<Map<String, dynamic>>()
+            .map((row) => {
+                  "id": row["id"],
+                  "cast_id": row["cast_id"],
+                  "cast_name": row["cast_name"],
+                  "cast_type": row["cast_type"],
+                  "inviter_name": row["inviter_name"],
+                  "created_at": row["created_at"],
+                })
+            .toList();
+      } else {
+        _invites = [];
       }
     } catch (_) {}
     if (mounted) {
@@ -192,7 +212,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
               ),
               const SizedBox(height: 12),
               HelloCastsQuickActions(
-                onCreateCast: () => _openCreateCast(context),
+                onCreateCast: () => _openCreateCastFlow(context),
                 onScheduleAlert: () => _openAlertStudio(context),
                 onStartCall: () => _openCallStudio(context),
               ),
@@ -210,6 +230,14 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                   onChanged: (value) => setState(() => _chatFilter = value),
                 ),
                 const SizedBox(height: 12),
+                if (_invites.isNotEmpty) ...[
+                  _InvitePanel(
+                    invites: _invites,
+                    onAccept: _acceptInvite,
+                    onReject: _rejectInvite,
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 ..._filteredChats().map((chat) => HelloCastsChatTile(
                       data: chat,
                       onTap: () => _openChat(context, chat),
@@ -276,19 +304,86 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   }
 
   void _openCreateCast(BuildContext context) {
-    _showCreateCastDialog(context, "Group");
+    _openCreateCastFlow(context);
   }
 
   void _openCreateCommunity(BuildContext context) {
-    _showCreateCastDialog(context, "Community");
+    _openCreateCastFlow(context, initialType: "Community");
   }
 
   void _openCallStudio(BuildContext context) {
-    showModalBottomSheet<void>(
+    if (_chats.isEmpty) {
+      return;
+    }
+    final callTypeController = ValueNotifier<String>("Voice");
+    int castId = (_chats.first["id"] as num?)?.toInt() ?? 0;
+    final castNameController = ValueNotifier<String>(_chats.first["name"].toString());
+    showDialog<void>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const HelloCastsCallStudioSheet(),
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text("Start Call"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<int>(
+                value: castId,
+                items: _chats
+                    .map((c) => DropdownMenuItem<int>(
+                          value: (c["id"] as num?)?.toInt() ?? 0,
+                          child: Text(c["name"]?.toString() ?? "Cast"),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null) return;
+                  castId = value;
+                  final match = _chats.firstWhere(
+                    (c) => (c["id"] as num?)?.toInt() == value,
+                    orElse: () => const {},
+                  );
+                  castNameController.value =
+                      match["name"]?.toString() ?? "Cast";
+                },
+                decoration: const InputDecoration(labelText: "Cast"),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: callTypeController.value,
+                items: const [
+                  DropdownMenuItem(value: "Voice", child: Text("Voice call")),
+                  DropdownMenuItem(value: "Video", child: Text("Video call")),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  callTypeController.value = value;
+                },
+                decoration: const InputDecoration(labelText: "Call type"),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text("Cancel"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                final isVideo = callTypeController.value == "Video";
+                Navigator.of(context).push(
+                  buildHelloCastsCallRoute(
+                    castId: castId,
+                    callTitle: castNameController.value,
+                    callType: isVideo ? "Video Call" : "Voice Call",
+                    isVideo: isVideo,
+                  ),
+                );
+              },
+              child: const Text("Start"),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -296,10 +391,12 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     _showCreateAlertDialog(context);
   }
 
-  Future<void> _showCreateCastDialog(
-      BuildContext context, String initialType) async {
+  Future<void> _openCreateCastFlow(BuildContext context,
+      {String initialType = "Group"}) async {
     final nameController = TextEditingController();
     String castType = initialType;
+    final directory = await _fetchDirectory();
+    if (!mounted) return;
     final created = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -316,9 +413,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
               DropdownButtonFormField<String>(
                 value: castType,
                 items: const [
-                  DropdownMenuItem(value: "Community", child: Text("Community")),
-                  DropdownMenuItem(value: "Group", child: Text("Group")),
                   DropdownMenuItem(value: "Individual", child: Text("Individual")),
+                  DropdownMenuItem(value: "Group", child: Text("Group")),
+                  DropdownMenuItem(value: "Community", child: Text("Community")),
                 ],
                 onChanged: (value) {
                   if (value == null) return;
@@ -335,21 +432,210 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text("Create"),
+              child: const Text("Next"),
             ),
           ],
         );
       },
     );
     if (created != true) return;
-    final name = nameController.text.trim();
+    var name = nameController.text.trim();
+
+    final memberIds = await _pickUsersSheet(
+      title: castType == "Individual"
+          ? "Choose a person"
+          : "Invite members",
+      users: directory,
+      allowMulti: castType != "Individual",
+      allowSelectAll: castType != "Individual",
+    );
+    if (memberIds.isEmpty) return;
+    if (name.isEmpty && castType == "Individual" && memberIds.length == 1) {
+      final match = directory.firstWhere(
+        (u) => (u["id"] as num?)?.toInt() == memberIds.first,
+        orElse: () => const {},
+      );
+      name = match["name"]?.toString() ?? "Chat";
+    }
     if (name.isEmpty) return;
+
     try {
-      final res = await _api.createCast(name: name, castType: castType);
+      final res = await _api.createCast(
+        name: name,
+        castType: castType,
+        memberIds: memberIds,
+      );
       if (res.statusCode >= 200 && res.statusCode < 300) {
+        if (mounted) {
+          GlassToast.show(
+            context,
+            "Cast created. Invites sent for approval.",
+            icon: Icons.check_circle_outline,
+          );
+        }
         await _loadData();
       }
     } catch (_) {}
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchDirectory() async {
+    try {
+      final res = await _api.userDirectory();
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final list = jsonDecode(res.body) as List<dynamic>;
+        return list.whereType<Map<String, dynamic>>().toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<List<int>> _pickUsersSheet({
+    required String title,
+    required List<Map<String, dynamic>> users,
+    required bool allowMulti,
+    bool allowSelectAll = false,
+  }) async {
+    final selected = <int>{};
+    final search = TextEditingController();
+    final result = await showModalBottomSheet<List<int>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 12,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 12,
+            ),
+            child: StatefulBuilder(
+              builder: (ctx, setLocal) {
+                final filtered = users.where((u) {
+                  final name = (u["name"] ?? "").toString().toLowerCase();
+                  final email = (u["email"] ?? "").toString().toLowerCase();
+                  final q = search.text.trim().toLowerCase();
+                  if (q.isEmpty) return true;
+                  return name.contains(q) || email.contains(q);
+                }).toList();
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(selected.toList()),
+                          child: const Text("Done"),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: search,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search_rounded),
+                        labelText: "Search users",
+                      ),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                    if (allowSelectAll)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: () {
+                            selected
+                              ..clear()
+                              ..addAll(filtered
+                                  .map((u) => (u["id"] as num?)?.toInt() ?? 0)
+                                  .where((id) => id != 0));
+                            setLocal(() {});
+                          },
+                          child: const Text("Select all"),
+                        ),
+                      ),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 360),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: filtered.length,
+                        itemBuilder: (ctx, index) {
+                          final user = filtered[index];
+                          final id = (user["id"] as num?)?.toInt() ?? 0;
+                          final checked = selected.contains(id);
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(user["name"]?.toString() ?? "User"),
+                            subtitle: Text(user["email"]?.toString() ?? ""),
+                            trailing: allowMulti
+                                ? Checkbox(
+                                    value: checked,
+                                    onChanged: (value) {
+                                      if (value == true) {
+                                        selected.add(id);
+                                      } else {
+                                        selected.remove(id);
+                                      }
+                                      setLocal(() {});
+                                    },
+                                  )
+                                : IconButton(
+                                    icon: const Icon(Icons.add_circle_rounded),
+                                    onPressed: () {
+                                      selected
+                                        ..clear()
+                                        ..add(id);
+                                      Navigator.of(ctx).pop(selected.toList());
+                                    },
+                                  ),
+                            onTap: () {
+                              if (!allowMulti) {
+                                selected
+                                  ..clear()
+                                  ..add(id);
+                                Navigator.of(ctx).pop(selected.toList());
+                              } else {
+                                if (checked) {
+                                  selected.remove(id);
+                                } else {
+                                  selected.add(id);
+                                }
+                                setLocal(() {});
+                              }
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+    search.dispose();
+    return result ?? [];
+  }
+
+  Future<void> _acceptInvite(int inviteId) async {
+    await _api.respondCastInvite(inviteId: inviteId, action: "ACCEPT");
+    await _loadData();
+  }
+
+  Future<void> _rejectInvite(int inviteId) async {
+    await _api.respondCastInvite(inviteId: inviteId, action: "REJECT");
+    await _loadData();
   }
 
   Future<void> _showCreateAlertDialog(BuildContext context) async {
@@ -441,5 +727,46 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         await _loadData();
       }
     } catch (_) {}
+  }
+}
+
+class _InvitePanel extends StatelessWidget {
+  const _InvitePanel({
+    required this.invites,
+    required this.onAccept,
+    required this.onReject,
+  });
+
+  final List<Map<String, dynamic>> invites;
+  final Future<void> Function(int inviteId) onAccept;
+  final Future<void> Function(int inviteId) onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          "Cast Invites",
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        ...invites.map((invite) {
+          final id = (invite["id"] as num?)?.toInt() ?? 0;
+          final name = invite["cast_name"]?.toString() ?? "Cast";
+          final inviter = invite["inviter_name"]?.toString() ?? "Member";
+          final type = invite["cast_type"]?.toString() ?? "Group";
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: HelloCastsInviteTile(
+              title: name,
+              subtitle: "$type • Invited by $inviter",
+              onAccept: () => onAccept(id),
+              onReject: () => onReject(id),
+            ),
+          );
+        }),
+      ],
+    );
   }
 }

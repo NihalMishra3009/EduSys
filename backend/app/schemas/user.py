@@ -17,3 +17,14 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserDirectoryOut(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
+    role: UserRole
+    department_id: int | None = None
+
+    class Config:
+        from_attributes = True

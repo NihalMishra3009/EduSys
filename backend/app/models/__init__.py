@@ -13,7 +13,7 @@ from app.models.assignment_submission import AssignmentSubmission
 from app.models.room_calibration import RoomCalibration
 from app.models.lecture_session import LectureSession
 from app.models.scan_event import ScanEvent
-from app.models.cast import Cast, CastAlert, CastMember, CastMemberRole, CastMessage, CastType
+from app.models.cast import Cast, CastAlert, CastMember, CastMemberRole, CastMessage, CastType, CastInvite, CastInviteStatus
 from app.models.connected import ConnectedRoom, ConnectedSchedule
 
 __all__ = [
@@ -43,6 +43,8 @@ __all__ = [
     "CastMemberRole",
     "CastMessage",
     "CastType",
+    "CastInvite",
+    "CastInviteStatus",
     "ConnectedRoom",
     "ConnectedSchedule",
 ]

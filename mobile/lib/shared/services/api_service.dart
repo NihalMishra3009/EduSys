@@ -734,6 +734,14 @@ class ApiService {
     );
   }
 
+  Future<http.Response> userDirectory() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/users/directory",
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
+    );
+  }
+
   Future<http.Response> adminAllAttendance() async {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
@@ -1226,6 +1234,38 @@ class ApiService {
     });
     return _sendWithFallback(
       path: "/casts",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> inviteCastMembers({
+    required int castId,
+    required List<int> memberIds,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"member_ids": memberIds});
+    return _sendWithFallback(
+      path: "/casts/$castId/invites",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> listCastInvites() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/invites",
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> respondCastInvite({
+    required int inviteId,
+    required String action,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"action": action});
+    return _sendWithFallback(
+      path: "/casts/invites/$inviteId/respond",
       sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }

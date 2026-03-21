@@ -62,3 +62,27 @@ class CastAlert(Base):
     active = Column(Boolean, nullable=False, default=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CastInviteStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    CANCELED = "CANCELED"
+
+
+class CastInvite(Base):
+    __tablename__ = "cast_invites"
+    __table_args__ = (UniqueConstraint("cast_id", "invitee_id", name="ux_cast_invite"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    cast_id = Column(Integer, ForeignKey("casts.id"), nullable=False, index=True)
+    inviter_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    invitee_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(
+        Enum(CastInviteStatus, name="cast_invite_status", native_enum=False),
+        nullable=False,
+        default=CastInviteStatus.PENDING,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    responded_at = Column(DateTime, nullable=True)

@@ -72,3 +72,26 @@ class CastMemberOut(BaseModel):
 
 class CastMemberUpdateRequest(BaseModel):
     member_ids: list[int] = Field(default_factory=list)
+
+
+class CastInviteCreateRequest(BaseModel):
+    member_ids: list[int] = Field(default_factory=list)
+
+
+class CastInviteRespondRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=20)
+
+
+class CastInviteOut(BaseModel):
+    id: int
+    cast_id: int
+    cast_name: str
+    cast_type: str
+    inviter_id: int
+    inviter_name: str
+    status: str
+    created_at: datetime
+    responded_at: datetime | None
+
+    class Config:
+        from_attributes = True

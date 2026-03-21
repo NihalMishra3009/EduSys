@@ -5,7 +5,16 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.cast import Cast, CastAlert, CastMember, CastMemberRole, CastMessage, CastType
+from app.models.cast import (
+    Cast,
+    CastAlert,
+    CastMember,
+    CastMemberRole,
+    CastMessage,
+    CastType,
+    CastInvite,
+    CastInviteStatus,
+)
 from app.models.user import User, UserRole
 from app.schemas.cast import (
     CastAlertCreateRequest,
@@ -16,6 +25,9 @@ from app.schemas.cast import (
     CastMessageCreateRequest,
     CastMessageOut,
     CastOut,
+    CastInviteCreateRequest,
+    CastInviteOut,
+    CastInviteRespondRequest,
 )
 
 router = APIRouter()
@@ -29,6 +41,13 @@ def _ensure_member(db: Session, cast_id: int, user_id: int) -> CastMember:
     )
     if not member:
         raise HTTPException(status_code=403, detail="Not a member of this cast")
+    return member
+
+
+def _ensure_admin(db: Session, cast_id: int, user_id: int) -> CastMember:
+    member = _ensure_member(db, cast_id, user_id)
+    if member.role != CastMemberRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Only cast admins can manage members")
     return member
 
 
@@ -109,8 +128,14 @@ def create_cast(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid cast type")
 
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if cast_type == CastType.INDIVIDUAL and len(payload.member_ids) != 1:
+        raise HTTPException(status_code=400, detail="Individual cast requires exactly one member")
+
     item = Cast(
-        name=payload.name.strip(),
+        name=name,
         cast_type=cast_type,
         created_by=current_user.id,
         created_at=datetime.utcnow(),
@@ -127,17 +152,28 @@ def create_cast(
             role=CastMemberRole.ADMIN,
         )
     )
+    db.commit()
+
     for member_id in payload.member_ids:
         if member_id == current_user.id:
             continue
         exists = db.query(User).filter(User.id == member_id).first()
         if not exists:
             continue
+        invite = (
+            db.query(CastInvite)
+            .filter(CastInvite.cast_id == item.id, CastInvite.invitee_id == member_id)
+            .first()
+        )
+        if invite:
+            continue
         db.add(
-            CastMember(
+            CastInvite(
                 cast_id=item.id,
-                user_id=member_id,
-                role=CastMemberRole.MEMBER,
+                inviter_id=current_user.id,
+                invitee_id=member_id,
+                status=CastInviteStatus.PENDING,
+                created_at=datetime.utcnow(),
             )
         )
     db.commit()
@@ -284,11 +320,20 @@ def add_members(
         )
         if already:
             continue
+        invite = (
+            db.query(CastInvite)
+            .filter(CastInvite.cast_id == cast_id, CastInvite.invitee_id == member_id)
+            .first()
+        )
+        if invite:
+            continue
         db.add(
-            CastMember(
+            CastInvite(
                 cast_id=cast_id,
-                user_id=member_id,
-                role=CastMemberRole.MEMBER,
+                inviter_id=current_user.id,
+                invitee_id=member_id,
+                status=CastInviteStatus.PENDING,
+                created_at=datetime.utcnow(),
             )
         )
     db.commit()
@@ -318,6 +363,138 @@ def remove_member(
     db.delete(target)
     db.commit()
     return {"detail": "Member removed"}
+
+
+@router.post("/{cast_id}/invites")
+def invite_members(
+    cast_id: int,
+    payload: CastInviteCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    member = _ensure_member(db, cast_id, current_user.id)
+    if member.role != CastMemberRole.ADMIN and current_user.role not in (
+        UserRole.ADMIN,
+        UserRole.PROFESSOR,
+    ):
+        raise HTTPException(status_code=403, detail="Only cast admins can invite members")
+
+    added = 0
+    for member_id in payload.member_ids:
+        if member_id == current_user.id:
+            continue
+        exists = db.query(User).filter(User.id == member_id).first()
+        if not exists:
+            continue
+        already_member = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == cast_id, CastMember.user_id == member_id)
+            .first()
+        )
+        if already_member:
+            continue
+        invite = (
+            db.query(CastInvite)
+            .filter(CastInvite.cast_id == cast_id, CastInvite.invitee_id == member_id)
+            .first()
+        )
+        if invite:
+            continue
+        db.add(
+            CastInvite(
+                cast_id=cast_id,
+                inviter_id=current_user.id,
+                invitee_id=member_id,
+                status=CastInviteStatus.PENDING,
+                created_at=datetime.utcnow(),
+            )
+        )
+        added += 1
+    db.commit()
+    return {"detail": "Invites sent", "count": added}
+
+
+@router.get("/invites", response_model=list[CastInviteOut])
+def list_invites(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    rows = (
+        db.query(CastInvite, Cast, User)
+        .join(Cast, Cast.id == CastInvite.cast_id)
+        .join(User, User.id == CastInvite.inviter_id)
+        .filter(CastInvite.invitee_id == current_user.id)
+        .filter(CastInvite.status == CastInviteStatus.PENDING)
+        .order_by(CastInvite.created_at.desc())
+        .all()
+    )
+    results: list[CastInviteOut] = []
+    for invite, cast, inviter in rows:
+        results.append(
+            CastInviteOut(
+                id=invite.id,
+                cast_id=cast.id,
+                cast_name=cast.name,
+                cast_type=cast.cast_type.value if isinstance(cast.cast_type, CastType) else str(cast.cast_type),
+                inviter_id=inviter.id,
+                inviter_name=inviter.name,
+                status=invite.status.value if isinstance(invite.status, CastInviteStatus) else str(invite.status),
+                created_at=invite.created_at,
+                responded_at=invite.responded_at,
+            )
+        )
+    return results
+
+
+@router.post("/invites/{invite_id}/respond", response_model=CastInviteOut)
+def respond_invite(
+    invite_id: int,
+    payload: CastInviteRespondRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    invite = db.get(CastInvite, invite_id)
+    if not invite or invite.invitee_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    if invite.status != CastInviteStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Invite already handled")
+
+    action = payload.action.strip().upper()
+    if action not in ("ACCEPT", "REJECT"):
+        raise HTTPException(status_code=400, detail="Invalid action")
+    if action == "ACCEPT":
+        invite.status = CastInviteStatus.ACCEPTED
+        already = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == invite.cast_id, CastMember.user_id == invite.invitee_id)
+            .first()
+        )
+        if not already:
+            db.add(
+                CastMember(
+                    cast_id=invite.cast_id,
+                    user_id=invite.invitee_id,
+                    role=CastMemberRole.MEMBER,
+                )
+            )
+    else:
+        invite.status = CastInviteStatus.REJECTED
+    invite.responded_at = datetime.utcnow()
+    db.commit()
+
+    cast = db.get(Cast, invite.cast_id)
+    inviter = db.get(User, invite.inviter_id)
+    return CastInviteOut(
+        id=invite.id,
+        cast_id=invite.cast_id,
+        cast_name=cast.name if cast else "Cast",
+        cast_type=cast.cast_type.value if cast and isinstance(cast.cast_type, CastType) else (cast.cast_type if cast else "Group"),
+        inviter_id=invite.inviter_id,
+        inviter_name=inviter.name if inviter else "Member",
+        status=invite.status.value if isinstance(invite.status, CastInviteStatus) else str(invite.status),
+        created_at=invite.created_at,
+        responded_at=invite.responded_at,
+    )
 
 
 @router.get("/alerts", response_model=list[CastAlertOut])

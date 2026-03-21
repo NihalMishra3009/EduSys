@@ -402,7 +402,7 @@ class _StudentMenuDrawer extends StatelessWidget {
                 },
               ),
               _DrawerItem(
-                title: "Casts",
+                title: "Cast",
                 onTap: () {
                   Navigator.of(context).pop();
                   Navigator.of(context).push(
@@ -7993,7 +7993,6 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
 
   Future<void> _connectSignaling() async {
     final baseUrl = await ApiService().getBaseUrl();
-    final wsBase = baseUrl.replaceFirst(RegExp(r"^http"), "ws");
     final token = await ApiService().getToken();
     if (token == null || token.isEmpty) {
       if (mounted) {
@@ -8001,13 +8000,28 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       }
       return;
     }
-    final uri = Uri.parse(
-      "$wsBase/ws/meetings/${Uri.encodeComponent(widget.roomCode)}"
-      "?peer_id=$_peerId"
-      "&display_name=${Uri.encodeComponent(widget.displayName)}"
-      "&role=${Uri.encodeComponent(widget.role)}"
-      "&host=${_isHost ? 1 : 0}"
-      "&token=${Uri.encodeComponent(token)}",
+    Uri? baseUri = Uri.tryParse(baseUrl);
+    if (baseUri == null || baseUri.host.isEmpty) {
+      baseUri = Uri.tryParse("https://$baseUrl");
+    }
+    final isSecure = (baseUri?.scheme ?? "https") == "https";
+    final wsScheme = isSecure ? "wss" : "ws";
+    final host = baseUri?.host ?? baseUrl;
+    final port = (baseUri?.hasPort ?? false) && baseUri!.port != 0
+        ? baseUri.port
+        : null;
+    final uri = Uri(
+      scheme: wsScheme,
+      host: host,
+      port: port,
+      path: "/ws/meetings/${widget.roomCode}",
+      queryParameters: {
+        "peer_id": _peerId,
+        "display_name": widget.displayName,
+        "role": widget.role,
+        "host": _isHost ? "1" : "0",
+        "token": token,
+      },
     );
     _socket = await WebSocket.connect(uri.toString());
     _socket!.listen(

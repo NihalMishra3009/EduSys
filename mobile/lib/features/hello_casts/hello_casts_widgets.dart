@@ -794,6 +794,79 @@ class HelloCastsAlertTile extends StatelessWidget {
   }
 }
 
+class HelloCastsInviteTile extends StatelessWidget {
+  const HelloCastsInviteTile({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.onAccept,
+    required this.onReject,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AppCard(
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(Icons.mail_outline_rounded, color: scheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.spaceGrotesk(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.manrope(
+                    fontSize: 12.5,
+                    color: scheme.onSurface.withValues(alpha: 0.65),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.close_rounded),
+            onPressed: onReject,
+            tooltip: "Reject",
+          ),
+          IconButton(
+            icon: const Icon(Icons.check_rounded),
+            onPressed: onAccept,
+            tooltip: "Accept",
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class HelloCastsBadge extends StatelessWidget {
   const HelloCastsBadge({
     super.key,

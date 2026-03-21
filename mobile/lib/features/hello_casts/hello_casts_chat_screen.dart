@@ -3,6 +3,7 @@ import "dart:convert";
 import "dart:io";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
 
@@ -158,10 +159,26 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
       final baseUrl = await _api.getBaseUrl();
       final token = await _api.getToken();
       if (token == null || token.isEmpty) return;
-      final wsBase = baseUrl.replaceFirst(RegExp(r"^http"), "ws");
       final peerId = "p${DateTime.now().microsecondsSinceEpoch}";
-      final uri = Uri.parse(
-        "$wsBase/ws/casts/${widget.castId}?peer_id=$peerId&token=${Uri.encodeComponent(token)}",
+      Uri? baseUri = Uri.tryParse(baseUrl);
+      if (baseUri == null || baseUri.host.isEmpty) {
+        baseUri = Uri.tryParse("https://$baseUrl");
+      }
+      final isSecure = (baseUri?.scheme ?? "https") == "https";
+      final wsScheme = isSecure ? "wss" : "ws";
+      final host = baseUri?.host ?? baseUrl;
+      final port = (baseUri?.hasPort ?? false) && baseUri!.port != 0
+          ? baseUri.port
+          : null;
+      final uri = Uri(
+        scheme: wsScheme,
+        host: host,
+        port: port,
+        path: "/ws/casts/${widget.castId}",
+        queryParameters: {
+          "peer_id": peerId,
+          "token": token,
+        },
       );
       _socket = await WebSocket.connect(uri.toString());
       _socketReady = true;
@@ -312,16 +329,217 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
   }
 
   Future<void> _promptAddMember() async {
-    final controller = TextEditingController();
-    final added = await showDialog<bool>(
+    final members = await _fetchMembers();
+    final existing = members
+        .map((m) => m["user_id"] as int?)
+        .whereType<int>()
+        .toSet();
+    final directory = await _fetchDirectory();
+    if (!mounted) return;
+    final candidates =
+        directory.where((u) => !existing.contains(u["id"])).toList();
+    if (candidates.isEmpty) {
+      GlassToast.show(context, "No users to invite.", icon: Icons.info_outline);
+      return;
+    }
+    final selected = await _pickUsersSheet(
+      title: "Invite members",
+      users: candidates,
+      allowMulti: true,
+    );
+    if (selected.isEmpty) return;
+    await _api.inviteCastMembers(
+      castId: widget.castId,
+      memberIds: selected,
+    );
+    if (mounted) {
+      GlassToast.show(
+        context,
+        "Invites sent for ${selected.length} member(s).",
+        icon: Icons.check_circle_outline,
+      );
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchDirectory() async {
+    try {
+      final res = await _api.userDirectory();
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final list = jsonDecode(res.body) as List<dynamic>;
+        return list.whereType<Map<String, dynamic>>().toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<List<int>> _pickUsersSheet({
+    required String title,
+    required List<Map<String, dynamic>> users,
+    required bool allowMulti,
+  }) async {
+    final selected = <int>{};
+    final search = TextEditingController();
+    final result = await showModalBottomSheet<List<int>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 12,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 12,
+            ),
+            child: StatefulBuilder(
+              builder: (ctx, setLocal) {
+                final filtered = users.where((u) {
+                  final name = (u["name"] ?? "").toString().toLowerCase();
+                  final email = (u["email"] ?? "").toString().toLowerCase();
+                  final q = search.text.trim().toLowerCase();
+                  if (q.isEmpty) return true;
+                  return name.contains(q) || email.contains(q);
+                }).toList();
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(selected.toList()),
+                          child: const Text("Done"),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: search,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search_rounded),
+                        labelText: "Search users",
+                      ),
+                      onChanged: (_) => setLocal(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 360),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: filtered.length,
+                        itemBuilder: (ctx, index) {
+                          final user = filtered[index];
+                          final id = (user["id"] as num?)?.toInt() ?? 0;
+                          final checked = selected.contains(id);
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(user["name"]?.toString() ?? "User"),
+                            subtitle: Text(user["email"]?.toString() ?? ""),
+                            trailing: allowMulti
+                                ? Checkbox(
+                                    value: checked,
+                                    onChanged: (value) {
+                                      if (value == true) {
+                                        selected.add(id);
+                                      } else {
+                                        selected.remove(id);
+                                      }
+                                      setLocal(() {});
+                                    },
+                                  )
+                                : IconButton(
+                                    icon: const Icon(Icons.add_circle_rounded),
+                                    onPressed: () {
+                                      selected
+                                        ..clear()
+                                        ..add(id);
+                                      Navigator.of(ctx).pop(selected.toList());
+                                    },
+                                  ),
+                            onTap: () {
+                              if (!allowMulti) {
+                                selected
+                                  ..clear()
+                                  ..add(id);
+                                Navigator.of(ctx).pop(selected.toList());
+                              } else {
+                                if (checked) {
+                                  selected.remove(id);
+                                } else {
+                                  selected.add(id);
+                                }
+                                setLocal(() {});
+                              }
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+    search.dispose();
+    return result ?? [];
+  }
+
+  Future<void> _removeMember(int userId) async {
+    await _api.removeCastMember(castId: widget.castId, memberId: userId);
+  }
+
+  Future<void> _showAlertDialog() async {
+    final titleCtrl = TextEditingController();
+    final msgCtrl = TextEditingController();
+    final minutesCtrl = TextEditingController(text: "10");
+    final intervalCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text("Add Member"),
-          content: TextField(
-            controller: controller,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: "User ID"),
+          title: const Text("Schedule Alert"),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: titleCtrl,
+                  decoration: const InputDecoration(labelText: "Alert title"),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: msgCtrl,
+                  decoration:
+                      const InputDecoration(labelText: "Message (optional)"),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: minutesCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration:
+                      const InputDecoration(labelText: "Minutes from now"),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: intervalCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                      labelText: "Repeat every (minutes, optional)"),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -330,20 +548,38 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text("Add"),
+              child: const Text("Schedule"),
             ),
           ],
         );
       },
     );
-    if (added != true) return;
-    final id = int.tryParse(controller.text.trim());
-    if (id == null) return;
-    await _api.addCastMembers(castId: widget.castId, memberIds: [id]);
-  }
-
-  Future<void> _removeMember(int userId) async {
-    await _api.removeCastMember(castId: widget.castId, memberId: userId);
+    if (ok != true) return;
+    final title = titleCtrl.text.trim();
+    if (title.isEmpty) return;
+    final minutes = int.tryParse(minutesCtrl.text.trim()) ?? 10;
+    final interval = int.tryParse(intervalCtrl.text.trim());
+    final scheduleAt = DateTime.now().add(Duration(minutes: minutes));
+    final res = await _api.createCastAlert(
+      castId: widget.castId,
+      title: title,
+      message: msgCtrl.text.trim().isEmpty ? null : msgCtrl.text.trim(),
+      scheduleAt: scheduleAt,
+      intervalMinutes: interval,
+    );
+    if (res.statusCode >= 200 && res.statusCode < 300 && mounted) {
+      GlassToast.show(
+        context,
+        "Alert scheduled.",
+        icon: Icons.check_circle_outline,
+      );
+    } else if (mounted) {
+      GlassToast.show(
+        context,
+        "Unable to schedule alert.",
+        icon: Icons.error_outline,
+      );
+    }
   }
 
   @override
@@ -404,8 +640,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
             onPressed: () {
               Navigator.of(context).push(
                 buildHelloCastsCallRoute(
+                  castId: widget.castId,
                   callTitle: widget.title,
-                  callType: "Voice",
+                  callType: "Voice Call",
+                  isVideo: false,
                 ),
               );
             },
@@ -416,8 +654,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
             onPressed: () {
               Navigator.of(context).push(
                 buildHelloCastsCallRoute(
+                  castId: widget.castId,
                   callTitle: widget.title,
-                  callType: "Group Voice",
+                  callType: "Group Voice Call",
+                  isVideo: false,
                 ),
               );
             },
@@ -425,7 +665,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
           IconButton(
             tooltip: "Alert",
             icon: const Icon(Icons.alarm_rounded),
-            onPressed: () {},
+            onPressed: _showAlertDialog,
           ),
           IconButton(
             tooltip: "Video call",
@@ -433,8 +673,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
             onPressed: () {
               Navigator.of(context).push(
                 buildHelloCastsCallRoute(
+                  castId: widget.castId,
                   callTitle: widget.title,
-                  callType: "Video",
+                  callType: "Video Call",
+                  isVideo: true,
                 ),
               );
             },
