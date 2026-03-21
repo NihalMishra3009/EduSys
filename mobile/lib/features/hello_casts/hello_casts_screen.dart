@@ -26,6 +26,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   int _tabIndex = 0;
   String _chatFilter = "All";
   bool _loading = true;
+  bool _shownCastDebug = false;
 
   List<Map<String, dynamic>> _casts = [];
   List<Map<String, dynamic>> _alerts = [];
@@ -87,6 +88,18 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         _directory = directoryRows;
         _loading = false;
       });
+      if (!_shownCastDebug &&
+          casts.isEmpty &&
+          (res.statusCode < 200 || res.statusCode >= 300)) {
+        _shownCastDebug = true;
+        final baseUrl = await _api.getBaseUrl();
+        if (!mounted) return;
+        GlassToast.show(
+          context,
+          "Casts fetch failed (${res.statusCode})\n$baseUrl",
+          icon: Icons.wifi_off_rounded,
+        );
+      }
       unawaited(CastCallService.instance.refresh());
     } catch (_) {
       if (!silent && mounted) {
