@@ -8241,7 +8241,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
         for (final peer in peers) {
           if (peer is Map<String, dynamic>) {
             final peerId = (peer["peer_id"] ?? "").toString();
-            if (peerId.isEmpty) {
+            if (peerId.isEmpty || peerId == _peerId) {
               continue;
             }
             _upsertParticipant(
@@ -8252,7 +8252,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                 isHost: (peer["is_host"] ?? false) == true,
               ),
             );
-            if (_isHost) {
+            if (_shouldCreateOffer(peerId)) {
               _createOffer(peerId);
             }
           } else {
@@ -8262,7 +8262,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                 _MeetingParticipant(
                     peerId: peerId, name: peerId, role: "", isHost: false),
               );
-              if (_isHost) {
+              if (_shouldCreateOffer(peerId)) {
                 _createOffer(peerId);
               }
             }
@@ -8294,7 +8294,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
               isHost: isHost,
             ),
           );
-          if (_isHost) {
+          if (_shouldCreateOffer(peerId)) {
             _createOffer(peerId);
           }
         }
@@ -8399,6 +8399,13 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     if (mounted) {
       Navigator.of(context).maybePop();
     }
+  }
+
+  bool _shouldCreateOffer(String remotePeerId) {
+    if (remotePeerId.isEmpty || remotePeerId == _peerId) {
+      return false;
+    }
+    return _peerId.compareTo(remotePeerId) > 0;
   }
 
   void _startTimer() {
