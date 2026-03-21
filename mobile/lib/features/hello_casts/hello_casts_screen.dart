@@ -802,10 +802,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       ),
       backgroundColor: dark ? null : const Color(0xFFF2F5FB),
       body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _loadData,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Column(
             children: [
               const HelloCastsHeader(
                 title: "Casts",
@@ -827,81 +826,113 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                     onTap: _showInvites,
                   ),
                 ),
-              if (_loading)
-                const Padding(
-                  padding: EdgeInsets.only(top: 30),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (tab == "Chats")
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (chats.isEmpty)
-                      const _EmptyState(message: "No casts yet")
-                    else
-                      ...chats.map((c) => _CastTile(
-                            title: c["name"]?.toString() ?? "Cast",
-                            subtitle: _formatLastMessage(c),
-                            trailing: c["unread_count"] != null &&
-                                    (c["unread_count"] as num).toInt() > 0
-                                ? _UnreadBadge(
-                                    count:
-                                        (c["unread_count"] as num).toInt())
-                                : null,
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => HelloCastsChatScreen(
-                                    castId: (c["id"] as num).toInt(),
-                                    title: c["name"]?.toString() ?? "Cast",
-                                    castType:
-                                        c["cast_type"]?.toString() ?? "Group",
-                                  ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _loadData,
+                  child: _loading
+                      ? const ListView(
+                          children: [
+                            SizedBox(height: 30),
+                            Center(child: CircularProgressIndicator()),
+                          ],
+                        )
+                      : tab == "Chats"
+                          ? ListView(
+                              padding: const EdgeInsets.only(bottom: 24),
+                              children: chats.isEmpty
+                                  ? [const _EmptyState(message: "No casts yet")]
+                                  : chats
+                                      .map((c) => _CastTile(
+                                            title: c["name"]?.toString() ??
+                                                "Cast",
+                                            subtitle: _formatLastMessage(c),
+                                            trailing: c["unread_count"] !=
+                                                        null &&
+                                                    (c["unread_count"] as num)
+                                                            .toInt() >
+                                                        0
+                                                ? _UnreadBadge(
+                                                    count: (c["unread_count"]
+                                                            as num)
+                                                        .toInt())
+                                                : null,
+                                            onTap: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      HelloCastsChatScreen(
+                                                    castId:
+                                                        (c["id"] as num).toInt(),
+                                                    title:
+                                                        c["name"]?.toString() ??
+                                                            "Cast",
+                                                    castType:
+                                                        c["cast_type"]?.toString() ??
+                                                            "Group",
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                          ))
+                                      .toList(),
+                            )
+                          : tab == "Communities"
+                              ? ListView(
+                                  padding: const EdgeInsets.only(bottom: 24),
+                                  children: communities.isEmpty
+                                      ? [
+                                          const _EmptyState(
+                                              message: "No communities yet")
+                                        ]
+                                      : communities
+                                          .map((c) => _CastTile(
+                                                title: c["name"]?.toString() ??
+                                                    "Community",
+                                                subtitle: "Community cast",
+                                                trailing: const Icon(
+                                                    Icons.chevron_right_rounded),
+                                                onTap: () {
+                                                  Navigator.push(
+                                                    context,
+                                                    MaterialPageRoute(
+                                                      builder: (_) =>
+                                                          HelloCastsChatScreen(
+                                                        castId:
+                                                            (c["id"] as num)
+                                                                .toInt(),
+                                                        title: c["name"]
+                                                                ?.toString() ??
+                                                            "Community",
+                                                        castType: c["cast_type"]
+                                                                ?.toString() ??
+                                                            "Community",
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              ))
+                                          .toList(),
+                                )
+                              : ListView(
+                                  padding: const EdgeInsets.only(bottom: 24),
+                                  children: _alerts.isEmpty
+                                      ? [
+                                          const _EmptyState(
+                                              message: "No alerts scheduled")
+                                        ]
+                                      : _alerts.map((a) {
+                                          final title =
+                                              a["title"]?.toString() ?? "Alert";
+                                          final when = _formatAlertWhen(a);
+                                          return _AlertTile(
+                                              title: title, subtitle: when);
+                                        }).toList(),
                                 ),
-                              );
-                            },
-                          )),
-                  ],
-                )
-              else if (tab == "Communities")
-                Column(
-                  children: communities.isEmpty
-                      ? [const _EmptyState(message: "No communities yet")]
-                      : communities
-                          .map((c) => _CastTile(
-                                title: c["name"]?.toString() ?? "Community",
-                                subtitle: "Community cast",
-                                trailing:
-                                    const Icon(Icons.chevron_right_rounded),
-                                onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => HelloCastsChatScreen(
-                                        castId: (c["id"] as num).toInt(),
-                                        title:
-                                            c["name"]?.toString() ?? "Community",
-                                        castType: c["cast_type"]?.toString() ??
-                                            "Community",
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ))
-                          .toList(),
-                )
-              else
-                Column(
-                  children: _alerts.isEmpty
-                      ? [const _EmptyState(message: "No alerts scheduled")]
-                      : _alerts.map((a) {
-                          final title = a["title"]?.toString() ?? "Alert";
-                          final when = _formatAlertWhen(a);
-                          return _AlertTile(title: title, subtitle: when);
-                        }).toList(),
                 ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     ),
