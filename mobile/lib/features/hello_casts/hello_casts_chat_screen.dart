@@ -14,6 +14,10 @@ import "hello_casts_call_screen.dart";
 import "package:url_launcher/url_launcher.dart";
 import "package:path_provider/path_provider.dart";
 import "package:record/record.dart";
+import "package:just_audio/just_audio.dart";
+import "package:video_player/video_player.dart";
+import "package:flutter_pdfview/flutter_pdfview.dart";
+import "package:http/http.dart" as http;
 
 const Color _castAccent = Color(0xFF5B4AE3);
 const Color _castAccentDark = Color(0xFF4C43C7);
@@ -68,6 +72,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   int _recordSeconds = 0;
   Map<String, dynamic>? _replyTo;
   final Map<String, DateTime> _typingMembers = {};
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  String? _playingUrl;
+  bool _audioPlaying = false;
 
   String get _messagesCacheKey => "cast_messages_${widget.castId}";
   String get _docsCacheKey => "cast_docs_${widget.castId}";
@@ -105,6 +112,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     _typingDebounce?.cancel();
     _recordTimer?.cancel();
     _recorder.dispose();
+    _audioPlayer.dispose();
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     _ws?.close();
@@ -772,6 +780,143 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  Future<void> _openAttachmentPreview(String? url, String? name) async {
+    if (url == null || url.isEmpty) {
+      GlassToast.show(context, "No attachment link",
+          icon: Icons.error_outline);
+      return;
+    }
+    if (_isPdfFile(name, url)) {
+      await _openPdfPreview(url, name);
+      return;
+    }
+    if (_isVideoFile(name, url)) {
+      await _openVideoPreview(url);
+      return;
+    }
+    if (_isImageFile(name, url)) {
+      await _openImagePreview(url);
+      return;
+    }
+    await _openGenericFilePreview(url, name);
+  }
+
+  Future<void> _openImagePreview(String url) async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.all(16),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: InteractiveViewer(
+            child: Image.network(url, fit: BoxFit.contain),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openGenericFilePreview(String url, String? name) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _GenericFilePreviewScreen(
+          url: url,
+          name: name ?? "Attachment",
+          onOpenExternal: () => _openAttachment(url),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openVideoPreview(String url) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _VideoPreviewScreen(url: url),
+      ),
+    );
+  }
+
+  Future<void> _openPdfPreview(String url, String? name) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final fileName =
+          (name?.isNotEmpty ?? false) ? name! : "doc_${DateTime.now().millisecondsSinceEpoch}.pdf";
+      final target = File("${dir.path}/$fileName");
+      if (!await target.exists()) {
+        final res = await http.get(Uri.parse(url));
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          GlassToast.show(context, "Unable to download file",
+              icon: Icons.error_outline);
+          return;
+        }
+        await target.writeAsBytes(res.bodyBytes);
+      }
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => _PdfPreviewScreen(path: target.path),
+        ),
+      );
+    } catch (_) {
+      GlassToast.show(context, "Unable to open file",
+          icon: Icons.error_outline);
+    }
+  }
+
+  Future<void> _toggleVoiceNote(String? url) async {
+    if (url == null || url.isEmpty) return;
+    try {
+      if (_playingUrl != url) {
+        await _audioPlayer.setUrl(url);
+        _playingUrl = url;
+        await _audioPlayer.play();
+        setState(() => _audioPlaying = true);
+        _audioPlayer.playerStateStream.listen((state) {
+          if (!mounted) return;
+          setState(() => _audioPlaying = state.playing);
+          if (state.processingState == ProcessingState.completed) {
+            setState(() {
+              _audioPlaying = false;
+              _playingUrl = null;
+            });
+          }
+        });
+        return;
+      }
+      if (_audioPlayer.playing) {
+        await _audioPlayer.pause();
+        if (mounted) setState(() => _audioPlaying = false);
+      } else {
+        await _audioPlayer.play();
+        if (mounted) setState(() => _audioPlaying = true);
+      }
+    } catch (_) {
+      GlassToast.show(context, "Unable to play audio",
+          icon: Icons.error_outline);
+    }
+  }
+
+  Future<bool> _sendForwardViaSocket(int castId, String messageText) async {
+    try {
+      final peerId = "fwd_${DateTime.now().microsecondsSinceEpoch}";
+      final url = await _api.castsGetWsUrl(castId, peerId: peerId);
+      final socket = await WebSocket.connect(url);
+      socket.add(jsonEncode({
+        "type": "message",
+        "message": messageText,
+        "client_id": peerId,
+      }));
+      await Future.delayed(const Duration(milliseconds: 120));
+      await socket.close();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _openLink(String url) async {
     Uri? uri = Uri.tryParse(url);
     if (uri == null) {
@@ -911,6 +1056,12 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       },
       forceJson: true,
     );
+    final sentViaSocket = await _sendForwardViaSocket(selected, payload);
+    if (!mounted) return;
+    if (sentViaSocket) {
+      GlassToast.show(context, "Forwarded", icon: Icons.check_circle_outline);
+      return;
+    }
     final sendRes = await _api.sendCastMessage(
       castId: selected,
       message: payload,
@@ -1084,7 +1235,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     Map<String, dynamic>? extra,
   }) async {
     final text = body ?? _msgCtrl.text.trim();
-    if (text.isEmpty && attachUrl == null) return;
+    if (text.isEmpty && attachUrl == null && type == "TEXT") return;
     _msgCtrl.clear();
 
     final messageText = _encodePayload(
@@ -1319,7 +1470,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         "txt",
         "mp3",
         "m4a",
-        "wav"
+        "wav",
+        "aac",
+        "ogg",
+        "mp4",
+        "mov",
+        "mkv",
+        "webm"
       ],
     );
     if (result == null || result.files.isEmpty) return;
@@ -1339,7 +1496,11 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         attachName: result.files.single.name,
       );
     } else {
-      GlassToast.show(context, "Upload failed", icon: Icons.error_outline);
+      GlassToast.show(
+        context,
+        _detail(res.body, fallback: "Upload failed"),
+        icon: Icons.error_outline,
+      );
     }
   }
 
@@ -1457,6 +1618,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                                   _showMessageActions(visible[i], _isMe(visible[i])),
                               onOpenAttachment: _openAttachment,
                               onOpenLink: _openLink,
+                              onOpenPreview: _openAttachmentPreview,
+                              onToggleVoice: _toggleVoiceNote,
+                              isAudioPlaying: _audioPlaying,
+                              playingUrl: _playingUrl,
                               reactions: reactions[(visible[i]["id"] as num?)?.toInt()],
                             ),
                           );
@@ -1664,6 +1829,10 @@ class _MessageBubble extends StatelessWidget {
     required this.onLongPress,
     required this.onOpenAttachment,
     required this.onOpenLink,
+    required this.onOpenPreview,
+    required this.onToggleVoice,
+    required this.isAudioPlaying,
+    required this.playingUrl,
     this.reactions,
   });
   final Map<String, dynamic> msg;
@@ -1672,6 +1841,10 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback onLongPress;
   final Future<void> Function(String? url) onOpenAttachment;
   final Future<void> Function(String url) onOpenLink;
+  final Future<void> Function(String? url, String? name) onOpenPreview;
+  final Future<void> Function(String? url) onToggleVoice;
+  final bool isAudioPlaying;
+  final String? playingUrl;
   final Map<String, int>? reactions;
 
   @override
@@ -1801,26 +1974,36 @@ class _MessageBubble extends StatelessWidget {
                       const SizedBox(height: 4),
                     ],
                     if (type == "VOICE_NOTE")
-                      Row(
-                        children: [
-                          Icon(Icons.mic_rounded, size: 20, color: textColor),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Container(
-                              height: 3,
-                              decoration: BoxDecoration(
-                                color: textColor.withValues(alpha: 0.35),
-                                borderRadius: BorderRadius.circular(2),
+                      InkWell(
+                        onTap: () => onToggleVoice(attachUrl),
+                        borderRadius: BorderRadius.circular(10),
+                        child: Row(
+                          children: [
+                            Icon(
+                              playingUrl == attachUrl && isAudioPlaying
+                                  ? Icons.pause_circle_filled_rounded
+                                  : Icons.play_circle_fill_rounded,
+                              size: 26,
+                              color: textColor,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Container(
+                                height: 3,
+                                decoration: BoxDecoration(
+                                  color: textColor.withValues(alpha: 0.35),
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text("${decoded["duration_secs"] ?? 0}s",
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: textColor,
-                              )),
-                        ],
+                            const SizedBox(width: 8),
+                            Text("${decoded["duration_secs"] ?? 0}s",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: textColor,
+                                )),
+                          ],
+                        ),
                       )
                     else if (type == "FILE" || type == "IMAGE")
                       Column(
@@ -1829,91 +2012,107 @@ class _MessageBubble extends StatelessWidget {
                           if (type == "IMAGE" &&
                               attachUrl != null &&
                               attachUrl.isNotEmpty)
-                            ClipRRect(
+                            InkWell(
+                              onTap: () => onOpenPreview(attachUrl, attachName),
                               borderRadius: BorderRadius.circular(10),
-                              child: Image.network(
-                                attachUrl,
-                                height: 160,
-                                width: 240,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  height: 120,
-                                  color: textColor.withValues(alpha: 0.08),
-                                  child: Center(
-                                    child: Icon(Icons.image_not_supported_rounded,
-                                        color: textColor),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(
+                                  attachUrl,
+                                  height: 160,
+                                  width: 240,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    height: 120,
+                                    color: textColor.withValues(alpha: 0.08),
+                                    child: Center(
+                                      child: Icon(Icons.image_not_supported_rounded,
+                                          color: textColor),
+                                    ),
                                   ),
                                 ),
                               ),
                             )
                           else
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: textColor.withValues(alpha: 0.08),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(_fileIcon(attachName, attachUrl),
-                                      size: 18, color: textColor),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      attachName ?? "File",
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: textColor,
+                            InkWell(
+                              onTap: () => onOpenPreview(attachUrl, attachName),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: textColor.withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(_fileIcon(attachName, attachUrl),
+                                        size: 18, color: textColor),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        attachName ?? "File",
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: textColor,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Icon(Icons.download_rounded,
-                                      size: 16, color: textColor),
-                                ],
+                                    const SizedBox(width: 6),
+                                    Icon(Icons.open_in_new_rounded,
+                                        size: 16, color: textColor),
+                                  ],
+                                ),
                               ),
                             ),
                           if (_isVideoFile(attachName, attachUrl))
-                            Container(
-                              margin: const EdgeInsets.only(top: 6),
-                              height: 140,
-                              width: 240,
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.85),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Center(
-                                child: Icon(Icons.play_circle_fill_rounded,
-                                    size: 48, color: Colors.white),
+                            InkWell(
+                              onTap: () => onOpenPreview(attachUrl, attachName),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                margin: const EdgeInsets.only(top: 6),
+                                height: 140,
+                                width: 240,
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.85),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Center(
+                                  child: Icon(Icons.play_circle_fill_rounded,
+                                      size: 48, color: Colors.white),
+                                ),
                               ),
                             ),
                           if (_isPdfFile(attachName, attachUrl))
-                            Container(
-                              margin: const EdgeInsets.only(top: 6),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: textColor.withValues(alpha: 0.08),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.picture_as_pdf_rounded,
-                                      color: textColor),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      attachName ?? "PDF document",
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: textColor,
+                            InkWell(
+                              onTap: () => onOpenPreview(attachUrl, attachName),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                margin: const EdgeInsets.only(top: 6),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: textColor.withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.picture_as_pdf_rounded,
+                                        color: textColor),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        attachName ?? "PDF document",
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: textColor,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                         ],
@@ -2070,9 +2269,170 @@ class _LinkText extends StatelessWidget {
   }
 }
 
+class _VideoPreviewScreen extends StatefulWidget {
+  const _VideoPreviewScreen({required this.url});
+  final String url;
+
+  @override
+  State<_VideoPreviewScreen> createState() => _VideoPreviewScreenState();
+}
+
+class _VideoPreviewScreenState extends State<_VideoPreviewScreen> {
+  late final VideoPlayerController _controller;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
+      ..initialize().then((_) {
+        if (!mounted) return;
+        setState(() => _ready = true);
+      });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Video")),
+      body: Center(
+        child: _ready
+            ? AspectRatio(
+                aspectRatio: _controller.value.aspectRatio,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    VideoPlayer(_controller),
+                    IconButton(
+                      icon: Icon(
+                        _controller.value.isPlaying
+                            ? Icons.pause_circle_filled_rounded
+                            : Icons.play_circle_fill_rounded,
+                        size: 64,
+                        color: Colors.white,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          if (_controller.value.isPlaying) {
+                            _controller.pause();
+                          } else {
+                            _controller.play();
+                          }
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              )
+            : const CircularProgressIndicator(),
+      ),
+    );
+  }
+}
+
+class _GenericFilePreviewScreen extends StatelessWidget {
+  const _GenericFilePreviewScreen({
+    required this.url,
+    required this.name,
+    required this.onOpenExternal,
+  });
+
+  final String url;
+  final String name;
+  final VoidCallback onOpenExternal;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(title: Text(name)),
+      body: Center(
+        child: Container(
+          margin: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: dark ? scheme.surface : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _fileIcon(name, url),
+                size: 48,
+                color: scheme.primary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                name,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                "Preview not available for this file type.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.onSurface.withValues(alpha: 0.7)),
+              ),
+              const SizedBox(height: 14),
+              ElevatedButton.icon(
+                onPressed: onOpenExternal,
+                icon: const Icon(Icons.open_in_new_rounded),
+                label: const Text("Open"),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PdfPreviewScreen extends StatelessWidget {
+  const _PdfPreviewScreen({required this.path});
+  final String path;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("PDF")),
+      body: PDFView(
+        filePath: path,
+        enableSwipe: true,
+        swipeHorizontal: false,
+        autoSpacing: true,
+        pageSnap: true,
+      ),
+    );
+  }
+}
+
 bool _isPdfFile(String? name, String? url) {
   final target = (name ?? url ?? "").toLowerCase();
   return target.endsWith(".pdf");
+}
+
+bool _isImageFile(String? name, String? url) {
+  final target = (name ?? url ?? "").toLowerCase();
+  return target.endsWith(".png") ||
+      target.endsWith(".jpg") ||
+      target.endsWith(".jpeg") ||
+      target.endsWith(".gif") ||
+      target.endsWith(".webp");
 }
 
 bool _isVideoFile(String? name, String? url) {
@@ -2080,6 +2440,7 @@ bool _isVideoFile(String? name, String? url) {
   return target.endsWith(".mp4") ||
       target.endsWith(".mov") ||
       target.endsWith(".mkv") ||
+      target.endsWith(".avi") ||
       target.endsWith(".webm");
 }
 

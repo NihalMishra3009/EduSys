@@ -57,8 +57,11 @@ _allowed_upload_extensions = {
     ".ogg",
     ".webm",
     ".mp4",
+    ".mov",
+    ".mkv",
+    ".avi",
 }
-_max_upload_size_bytes = 15 * 1024 * 1024
+_max_upload_size_bytes = 50 * 1024 * 1024
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -137,7 +140,7 @@ def upload_attachment(
                 out_file.close()
                 if destination.exists():
                     destination.unlink(missing_ok=True)
-                raise HTTPException(status_code=413, detail="File too large (max 15 MB)")
+                raise HTTPException(status_code=413, detail="File too large (max 50 MB)")
             out_file.write(chunk)
 
     relative_path = f"/media/attachments/{safe_purpose}/{unique_name}"
