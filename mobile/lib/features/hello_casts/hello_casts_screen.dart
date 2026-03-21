@@ -3,6 +3,7 @@ import "dart:convert";
 import "dart:io";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/services/cast_call_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
@@ -86,6 +87,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         _directory = directoryRows;
         _loading = false;
       });
+      unawaited(CastCallService.instance.refresh());
     } catch (_) {
       if (!silent && mounted) {
         setState(() => _loading = false);
@@ -476,11 +478,17 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       {required bool isVideo}) async {
     final castId = (cast["id"] as num).toInt();
     final title = cast["name"]?.toString() ?? "Cast";
+    final roomCode =
+        "cast-$castId-${isVideo ? "video" : "voice"}-${DateTime.now().millisecondsSinceEpoch}";
     // Send call_invite to notify cast members via a transient WS connection.
     try {
       final wsUrl = await _api.castsGetWsUrl(castId);
       final ws = await WebSocket.connect(wsUrl);
-      ws.add(jsonEncode({"type": "call_invite", "is_video": isVideo}));
+      ws.add(jsonEncode({
+        "type": "call_invite",
+        "is_video": isVideo,
+        "room_code": roomCode,
+      }));
       // Brief delay to let the server broadcast, then close.
       await Future.delayed(const Duration(milliseconds: 300));
       await ws.close();
@@ -493,6 +501,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         callTitle: title,
         callType: isVideo ? "Video" : "Voice",
         isVideo: isVideo,
+        roomCode: roomCode,
       ),
     );
   }

@@ -26,7 +26,8 @@ class HelloCastsChatScreen extends StatefulWidget {
   State<HelloCastsChatScreen> createState() => _HelloCastsChatScreenState();
 }
 
-class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
+class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
+    with WidgetsBindingObserver {
   final _api = ApiService();
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
@@ -36,39 +37,146 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
   WebSocket? _ws;
   bool _showAttachMenu = false;
   Map<String, dynamic>? _incomingCall; // non-null when ringing
+  Timer? _reconnectTimer;
+  Timer? _syncTimer;
+  int _clientMessageCounter = 0;
+  String _myName = "Me";
+
+  String get _messagesCacheKey => "cast_messages_${widget.castId}";
+  String get _alertsCacheKey => "cast_alerts_${widget.castId}";
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _loadMessages();
-      await _connectWs();
+      _myName = (await _api.getSavedName()) ?? "Me";
+      await _loadCachedState();
+      unawaited(_loadMessages());
+      unawaited(_connectWs());
+      _syncTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+        unawaited(_loadMessages(silent: true));
+      });
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _reconnectTimer?.cancel();
+    _syncTimer?.cancel();
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     _ws?.close();
     super.dispose();
   }
 
-  Future<void> _loadMessages() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_connectWs());
+      unawaited(_loadMessages(silent: true));
+    }
+  }
+
+  Future<void> _loadCachedState() async {
+    final cachedMessages = await _api.readCache(_messagesCacheKey);
+    final cachedAlerts = await _api.readCache(_alertsCacheKey);
+    if (!mounted) return;
+    final messageList = _toMapList(cachedMessages);
+    final alertList = _toMapList(cachedAlerts);
+    if (messageList.isEmpty && alertList.isEmpty) {
+      return;
+    }
+    setState(() {
+      if (messageList.isNotEmpty) {
+        _messages = _sortedMessages(messageList);
+        _loading = false;
+      }
+      if (alertList.isNotEmpty) {
+        _scheduled = alertList;
+      }
+    });
+    if (messageList.isNotEmpty) {
+      _scrollToBottom();
+    }
+  }
+
+  List<Map<String, dynamic>> _toMapList(dynamic raw) {
+    if (raw is! List) {
+      return const [];
+    }
+    return raw
+        .whereType<Map>()
+        .map((row) => row.map((key, value) => MapEntry(key.toString(), value)))
+        .toList();
+  }
+
+  List<Map<String, dynamic>> _sortedMessages(List<Map<String, dynamic>> messages) {
+    final sorted = [...messages];
+    sorted.sort((a, b) => _messageSortKey(a).compareTo(_messageSortKey(b)));
+    return sorted;
+  }
+
+  int _messageSortKey(Map<String, dynamic> message) {
+    final createdAt = message["created_at"]?.toString();
+    if (createdAt != null && createdAt.isNotEmpty) {
+      final parsed = DateTime.tryParse(createdAt);
+      if (parsed != null) {
+        return parsed.microsecondsSinceEpoch;
+      }
+    }
+    final id = (message["id"] as num?)?.toInt();
+    if (id != null) {
+      return id;
+    }
+    return DateTime.now().microsecondsSinceEpoch;
+  }
+
+  Future<void> _persistMessages() async {
+    await _api.saveCache(
+      _messagesCacheKey,
+      _messages.length <= 200
+          ? _messages
+          : _messages.sublist(_messages.length - 200),
+    );
+  }
+
+  Future<void> _persistAlerts() async {
+    await _api.saveCache(_alertsCacheKey, _scheduled);
+  }
+
+  Future<void> _loadMessages({bool silent = false}) async {
+    if (!silent && mounted && _messages.isEmpty) {
+      setState(() => _loading = true);
+    }
+
     final res = await _api.listCastMessages(castId: widget.castId);
     if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      final list = (jsonDecode(res.body) as List)
+      final remoteMessages = (jsonDecode(res.body) as List)
           .whereType<Map<String, dynamic>>()
           .toList();
+      final pendingMessages = _messages
+          .where((message) => message["_pending"] == true)
+          .toList();
+      final mergedMessages = [...remoteMessages];
+      for (final pending in pendingMessages) {
+        if (!_hasMatchingServerMessage(mergedMessages, pending)) {
+          mergedMessages.add(pending);
+        }
+      }
       setState(() {
-        _messages = list;
+        _messages = _sortedMessages(mergedMessages);
         _loading = false;
       });
+      unawaited(_persistMessages());
       _scrollToBottom();
-    } else {
+      unawaited(_markRead());
+    } else if (!silent) {
       setState(() => _loading = false);
     }
+
     final sched = await _api.listCastAlerts();
     if (mounted && sched.statusCode >= 200 && sched.statusCode < 300) {
       final list = (jsonDecode(sched.body) as List)
@@ -76,36 +184,143 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
           .where((row) => (row["cast_id"] as num?)?.toInt() == widget.castId)
           .toList();
       setState(() => _scheduled = list);
+      unawaited(_persistAlerts());
     }
   }
 
+  bool _hasMatchingServerMessage(
+    List<Map<String, dynamic>> remoteMessages,
+    Map<String, dynamic> pending,
+  ) {
+    final pendingClientId = pending["client_id"]?.toString() ?? "";
+    if (pendingClientId.isNotEmpty) {
+      if (remoteMessages.any(
+          (message) => message["client_id"]?.toString() == pendingClientId)) {
+        return true;
+      }
+    }
+    final pendingText = pending["message"]?.toString() ?? "";
+    final pendingSender = pending["sender_name"]?.toString() ?? "";
+    final pendingCreatedAt = DateTime.tryParse(
+      pending["created_at"]?.toString() ?? "",
+    );
+    return remoteMessages.any((message) {
+      final sameText = (message["message"]?.toString() ?? "") == pendingText;
+      final sameSender =
+          (message["sender_name"]?.toString() ?? "") == pendingSender;
+      if (!sameText || !sameSender) {
+        return false;
+      }
+      final createdAt = DateTime.tryParse(message["created_at"]?.toString() ?? "");
+      if (createdAt == null || pendingCreatedAt == null) {
+        return true;
+      }
+      return createdAt.difference(pendingCreatedAt).inSeconds.abs() <= 20;
+    });
+  }
+
   Future<void> _connectWs() async {
+    _reconnectTimer?.cancel();
+    if (_ws != null) {
+      return;
+    }
     try {
       final peerId = "p${DateTime.now().microsecondsSinceEpoch}";
       final url = await _api.castsGetWsUrl(widget.castId, peerId: peerId);
-      _ws = await WebSocket.connect(url);
-      _ws!.listen((raw) {
-        try {
-          final msg = jsonDecode(raw.toString()) as Map<String, dynamic>;
-          final type = msg["type"]?.toString() ?? "";
-          if (type == "message") {
-            final m = msg["message"];
-            if (m is Map<String, dynamic> && mounted) {
-              setState(() => _messages.add(m));
-              _scrollToBottom();
-            }
-          } else if (type == "call_ring" && mounted) {
-            setState(() => _incomingCall = msg);
-          } else if (type == "call_rejected" && mounted) {
-            GlassToast.show(
-              context,
-              "${msg["by_name"] ?? "Someone"} declined the call",
-              icon: Icons.call_end_rounded,
-            );
+      final socket = await WebSocket.connect(url);
+      if (!mounted) {
+        await socket.close();
+        return;
+      }
+      _ws = socket;
+      socket.listen(
+        _handleWsMessage,
+        onDone: _handleWsClosed,
+        onError: (_) => _handleWsClosed(),
+      );
+      unawaited(_markRead());
+    } catch (_) {
+      _handleWsClosed();
+    }
+  }
+
+  void _handleWsMessage(dynamic raw) {
+    try {
+      final msg = jsonDecode(raw.toString()) as Map<String, dynamic>;
+      final type = msg["type"]?.toString() ?? "";
+      if (type == "message") {
+        final message = msg["message"];
+        if (message is Map<String, dynamic> && mounted) {
+          _upsertMessage(message);
+          if ((message["sender_name"]?.toString() ?? "") != _myName) {
+            unawaited(_markRead());
           }
-        } catch (_) {}
-      });
+        }
+      } else if (type == "call_ring" && mounted) {
+        setState(() => _incomingCall = msg);
+      } else if (type == "call_rejected" && mounted) {
+        GlassToast.show(
+          context,
+          "${msg["by_name"] ?? "Someone"} declined the call",
+          icon: Icons.call_end_rounded,
+        );
+      }
     } catch (_) {}
+  }
+
+  void _handleWsClosed() {
+    _ws = null;
+    if (!mounted) {
+      return;
+    }
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_connectWs());
+    });
+  }
+
+  void _upsertMessage(Map<String, dynamic> incoming) {
+    final clientId = incoming["client_id"]?.toString() ?? "";
+    final incomingId = (incoming["id"] as num?)?.toInt();
+    final indexById = incomingId == null
+        ? -1
+        : _messages.indexWhere((message) => (message["id"] as num?)?.toInt() == incomingId);
+    final indexByClientId = clientId.isEmpty
+        ? -1
+        : _messages.indexWhere(
+            (message) => message["client_id"]?.toString() == clientId,
+          );
+    if (!mounted) return;
+    setState(() {
+      final normalized = {
+        ...incoming,
+        "_pending": false,
+        "_failed": false,
+      };
+      if (indexById >= 0) {
+        _messages[indexById] = normalized;
+      } else if (indexByClientId >= 0) {
+        _messages[indexByClientId] = {
+          ..._messages[indexByClientId],
+          ...normalized,
+        };
+      } else {
+        _messages.add(normalized);
+      }
+      _messages = _sortedMessages(_messages);
+    });
+    unawaited(_persistMessages());
+    _scrollToBottom();
+  }
+
+  Future<void> _markRead() async {
+    try {
+      _ws?.add(jsonEncode({"type": "read"}));
+    } catch (_) {}
+    await _api.markCastRead(castId: widget.castId);
   }
 
   void _scrollToBottom() {
@@ -120,16 +335,32 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
     });
   }
 
-  void _startCall({required bool isVideo}) {
+  Future<void> _startCall({required bool isVideo}) async {
+    final roomCode =
+        "cast-${widget.castId}-${isVideo ? "video" : "voice"}-${DateTime.now().millisecondsSinceEpoch}";
     // Notify all members currently connected to this cast's WebSocket.
     if (_ws != null) {
       try {
         _ws!.add(jsonEncode({
           "type": "call_invite",
           "is_video": isVideo,
+          "room_code": roomCode,
         }));
       } catch (_) {}
+    } else {
+      try {
+        final wsUrl = await _api.castsGetWsUrl(widget.castId);
+        final ws = await WebSocket.connect(wsUrl);
+        ws.add(jsonEncode({
+          "type": "call_invite",
+          "is_video": isVideo,
+          "room_code": roomCode,
+        }));
+        await Future.delayed(const Duration(milliseconds: 300));
+        await ws.close();
+      } catch (_) {}
     }
+    if (!mounted) return;
     Navigator.push(
       context,
       buildHelloCastsCallRoute(
@@ -137,6 +368,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
         callTitle: widget.title,
         callType: isVideo ? "Video" : "Voice",
         isVideo: isVideo,
+        roomCode: roomCode,
       ),
     );
   }
@@ -173,22 +405,31 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
     final messageText = type == "TEXT" && attachUrl == null
         ? (text.isEmpty ? "" : text)
         : jsonEncode(payload);
+    final clientId =
+        "c${DateTime.now().microsecondsSinceEpoch}_${_clientMessageCounter++}";
 
     final now = DateTime.now().toIso8601String();
     final opt = {
       "id": -DateTime.now().millisecondsSinceEpoch,
       "cast_id": widget.castId,
-      "sender_name": "Me",
+      "sender_name": _myName,
       "message": messageText,
       "created_at": now,
+      "client_id": clientId,
       "_pending": true,
+      "_failed": false,
     };
-    setState(() => _messages.add(opt));
+    setState(() => _messages = _sortedMessages([..._messages, opt]));
+    unawaited(_persistMessages());
     _scrollToBottom();
 
     if (_ws != null) {
       try {
-        _ws!.add(jsonEncode({"type": "message", "message": messageText}));
+        _ws!.add(jsonEncode({
+          "type": "message",
+          "message": messageText,
+          "client_id": clientId,
+        }));
         return;
       } catch (_) {}
     }
@@ -199,13 +440,38 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
     );
     if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      final sent = jsonDecode(res.body) as Map<String, dynamic>;
+      final sent = {
+        ...(jsonDecode(res.body) as Map<String, dynamic>),
+        "client_id": clientId,
+        "_pending": false,
+        "_failed": false,
+      };
       setState(() {
-        _messages.removeWhere((m) => m["_pending"] == true);
-        _messages.add(sent);
+        final index = _messages.indexWhere(
+          (message) => message["client_id"]?.toString() == clientId,
+        );
+        if (index >= 0) {
+          _messages[index] = sent;
+        } else {
+          _messages.add(sent);
+        }
+        _messages = _sortedMessages(_messages);
       });
+      unawaited(_persistMessages());
     } else {
-      setState(() => _messages.removeWhere((m) => m["_pending"] == true));
+      setState(() {
+        final index = _messages.indexWhere(
+          (message) => message["client_id"]?.toString() == clientId,
+        );
+        if (index >= 0) {
+          _messages[index] = {
+            ..._messages[index],
+            "_pending": false,
+            "_failed": true,
+          };
+        }
+      });
+      unawaited(_persistMessages());
       GlassToast.show(context, "Failed to send", icon: Icons.error_outline);
     }
   }
@@ -345,7 +611,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen> {
   }
 
   bool _isMe(Map<String, dynamic> msg) =>
-      msg["_pending"] == true || msg["sender_name"] == "Me";
+      msg["_pending"] == true || msg["sender_name"] == _myName;
 
   @override
   Widget build(BuildContext context) {
@@ -566,6 +832,7 @@ class _MessageBubble extends StatelessWidget {
     final attachName = decoded["attachment_name"]?.toString();
     final senderName = msg["sender_name"]?.toString();
     final isPending = msg["_pending"] == true;
+    final isFailed = msg["_failed"] == true;
     final isAlert = type == "ALERT" || type == "REMINDER";
     final bubbleBg = isMe
         ? (dark ? const Color(0xFF005C4B) : const Color(0xFFDCF8C6))
@@ -664,12 +931,17 @@ class _MessageBubble extends StatelessWidget {
                   if (isMe) ...[
                     const SizedBox(width: 4),
                     Icon(
-                      isPending
-                          ? Icons.access_time_rounded
-                          : Icons.done_all_rounded,
+                      isFailed
+                          ? Icons.error_outline_rounded
+                          : isPending
+                              ? Icons.access_time_rounded
+                              : Icons.done_all_rounded,
                       size: 14,
-                      color:
-                          isPending ? Colors.grey : const Color(0xFF53BDEB),
+                      color: isFailed
+                          ? Colors.redAccent
+                          : isPending
+                              ? Colors.grey
+                              : const Color(0xFF53BDEB),
                     ),
                   ],
                 ],

@@ -173,6 +173,7 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
         : null;
     final roomCode = widget.roomCodeOverride ??
         "cast-${widget.castId}-${widget.isVideo ? "video" : "voice"}";
+    final isCastRoom = roomCode.startsWith("cast-");
     final name = (await _api.getSavedName()) ?? "Member";
     final role = (await _api.getSavedRole()) ?? "";
 
@@ -185,7 +186,7 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
         "peer_id": _peerId,
         "display_name": name,
         "role": role,
-        "host": "0",
+        "host": isCastRoom ? "1" : "0",
         "token": token,
       },
     );

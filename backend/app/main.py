@@ -532,14 +532,15 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
     is_host = websocket.query_params.get("host", "0").strip() in ("1", "true", "True")
     peer_id = requested_peer_id or f"peer-{id(websocket)}"
     room_key = room_id.strip().lower() or "default-room"
+    is_cast_room = room_key.startswith("cast-")
     peer_meta = {
         "display_name": display_name,
         "role": role,
-        "is_host": is_host,
+        "is_host": is_host or is_cast_room,
     }
 
     await websocket.accept()
-    if is_host:
+    if is_host or is_cast_room:
         peers = await _meeting_hub.join_room(room_key, peer_id, websocket, peer_meta)
         await _meeting_hub.send(room_key, peer_id, {"type": "peers", "peers": peers})
         await _meeting_hub.broadcast_except(
@@ -555,7 +556,8 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                 },
             },
         )
-        await _broadcast_meeting_lobby_snapshot(room_key)
+        if not is_cast_room:
+            await _broadcast_meeting_lobby_snapshot(room_key)
     else:
         await _meeting_hub.join_lobby(room_key, peer_id, websocket, peer_meta)
         await _meeting_hub.send(
@@ -736,7 +738,8 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
                 peer_id,
                 {"type": "peer_left", "peer_id": peer_id},
             )
-        await _broadcast_meeting_lobby_snapshot(room_key)
+        if not is_cast_room:
+            await _broadcast_meeting_lobby_snapshot(room_key)
 
 
 @app.websocket("/ws/casts/{cast_id}")
@@ -810,6 +813,9 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
                 # Caller broadcasts a ring to all other cast members.
                 is_video = bool(payload.get("is_video", False))
                 caller_name = user.name or peer_id
+                room_code = str(payload.get("room_code", "")).strip() or (
+                    f"cast-{cast_id}-{'video' if is_video else 'voice'}"
+                )
                 await _cast_hub.broadcast_except(
                     str(cast_id),
                     peer_id,
@@ -819,7 +825,7 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
                         "caller_peer_id": peer_id,
                         "caller_name": caller_name,
                         "is_video": is_video,
-                        "room_code": f"cast-{cast_id}-{'video' if is_video else 'voice'}",
+                        "room_code": room_code,
                     },
                 )
             elif msg_type == "call_reject":

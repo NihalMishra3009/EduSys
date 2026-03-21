@@ -26,6 +26,11 @@ class CastCallService {
     await _connectAll();
   }
 
+  Future<void> refresh() async {
+    if (!_started) return;
+    await _connectAll();
+  }
+
   Future<void> stop() async {
     _started = false;
     for (final ws in _sockets.values) {
