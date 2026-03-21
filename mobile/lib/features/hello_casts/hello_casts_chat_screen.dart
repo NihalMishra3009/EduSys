@@ -60,6 +60,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   DateTime _now = DateTime.now();
   int _clientMessageCounter = 0;
   String _myName = "Me";
+  int? _myUserId;
   List<Map<String, dynamic>> _directory = [];
   List<Map<String, dynamic>> _members = [];
   final Set<String> _deletedKeys = {};
@@ -75,6 +76,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   final AudioPlayer _audioPlayer = AudioPlayer();
   String? _playingUrl;
   bool _audioPlaying = false;
+  final Map<String, String> _voiceCache = {};
 
   String get _messagesCacheKey => "cast_messages_${widget.castId}";
   String get _docsCacheKey => "cast_docs_${widget.castId}";
@@ -87,6 +89,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _myName = (await _api.getSavedName()) ?? "Me";
+      _myUserId = await _api.getUserId();
       await _loadCachedState();
       unawaited(_loadDirectory());
       unawaited(_loadMessages());
@@ -555,6 +558,20 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         if (mounted) {
           setState(() {});
         }
+      } else if (type == "read") {
+        final userId = (msg["user_id"] as num?)?.toInt();
+        final readAt = DateTime.tryParse(msg["read_at"]?.toString() ?? "");
+        if (userId != null && readAt != null) {
+          final index =
+              _members.indexWhere((m) => (m["user_id"] as num?)?.toInt() == userId);
+          if (index >= 0) {
+            _members[index] = {
+              ..._members[index],
+              "last_read_at": readAt.toIso8601String(),
+            };
+          }
+          if (mounted) setState(() {});
+        }
       }
     } catch (_) {}
   }
@@ -595,6 +612,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (_deletedKeys.contains(_messageKey(incoming))) {
       return;
     }
+    final isMine =
+        (incoming["sender_name"]?.toString() ?? "") == _myName;
     final clientId = incoming["client_id"]?.toString() ?? "";
     final incomingId = (incoming["id"] as num?)?.toInt();
     final indexById = incomingId == null
@@ -625,7 +644,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       _messages = _sortedMessages(_messages);
     });
     unawaited(_persistMessages());
-    _scrollToBottom();
+    if (isMine || _shouldAutoScroll()) {
+      _scrollToBottom();
+    }
   }
 
   String _messageKey(Map<String, dynamic> message) {
@@ -870,7 +891,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (url == null || url.isEmpty) return;
     try {
       if (_playingUrl != url) {
-        await _audioPlayer.setUrl(url);
+        final localPath = await _resolveVoicePath(url);
+        if (localPath == null) {
+          GlassToast.show(context, "Unable to load voice note",
+              icon: Icons.error_outline);
+          return;
+        }
+        await _audioPlayer.setFilePath(localPath);
         _playingUrl = url;
         await _audioPlayer.play();
         setState(() => _audioPlaying = true);
@@ -899,19 +926,70 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     }
   }
 
+  Future<String?> _resolveVoicePath(String url) async {
+    final cached = _voiceCache[url];
+    if (cached != null && await File(cached).exists()) {
+      return cached;
+    }
+    try {
+      final dir = await getTemporaryDirectory();
+      final fileName = "voice_${url.hashCode}.m4a";
+      final target = File("${dir.path}/$fileName");
+      if (!await target.exists()) {
+        final res = await http.get(Uri.parse(url));
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return null;
+        }
+        await target.writeAsBytes(res.bodyBytes);
+      }
+      _voiceCache[url] = target.path;
+      return target.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<bool> _sendForwardViaSocket(int castId, String messageText) async {
     try {
       final peerId = "fwd_${DateTime.now().microsecondsSinceEpoch}";
       final url = await _api.castsGetWsUrl(castId, peerId: peerId);
       final socket = await WebSocket.connect(url);
+      final completer = Completer<bool>();
+      late final StreamSubscription sub;
+      sub = socket.listen(
+        (data) {
+          try {
+            final msg = jsonDecode(data.toString()) as Map<String, dynamic>;
+            if (msg["type"]?.toString() == "message") {
+              if (!completer.isCompleted) {
+                completer.complete(true);
+              }
+            }
+          } catch (_) {}
+        },
+        onError: (_) {
+          if (!completer.isCompleted) {
+            completer.complete(false);
+          }
+        },
+        onDone: () {
+          if (!completer.isCompleted) {
+            completer.complete(false);
+          }
+        },
+      );
       socket.add(jsonEncode({
         "type": "message",
         "message": messageText,
         "client_id": peerId,
       }));
-      await Future.delayed(const Duration(milliseconds: 120));
+      final ok = await completer.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => false,
+      );
+      await sub.cancel();
       await socket.close();
-      return true;
+      return ok;
     } catch (_) {
       return false;
     }
@@ -1177,6 +1255,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         }
       }
     });
+  }
+
+  bool _shouldAutoScroll() {
+    if (!_scrollCtrl.hasClients) return true;
+    final pos = _scrollCtrl.position;
+    final remaining = pos.maxScrollExtent - pos.pixels;
+    return remaining < 120;
   }
 
   Map<String, dynamic> _decodeMessage(String raw) {
@@ -1482,6 +1567,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (result == null || result.files.isEmpty) return;
     final path = result.files.single.path;
     if (path == null) return;
+    final file = File(path);
+    final size = await file.length();
+    if (size > 50 * 1024 * 1024) {
+      GlassToast.show(context, "File too large (max 50 MB)",
+          icon: Icons.error_outline);
+      return;
+    }
     if (!mounted) return;
     GlassToast.show(context, "Uploading...", icon: Icons.upload_rounded);
     final res = await _api.uploadAttachment(filePath: path, purpose: "cast");
@@ -1506,6 +1598,25 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
 
   bool _isMe(Map<String, dynamic> msg) =>
       msg["_pending"] == true || msg["sender_name"] == _myName;
+
+  bool _isReadByAny(Map<String, dynamic> msg) {
+    if (!_isMe(msg)) return false;
+    final createdAtRaw = msg["created_at"]?.toString();
+    if (createdAtRaw == null || createdAtRaw.isEmpty) return false;
+    final createdAt = DateTime.tryParse(createdAtRaw);
+    if (createdAt == null) return false;
+    for (final member in _members) {
+      final userId = (member["user_id"] as num?)?.toInt();
+      if (userId == null || userId == _myUserId) continue;
+      final lastReadRaw = member["last_read_at"]?.toString();
+      if (lastReadRaw == null || lastReadRaw.isEmpty) continue;
+      final lastRead = DateTime.tryParse(lastReadRaw);
+      if (lastRead != null && !lastRead.isBefore(createdAt)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1613,6 +1724,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                             itemBuilder: (_, i) => _MessageBubble(
                               msg: visible[i],
                               isMe: _isMe(visible[i]),
+                              isRead: _isReadByAny(visible[i]),
                               decode: _decodeMessage,
                               onLongPress: () =>
                                   _showMessageActions(visible[i], _isMe(visible[i])),
@@ -1825,6 +1937,7 @@ class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.msg,
     required this.isMe,
+    required this.isRead,
     required this.decode,
     required this.onLongPress,
     required this.onOpenAttachment,
@@ -1837,6 +1950,7 @@ class _MessageBubble extends StatelessWidget {
   });
   final Map<String, dynamic> msg;
   final bool isMe;
+  final bool isRead;
   final Map<String, dynamic> Function(String raw) decode;
   final VoidCallback onLongPress;
   final Future<void> Function(String? url) onOpenAttachment;
@@ -2138,14 +2252,16 @@ class _MessageBubble extends StatelessWidget {
                             isFailed
                                 ? Icons.error_outline_rounded
                                 : isPending
-                                    ? Icons.access_time_rounded
+                                    ? Icons.done_rounded
                                     : Icons.done_all_rounded,
                             size: 14,
                             color: isFailed
                                 ? Colors.redAccent
                                 : isPending
                                     ? Colors.grey
-                                    : const Color(0xFF53BDEB),
+                                    : isRead
+                                        ? const Color(0xFF2FA8FF)
+                                        : Colors.grey,
                           ),
                         ],
                       ],

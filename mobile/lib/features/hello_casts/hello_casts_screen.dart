@@ -179,6 +179,16 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
             });
           }
         }
+      } else if (type == "cast_deleted") {
+        final castId = (msg["cast_id"] as num?)?.toInt();
+        if (castId == null) return;
+        if (mounted) {
+          setState(() {
+            _casts = _casts
+                .where((c) => (c["id"] as num?)?.toInt() != castId)
+                .toList();
+          });
+        }
       }
     } catch (_) {}
   }
@@ -312,6 +322,55 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     }
     final q = _searchQuery.trim().toLowerCase();
     return base.where((c) => _matchesSearch(c, q)).toList();
+  }
+
+  Future<void> _confirmDeleteCast(Map<String, dynamic> cast) async {
+    final castId = (cast["id"] as num?)?.toInt();
+    if (castId == null) return;
+    final name = cast["name"]?.toString() ?? "Cast";
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Delete cast?"),
+        content: Text("Delete \"$name\" for everyone? This cannot be undone."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Delete"),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final res = await _api.deleteCast(castId: castId);
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      setState(() {
+        _casts =
+            _casts.where((c) => (c["id"] as num?)?.toInt() != castId).toList();
+      });
+      await _api.saveCache("casts_list", _casts);
+      GlassToast.show(context, "Cast deleted", icon: Icons.check_circle_outline);
+    } else {
+      GlassToast.show(
+        context,
+        _detail(res.body, fallback: "Delete failed"),
+        icon: Icons.error_outline,
+      );
+    }
+  }
+
+  String _detail(String body, {String fallback = "Request failed"}) {
+    try {
+      final map = jsonDecode(body) as Map<String, dynamic>;
+      return (map["detail"] ?? fallback).toString();
+    } catch (_) {
+      return fallback;
+    }
   }
 
   bool _matchesSearch(Map<String, dynamic> cast, String q) {
@@ -1022,6 +1081,8 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                                             as num)
                                                         .toInt())
                                                 : null,
+                                            onLongPress: () =>
+                                                _confirmDeleteCast(c),
                                             onTap: () {
                                               Navigator.of(context).push(
                                                 AppTransitions.fadeSlide(
@@ -1056,6 +1117,8 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                                 subtitle: "Community cast",
                                                 trailing: const Icon(
                                                     Icons.chevron_right_rounded),
+                                                onLongPress: () =>
+                                                    _confirmDeleteCast(c),
                                                 onTap: () {
                                                   Navigator.of(context).push(
                                                     AppTransitions.fadeSlide(
@@ -1290,11 +1353,18 @@ class _InviteBanner extends StatelessWidget {
 }
 
 class _CastTile extends StatelessWidget {
-  const _CastTile({required this.title, required this.subtitle, this.trailing, required this.onTap});
+  const _CastTile({
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+    required this.onTap,
+    this.onLongPress,
+  });
   final String title;
   final String subtitle;
   final Widget? trailing;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1350,6 +1420,7 @@ class _CastTile extends StatelessWidget {
               color: dark ? scheme.onSurface.withValues(alpha: 0.5) : Colors.black45,
             ),
         onTap: onTap,
+        onLongPress: onLongPress,
       ),
     );
   }

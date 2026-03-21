@@ -1,4 +1,5 @@
 from datetime import datetime
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -415,6 +416,41 @@ def remove_member(
     db.delete(target)
     db.commit()
     return {"detail": "Member removed"}
+
+
+@router.delete("/{cast_id}")
+async def delete_cast(
+    cast_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    member = _ensure_member(db, cast_id, current_user.id)
+    cast = db.get(Cast, cast_id)
+    if cast is None:
+        raise HTTPException(status_code=404, detail="Cast not found")
+    if member.role != CastMemberRole.ADMIN and cast.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Only cast admins can delete")
+
+    members = (
+        db.query(CastMember)
+        .filter(CastMember.cast_id == cast_id)
+        .all()
+    )
+    member_ids = [m.user_id for m in members]
+
+    db.query(CastMessage).filter(CastMessage.cast_id == cast_id).delete()
+    db.query(CastAlert).filter(CastAlert.cast_id == cast_id).delete()
+    db.query(CastInvite).filter(CastInvite.cast_id == cast_id).delete()
+    db.query(CastMember).filter(CastMember.cast_id == cast_id).delete()
+    db.query(Cast).filter(Cast.id == cast_id).delete()
+    db.commit()
+
+    if member_ids:
+        await casts_list_hub.broadcast_to_users(
+            member_ids,
+            {"type": "cast_deleted", "cast_id": cast_id},
+        )
+    return {"ok": True, "cast_id": cast_id}
 
 
 @router.post("/{cast_id}/invites")

@@ -276,10 +276,12 @@ class HelloCastsChatTile extends StatelessWidget {
     super.key,
     required this.data,
     required this.onTap,
+    this.onLongPress,
   });
 
   final Map<String, dynamic> data;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +294,7 @@ class HelloCastsChatTile extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(18),
         child: AppCard(
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),

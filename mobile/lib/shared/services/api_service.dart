@@ -66,6 +66,23 @@ class ApiService {
     return _cachedName;
   }
 
+  Future<int?> getUserId() async {
+    final token = await getToken();
+    if (token == null || token.isEmpty) return null;
+    final parts = token.split(".");
+    if (parts.length < 2) return null;
+    try {
+      final payload = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+      ) as Map<String, dynamic>;
+      final raw = payload["sub"];
+      if (raw is int) return raw;
+      return int.tryParse(raw?.toString() ?? "");
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<String?> getSavedEmail() async {
     if (_emailLoaded) return _cachedEmail;
     _cachedEmail = await _storage.read(key: _emailKey);
@@ -1387,6 +1404,14 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/casts/$castId/messages/$messageId",
+      sender: (uri) => _sharedClient.delete(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> deleteCast({required int castId}) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/$castId",
       sender: (uri) => _sharedClient.delete(uri, headers: headers),
     );
   }

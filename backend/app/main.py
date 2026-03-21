@@ -935,6 +935,14 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
                     )
             elif msg_type == "read":
                 await asyncio.to_thread(_mark_cast_read, cast_id, user.id)
+                await _cast_hub.broadcast(
+                    str(cast_id),
+                    {
+                        "type": "read",
+                        "user_id": user.id,
+                        "read_at": datetime.utcnow().isoformat(),
+                    },
+                )
             elif msg_type == "call_invite":
                 # Caller broadcasts a ring to all other cast members.
                 is_video = bool(payload.get("is_video", False))
