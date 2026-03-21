@@ -176,7 +176,7 @@ async def _update_turn_health() -> None:
                 },
                 json={"ttl": 300},
             )
-        if response.status_code == 200:
+        if response.status_code in (200, 201):
             _turn_health = {
                 "status": "ok",
                 "detail": "Cloudflare TURN credentials validated",
