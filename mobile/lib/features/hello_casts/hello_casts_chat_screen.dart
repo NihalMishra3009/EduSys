@@ -10,6 +10,7 @@ import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
 import "package:edusys_mobile/core/constants/app_colors.dart";
 import "hello_casts_widgets.dart";
+import "package:url_launcher/url_launcher.dart";
 
 
 class HelloCastsChatScreen extends StatefulWidget {
@@ -1084,6 +1085,13 @@ class _MessageBubble extends StatelessWidget {
   final Map<String, dynamic> Function(String raw) decode;
   final VoidCallback onLongPress;
 
+  Future<void> _openAttachment(String? url) async {
+    if (url == null || url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
@@ -1092,6 +1100,7 @@ class _MessageBubble extends StatelessWidget {
     final type = decoded["type"]?.toString() ?? "TEXT";
     final body = decoded["body"]?.toString();
     final attachName = decoded["attachment_name"]?.toString();
+    final attachUrl = decoded["attachment_url"]?.toString();
     final senderName = msg["sender_name"]?.toString();
     final isPending = msg["_pending"] == true;
     final isFailed = msg["_failed"] == true;
@@ -1151,36 +1160,53 @@ class _MessageBubble extends StatelessWidget {
                   const SizedBox(height: 4),
                 ],
                 if (type == "VOICE_NOTE")
-                  Row(
-                    children: [
-                      const Icon(Icons.mic_rounded,
-                          size: 20, color: Color(0xFF25D366)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Container(
-                          height: 3,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.withValues(alpha: 0.4),
-                            borderRadius: BorderRadius.circular(2),
+                  InkWell(
+                    onTap: () => _openAttachment(attachUrl),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.mic_rounded,
+                            size: 20, color: Color(0xFF25D366)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Container(
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.withValues(alpha: 0.4),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text("${decoded["duration_secs"] ?? 0}s",
-                          style: const TextStyle(fontSize: 12)),
-                    ],
+                        const SizedBox(width: 8),
+                        Text("${decoded["duration_secs"] ?? 0}s",
+                            style: const TextStyle(fontSize: 12)),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.open_in_new_rounded, size: 14),
+                      ],
+                    ),
                   )
                 else if (type == "FILE" || type == "IMAGE")
-                  Row(
-                    children: [
-                      const Icon(Icons.attach_file_rounded, size: 18),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(attachName ?? "File",
-                            style: const TextStyle(fontSize: 13),
-                            overflow: TextOverflow.ellipsis),
-                      ),
-                    ],
+                  InkWell(
+                    onTap: () => _openAttachment(attachUrl),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Row(
+                      children: [
+                        Icon(
+                          type == "IMAGE"
+                              ? Icons.image_rounded
+                              : Icons.insert_drive_file_rounded,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(attachName ?? "File",
+                              style: const TextStyle(fontSize: 13),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.download_rounded, size: 16),
+                      ],
+                    ),
                   )
                 else if (body != null && body.isNotEmpty)
                   Text(
