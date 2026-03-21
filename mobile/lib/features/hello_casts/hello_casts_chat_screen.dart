@@ -921,9 +921,14 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             titleSpacing: 0,
             title: Row(
               children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: scheme.primary.withValues(alpha: 0.15),
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  alignment: Alignment.center,
                   child: Text(
                     widget.title.isNotEmpty ? widget.title[0].toUpperCase() : "?",
                     style: TextStyle(

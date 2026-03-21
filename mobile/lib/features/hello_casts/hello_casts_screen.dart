@@ -383,7 +383,17 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                       final name = inv["cast_name"]?.toString() ?? "Cast";
                       final type = inv["cast_type"]?.toString() ?? "";
                       return ListTile(
-                        leading: CircleAvatar(
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.center,
                           child: Text(
                               name.isNotEmpty ? name[0].toUpperCase() : "?"),
                         ),
@@ -1135,8 +1145,14 @@ class _CastTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: const Color(0xFF25D366).withValues(alpha: 0.15),
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: const Color(0xFF25D366).withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.center,
         child: Text(title.isNotEmpty ? title[0].toUpperCase() : "?"),
       ),
       title: Text(
@@ -1164,9 +1180,14 @@ class _AlertTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: const CircleAvatar(
-        backgroundColor: Color(0xFFFF9A3D),
-        child: Icon(Icons.alarm_rounded, color: Colors.white),
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF9A3D),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.alarm_rounded, color: Colors.white),
       ),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
       subtitle: Text(subtitle),
@@ -1219,8 +1240,13 @@ class _NewCastOption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: const Color(0xFF25D366).withValues(alpha: 0.15),
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: const Color(0xFF25D366).withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(12),
+        ),
         child: Icon(icon, color: const Color(0xFF25D366)),
       ),
       title: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
