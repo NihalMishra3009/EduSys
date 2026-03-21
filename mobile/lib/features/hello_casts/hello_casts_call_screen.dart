@@ -7,6 +7,7 @@ import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:flutter/material.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart";
 import "package:google_fonts/google_fonts.dart";
+import "package:permission_handler/permission_handler.dart";
 
 Route<void> buildHelloCastsCallRoute({
   required int castId,
@@ -66,6 +67,9 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
   final Map<String, RTCPeerConnection> _peerConnections = {};
   final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
   final ApiService _api = ApiService();
+  List<Map<String, dynamic>> _iceServers = [
+    {"urls": ["stun:stun.l.google.com:19302"]},
+  ];
   MediaStream? _localStream;
   WebSocket? _socket;
   String _peerId = "";
@@ -100,6 +104,9 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
   Future<void> _boot() async {
     try {
       await _localRenderer.initialize();
+      // Request camera and microphone at runtime — required on Android 6+
+      // before getUserMedia, otherwise it throws PlatformException silently.
+      await [Permission.camera, Permission.microphone].request();
       _localStream = await navigator.mediaDevices.getUserMedia({
         "audio": true,
         "video": widget.isVideo
@@ -109,6 +116,7 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
             : false,
       });
       _localRenderer.srcObject = _localStream;
+      _iceServers = await _api.getIceServers();
       await _connectSignaling();
       if (!mounted) {
         return;
@@ -186,19 +194,7 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
 
     final pc = await createPeerConnection(
       {
-        "iceServers": [
-          {"urls": "stun:stun.l.google.com:19302"},
-          if (ApiConfig.turnUrls.trim().isNotEmpty)
-            {
-              "urls": ApiConfig.turnUrls
-                  .split(",")
-                  .map((e) => e.trim())
-                  .where((e) => e.isNotEmpty)
-                  .toList(),
-              "username": ApiConfig.turnUsername,
-              "credential": ApiConfig.turnCredential,
-            },
-        ],
+        "iceServers": _iceServers,
       },
       {
         "mandatory": {},
@@ -263,20 +259,25 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
       final type = (sdpData["type"] ?? "").toString();
       final sdp = (sdpData["sdp"] ?? "").toString();
       if (type.isNotEmpty && sdp.isNotEmpty) {
-        await pc.setRemoteDescription(RTCSessionDescription(sdp, type));
-        _flushCandidates(fromPeerId);
-        if (type == "offer") {
-          final answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          _sendSignal(
-            to: fromPeerId,
-            data: {
-              "sdp": {
-                "type": answer.type,
-                "sdp": answer.sdp,
+        try {
+          await pc.setRemoteDescription(RTCSessionDescription(sdp, type));
+          _flushCandidates(fromPeerId);
+          if (type == "offer") {
+            final answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            _sendSignal(
+              to: fromPeerId,
+              data: {
+                "sdp": {
+                  "type": answer.type,
+                  "sdp": answer.sdp,
+                },
               },
-            },
-          );
+            );
+          }
+        } catch (e) {
+          // Glare or state error — log and continue. The other peer's
+          // offer/answer cycle will complete the connection.
         }
       }
     }
@@ -372,8 +373,11 @@ class _HelloCastsCallScreenState extends State<HelloCastsCallScreen> {
         } else {
           peerId = (decoded["peer_id"] ?? "").toString();
         }
-        if (peerId.isNotEmpty) {
-          _createOffer(peerId);
+        // Do NOT call _createOffer here — the newcomer will send us an offer.
+        // Calling _createOffer from both sides causes WebRTC glare
+        // (both peers in have-local-offer state) which silently kills the connection.
+        if (peerId.isNotEmpty && peerId != _peerId) {
+          if (mounted) setState(() {});
         }
         return;
       }

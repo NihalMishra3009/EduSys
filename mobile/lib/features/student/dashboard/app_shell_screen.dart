@@ -32,6 +32,7 @@ import "package:provider/provider.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:flutter_webrtc/flutter_webrtc.dart";
 import "package:file_picker/file_picker.dart";
+import "package:permission_handler/permission_handler.dart";
 
 const bool kUseDemoDataEverywhere = false;
 const double kDockScrollBottomInset = 96;
@@ -7941,6 +7942,9 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   final Map<String, RTCVideoRenderer> _remoteRenderers = {};
   final Map<String, RTCPeerConnection> _peerConnections = {};
   final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
+  List<Map<String, dynamic>> _iceServers = [
+    {"urls": ["stun:stun.l.google.com:19302"]},
+  ];
   MediaStream? _localStream;
   WebSocket? _socket;
   late String _peerId;
@@ -7991,6 +7995,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   Future<void> _boot() async {
     try {
       await _localRenderer.initialize();
+      await [Permission.camera, Permission.microphone].request();
       _localStream = await navigator.mediaDevices.getUserMedia({
         "audio": true,
         "video": {
@@ -7998,6 +8003,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
         },
       });
       _localRenderer.srcObject = _localStream;
+      _iceServers = await ApiService().getIceServers();
       await _connectSignaling();
       if (!mounted) {
         return;
@@ -8080,19 +8086,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
 
     final pc = await createPeerConnection(
       {
-        "iceServers": [
-          {"urls": "stun:stun.l.google.com:19302"},
-          if (ApiConfig.turnUrls.trim().isNotEmpty)
-            {
-              "urls": ApiConfig.turnUrls
-                  .split(",")
-                  .map((e) => e.trim())
-                  .where((e) => e.isNotEmpty)
-                  .toList(),
-              "username": ApiConfig.turnUsername,
-              "credential": ApiConfig.turnCredential,
-            },
-        ],
+        "iceServers": _iceServers,
       },
       {
         "mandatory": {},
@@ -8160,20 +8154,24 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
       final type = (sdpData["type"] ?? "").toString();
       final sdp = (sdpData["sdp"] ?? "").toString();
       if (type.isNotEmpty && sdp.isNotEmpty) {
-        await pc.setRemoteDescription(RTCSessionDescription(sdp, type));
-        _flushCandidates(fromPeerId);
-        if (type == "offer") {
-          final answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          _sendSignal(
-            to: fromPeerId,
-            data: {
-              "sdp": {
-                "type": answer.type,
-                "sdp": answer.sdp,
+        try {
+          await pc.setRemoteDescription(RTCSessionDescription(sdp, type));
+          _flushCandidates(fromPeerId);
+          if (type == "offer") {
+            final answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            _sendSignal(
+              to: fromPeerId,
+              data: {
+                "sdp": {
+                  "type": answer.type,
+                  "sdp": answer.sdp,
+                },
               },
-            },
-          );
+            );
+          }
+        } catch (e) {
+          // Glare or invalid state — the other peer's negotiation will succeed.
         }
       }
     }
@@ -8303,9 +8301,8 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
               isHost: isHost,
             ),
           );
-          if (_shouldCreateOffer(peerId)) {
-            _createOffer(peerId);
-          }
+          // Do NOT create offer here — the newcomer will offer us.
+          // Both sides calling _createOffer simultaneously causes glare.
         }
         return;
       }

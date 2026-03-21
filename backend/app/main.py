@@ -3,8 +3,11 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
+import httpx
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.database import Base, SessionLocal, engine
 from app.core.security import hash_password
@@ -16,6 +19,13 @@ from app.models.cast import CastMember, CastMemberRole, CastMessage, Cast
 from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, learned, lecture, notification, resources, users, casts
 
 app = FastAPI(title="EduSys API", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 _media_dir = Path(__file__).resolve().parent.parent / "media"
 _media_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(_media_dir)), name="media")
@@ -289,6 +299,43 @@ def seed_default_users() -> None:
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.get("/calls/ice-servers")
+async def get_ice_servers():
+    """
+    Generates short-lived Cloudflare TURN credentials and returns
+    iceServers config for WebRTC peer connections.
+    Falls back to STUN-only if Cloudflare credentials are not configured.
+    """
+    turn_key_id = os.environ.get("CF_TURN_KEY_ID", "").strip()
+    turn_api_token = os.environ.get("CF_TURN_API_TOKEN", "").strip()
+
+    stun_only = [
+        {"urls": ["stun:stun.l.google.com:19302"]},
+        {"urls": ["stun:stun.cloudflare.com:3478"]},
+    ]
+
+    if not turn_key_id or not turn_api_token:
+        return {"iceServers": stun_only}
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(
+                f"https://rtc.live.cloudflare.com/v1/turn/keys/{turn_key_id}/credentials/generate-ice-servers",
+                headers={
+                    "Authorization": f"Bearer {turn_api_token}",
+                    "Content-Type": "application/json",
+                },
+                json={"ttl": 86400},
+            )
+        if response.status_code == 200:
+            data = response.json()
+            return {"iceServers": data.get("iceServers", stun_only)}
+    except Exception:
+        pass
+
+    return {"iceServers": stun_only}
 
 
 @app.websocket("/ws/meetings/{room_id}")

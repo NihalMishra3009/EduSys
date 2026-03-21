@@ -171,6 +171,30 @@ class ApiService {
     await _storage.write(key: _baseUrlKey, value: normalized);
   }
 
+  Future<List<Map<String, dynamic>>> getIceServers() async {
+    try {
+      final headers = await _headers(auth: true);
+      final res = await _sendWithFallback(
+        path: "/calls/ice-servers",
+        sender: (uri) => http.get(uri, headers: headers),
+      );
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map<String, dynamic>) {
+          final list = decoded["iceServers"];
+          if (list is List) {
+            return list.whereType<Map<String, dynamic>>().toList();
+          }
+        }
+      }
+    } catch (_) {}
+    // Fallback: STUN only
+    return [
+      {"urls": ["stun:stun.l.google.com:19302"]},
+      {"urls": ["stun:stun.cloudflare.com:3478"]},
+    ];
+  }
+
   Future<Map<String, String>> _headers({bool auth = false}) async {
     final headers = <String, String>{"Content-Type": "application/json"};
     if (auth) {
