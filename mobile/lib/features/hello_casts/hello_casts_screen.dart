@@ -485,6 +485,46 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     );
   }
 
+  Future<void> _showHeaderActions() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _NewCastOption(
+                icon: Icons.chat_bubble_rounded,
+                label: "New cast",
+                subtitle: "Create a new cast",
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showNewCastMenu();
+                },
+              ),
+              _NewCastOption(
+                icon: Icons.alarm_rounded,
+                label: "Alert studio",
+                subtitle: "Schedule an alert",
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _scheduleAlert();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _createCastFlow(String type) async {
     if (_directory.isEmpty) {
       await _loadData();
@@ -767,15 +807,11 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
-              const HelloCastsHeader(
+              HelloCastsHeader(
                 title: "Casts",
                 subtitle: "Simple group & individual messaging",
+                onCreateAction: _showHeaderActions,
               ),
-              const SizedBox(height: 12),
-      HelloCastsQuickActions(
-        onCreateCast: _showNewCastMenu,
-        onScheduleAlert: _scheduleAlert,
-      ),
               const SizedBox(height: 12),
               _UnifiedFilterBar(
                 tabIndex: _tabIndex,

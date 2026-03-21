@@ -8,10 +8,12 @@ class HelloCastsHeader extends StatelessWidget {
     super.key,
     required this.title,
     required this.subtitle,
+    required this.onCreateAction,
   });
 
   final String title;
   final String subtitle;
+  final VoidCallback onCreateAction;
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +30,26 @@ class HelloCastsHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: InkWell(
+              onTap: onCreateAction,
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: const Icon(Icons.add_rounded, color: Colors.white),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           Text(
             title,
             style: GoogleFonts.spaceGrotesk(
