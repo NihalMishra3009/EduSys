@@ -752,6 +752,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         .where((c) => (c["cast_type"] ?? "").toString().toLowerCase() != "community")
         .toList();
     final communities = _filteredCasts("Community");
+    final dark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       floatingActionButton: FloatingActionButton(
@@ -759,6 +760,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         onPressed: _showNewCastMenu,
         child: const Icon(Icons.add_rounded, color: Colors.white),
       ),
+      backgroundColor: dark ? null : const Color(0xFFF2F5FB),
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: _loadData,
@@ -885,6 +887,7 @@ class _TabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return SizedBox(
       height: 40,
       child: ListView.separated(
@@ -899,14 +902,18 @@ class _TabBar extends StatelessWidget {
               duration: const Duration(milliseconds: 180),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: active ? const Color(0xFF25D366) : Colors.transparent,
+                color: active
+                    ? const Color(0xFF25D366)
+                    : (dark ? Colors.transparent : Colors.white),
                 borderRadius: BorderRadius.circular(99),
                 border: Border.all(color: const Color(0xFF25D366).withValues(alpha: 0.4)),
               ),
               child: Text(
                 tabs[i],
                 style: TextStyle(
-                  color: active ? Colors.white : const Color(0xFF25D366),
+                  color: active
+                      ? Colors.white
+                      : (dark ? const Color(0xFF25D366) : Colors.black87),
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -926,6 +933,7 @@ class _FilterBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Wrap(
       spacing: 8,
       children: filters.map((f) {
@@ -935,6 +943,13 @@ class _FilterBar extends StatelessWidget {
           label: Text(f),
           onSelected: (_) => onChanged(f),
           selectedColor: const Color(0xFF25D366).withValues(alpha: 0.2),
+          backgroundColor: dark ? null : Colors.white,
+          labelStyle: TextStyle(
+            color: active
+                ? const Color(0xFF25D366)
+                : (dark ? null : Colors.black87),
+            fontWeight: FontWeight.w700,
+          ),
         );
       }).toList(),
     );
@@ -981,13 +996,23 @@ class _CastTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: const Color(0xFF25D366).withValues(alpha: 0.15),
         child: Text(title.isNotEmpty ? title[0].toUpperCase() : "?"),
       ),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-      subtitle: Text(subtitle),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          color: dark ? null : Colors.black87,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(color: dark ? null : Colors.black54),
+      ),
       trailing: trailing ?? const Icon(Icons.chevron_right_rounded),
       onTap: onTap,
     );

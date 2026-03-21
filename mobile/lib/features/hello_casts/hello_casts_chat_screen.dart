@@ -784,9 +784,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     final scheme = Theme.of(context).colorScheme;
     final appBarTheme = Theme.of(context).appBarTheme;
     final background =
-        dark ? AppColors.darkBackground : AppColors.lightBackground;
+        dark ? AppColors.darkBackground : const Color(0xFFF2F5FB);
     final appBarBg = appBarTheme.backgroundColor ??
-        (dark ? AppColors.darkSurface : AppColors.lightSurface);
+        (dark ? AppColors.darkSurface : Colors.white);
     final appBarFg = appBarTheme.foregroundColor ?? scheme.onSurface;
     return Stack(
       children: [
@@ -972,8 +972,8 @@ class _MessageBubble extends StatelessWidget {
     final isAlert = type == "ALERT" || type == "REMINDER";
     final scheme = Theme.of(context).colorScheme;
     final bubbleBg = isMe
-        ? scheme.primary.withValues(alpha: dark ? 0.22 : 0.14)
-        : (dark ? AppColors.darkSurfaceElevated : AppColors.lightSurface);
+        ? (dark ? scheme.primary.withValues(alpha: 0.28) : const Color(0xFF1E67D1))
+        : (dark ? AppColors.darkSurfaceElevated : Colors.white);
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(18),
       topRight: const Radius.circular(18),
@@ -1059,7 +1059,7 @@ class _MessageBubble extends StatelessWidget {
                   body,
                   style: TextStyle(
                     fontSize: 14,
-                    color: isMe ? scheme.onPrimary : scheme.onSurface,
+                    color: isMe ? Colors.white : Colors.black87,
                   ),
                 ),
               const SizedBox(height: 4),
