@@ -830,8 +830,8 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                 child: RefreshIndicator(
                   onRefresh: _loadData,
                   child: _loading
-                      ? const ListView(
-                          children: [
+                      ? ListView(
+                          children: const [
                             SizedBox(height: 30),
                             Center(child: CircularProgressIndicator()),
                           ],
@@ -935,7 +935,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
           ),
         ),
       ),
-    ),
     );
   }
 }
