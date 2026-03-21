@@ -43,3 +43,5 @@ __all__ = [
     "CastMessage",
     "CastType",
 ]
+
+from app.models.learned import LearnedSubject, LearnedSubjectMember, LearnedPost, LearnedSubmission, LearnedSyllabus

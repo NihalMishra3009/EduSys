@@ -1322,5 +1322,71 @@ class ApiService {
       sender: (uri) => _sharedClient.delete(uri, headers: headers),
     );
   }
+
+  Future<http.Response> learnedListSubjects() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects", sender: (uri) => http.get(uri, headers: headers));
+  }
+
+  Future<http.Response> learnedCreateSubject({required String name, required String code, String? description}) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects", sender: (uri) => http.post(uri, headers: headers, body: jsonEncode({"name": name, "code": code, "description": description})));
+  }
+
+  Future<http.Response> learnedJoinSubject(String joinCode) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/join", sender: (uri) => http.post(uri, headers: headers, body: jsonEncode({"join_code": joinCode})));
+  }
+
+  Future<http.Response> learnedListPosts(int subjectId, {String? type}) async {
+    final headers = await _headers(auth: true);
+    final q = type != null ? "?type=$type" : "";
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/posts$q", sender: (uri) => http.get(uri, headers: headers));
+  }
+
+  Future<http.Response> learnedCreatePost(int subjectId, Map<String, dynamic> payload) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/posts", sender: (uri) => http.post(uri, headers: headers, body: jsonEncode(payload)));
+  }
+
+  Future<http.Response> learnedDeletePost(int subjectId, int postId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/posts/$postId", sender: (uri) => http.delete(uri, headers: headers));
+  }
+
+  Future<http.Response> learnedSubmit(int subjectId, int postId, Map<String, dynamic> payload) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/posts/$postId/submit", sender: (uri) => http.post(uri, headers: headers, body: jsonEncode(payload)));
+  }
+
+  Future<http.Response> learnedListSubmissions(int subjectId, int postId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/posts/$postId/submissions", sender: (uri) => http.get(uri, headers: headers));
+  }
+
+  Future<http.Response> learnedGrade(int subjectId, int submissionId, Map<String, dynamic> payload) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/submissions/$submissionId/grade", sender: (uri) => http.post(uri, headers: headers, body: jsonEncode(payload)));
+  }
+
+  Future<http.Response> learnedListMembers(int subjectId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/members", sender: (uri) => http.get(uri, headers: headers));
+  }
+
+  Future<http.Response> learnedListSyllabus(int subjectId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/syllabus", sender: (uri) => http.get(uri, headers: headers));
+  }
+
+  Future<http.Response> learnedAddSyllabusUnit(int subjectId, Map<String, dynamic> payload) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/syllabus", sender: (uri) => http.post(uri, headers: headers, body: jsonEncode(payload)));
+  }
+
+  Future<http.Response> learnedDeleteSyllabusUnit(int subjectId, int unitId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(path: "/learned/subjects/$subjectId/syllabus/$unitId", sender: (uri) => http.delete(uri, headers: headers));
+  }
 }
 

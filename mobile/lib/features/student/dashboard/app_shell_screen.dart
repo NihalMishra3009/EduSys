@@ -15,6 +15,7 @@ import "package:edusys_mobile/features/hello_casts/hello_casts_screen.dart";
 import "package:edusys_mobile/features/student/railway/railway_concession_screen.dart";
 import "package:edusys_mobile/features/student/profile/profile_screen.dart";
 import "package:edusys_mobile/features/student/attendance/active_lecture_screen.dart";
+import "package:edusys_mobile/features/student/attendance/learned_screen.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/device_binding_service.dart";
 import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
@@ -5689,13 +5690,14 @@ class _LecturesTab extends StatefulWidget {
   State<_LecturesTab> createState() => _LecturesTabState();
 }
 
-class _NotesTab extends StatefulWidget {
+class _NotesTab extends StatelessWidget {
   const _NotesTab();
 
   @override
-  State<_NotesTab> createState() => _NotesTabState();
+  Widget build(BuildContext context) => const LearnEdScreen();
 }
 
+/*
 class _NotesTabState extends State<_NotesTab> {
   final ApiService _api = ApiService();
   static const bool _forceCloudSyncForNotes = true;
@@ -7335,6 +7337,7 @@ class _NotesTabState extends State<_NotesTab> {
     );
   }
 }
+*/
 
 class _LearningTab extends StatefulWidget {
   const _LearningTab();
