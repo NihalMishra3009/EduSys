@@ -55,11 +55,19 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       final alerts = await _api.listCastAlerts();
       final dir = await _api.userDirectory();
 
-      final casts = res.statusCode >= 200 && res.statusCode < 300
-          ? (jsonDecode(res.body) as List)
-              .whereType<Map<String, dynamic>>()
-              .toList()
-          : <Map<String, dynamic>>[];
+      List<Map<String, dynamic>> casts = [];
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        casts = (jsonDecode(res.body) as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        await _api.saveCache("casts_list", casts);
+      } else {
+        final cached = await _api.readCache("casts_list");
+        casts = (cached as List<dynamic>?)
+                ?.whereType<Map<String, dynamic>>()
+                .toList() ??
+            <Map<String, dynamic>>[];
+      }
       final inviteRows = invites.statusCode >= 200 && invites.statusCode < 300
           ? (jsonDecode(invites.body) as List)
               .whereType<Map<String, dynamic>>()
@@ -70,12 +78,28 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
               .whereType<Map<String, dynamic>>()
               .toList()
           : <Map<String, dynamic>>[];
-      final directoryRows =
-          dir.statusCode >= 200 && dir.statusCode < 300
-              ? (jsonDecode(dir.body) as List)
-                  .whereType<Map<String, dynamic>>()
-                  .toList()
-              : <Map<String, dynamic>>[];
+      List<Map<String, dynamic>> directoryRows = [];
+      if (dir.statusCode >= 200 && dir.statusCode < 300) {
+        directoryRows = (jsonDecode(dir.body) as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        await _api.saveCache("user_directory", directoryRows);
+      } else {
+        final cached = await _api.readCache("user_directory");
+        directoryRows = (cached as List<dynamic>?)
+                ?.whereType<Map<String, dynamic>>()
+                .toList() ??
+            <Map<String, dynamic>>[];
+      }
+      if (directoryRows.isEmpty) {
+        final students = await _api.usersStudents();
+        if (students.statusCode >= 200 && students.statusCode < 300) {
+          directoryRows = (jsonDecode(students.body) as List)
+              .whereType<Map<String, dynamic>>()
+              .toList();
+          await _api.saveCache("user_directory", directoryRows);
+        }
+      }
 
       if (!mounted) return;
       setState(() {

@@ -194,11 +194,30 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     final dir = await _api.userDirectory();
     if (!mounted) return;
     if (dir.statusCode >= 200 && dir.statusCode < 300) {
-      setState(() {
-        _directory = (jsonDecode(dir.body) as List)
-            .whereType<Map<String, dynamic>>()
-            .toList();
-      });
+      final rows = (jsonDecode(dir.body) as List)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      await _api.saveCache("user_directory", rows);
+      setState(() => _directory = rows);
+      return;
+    }
+    final cached = await _api.readCache("user_directory");
+    final cachedRows = (cached as List<dynamic>?)
+            ?.whereType<Map<String, dynamic>>()
+            .toList() ??
+        <Map<String, dynamic>>[];
+    if (cachedRows.isNotEmpty) {
+      setState(() => _directory = cachedRows);
+      return;
+    }
+    final students = await _api.usersStudents();
+    if (!mounted) return;
+    if (students.statusCode >= 200 && students.statusCode < 300) {
+      final rows = (jsonDecode(students.body) as List)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      await _api.saveCache("user_directory", rows);
+      setState(() => _directory = rows);
     }
   }
 
