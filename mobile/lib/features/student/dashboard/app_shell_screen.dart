@@ -8487,6 +8487,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
     final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final remoteList = _remoteRenderers.entries.toList();
+    final hasOthers = _participants.values.any((p) => !p.isLocal);
 
     // Determine which renderers to show in the main grid
     final mainRenderers = _pinnedPeerId != null
@@ -8508,7 +8509,7 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
                   : _loading
                       ? const Center(
                           child: CircularProgressIndicator(color: Colors.white))
-                      : mainRenderers.isEmpty
+                      : (!hasOthers)
                           ? _WaitingView(
                               displayName: widget.displayName,
                               localRenderer: _localRenderer,
