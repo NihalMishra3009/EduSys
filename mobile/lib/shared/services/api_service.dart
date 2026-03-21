@@ -379,6 +379,10 @@ class ApiService {
     return response.statusCode >= 200 && response.statusCode < 300;
   }
 
+  bool isOfflineStatus(int statusCode) {
+    return statusCode == 503 || statusCode == 504;
+  }
+
   http.Response _handleResponse(http.Response response) {
     if (response.statusCode == 401) {
       _handleUnauthorized();

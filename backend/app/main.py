@@ -347,6 +347,61 @@ def _auth_ws_user(token: str):
         db.close()
 
 
+def _store_cast_message(
+    cast_id: int, user_id: int, text: str, client_id: str | None
+) -> dict | None:
+    db = SessionLocal()
+    try:
+        member = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == cast_id, CastMember.user_id == user_id)
+            .first()
+        )
+        if member is None:
+            return None
+        item = CastMessage(
+            cast_id=cast_id,
+            sender_id=user_id,
+            message=text,
+            created_at=datetime.utcnow(),
+        )
+        db.add(item)
+        cast = db.get(Cast, cast_id)
+        if cast:
+            cast.updated_at = datetime.utcnow()
+        member.last_read_at = datetime.utcnow()
+        db.commit()
+        db.refresh(item)
+        sender = db.get(User, user_id)
+        return {
+            "id": item.id,
+            "cast_id": cast_id,
+            "sender_id": user_id,
+            "sender_name": sender.name if sender else "Member",
+            "message": item.message,
+            "created_at": item.created_at.isoformat(),
+            "client_id": client_id,
+        }
+    finally:
+        db.close()
+
+
+def _mark_cast_read(cast_id: int, user_id: int) -> None:
+    db = SessionLocal()
+    try:
+        member = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == cast_id, CastMember.user_id == user_id)
+            .first()
+        )
+        if member is None:
+            return
+        member.last_read_at = datetime.utcnow()
+        db.commit()
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def seed_default_users() -> None:
     Base.metadata.create_all(bind=engine)
@@ -778,37 +833,20 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
                 if not text:
                     continue
                 client_id = str(payload.get("client_id", "")).strip() or None
-                item = CastMessage(
-                    cast_id=cast_id,
-                    sender_id=user.id,
-                    message=text,
-                    created_at=datetime.utcnow(),
+                stored = await asyncio.to_thread(
+                    _store_cast_message, cast_id, user.id, text, client_id
                 )
-                db.add(item)
-                cast = db.get(Cast, cast_id)
-                if cast:
-                    cast.updated_at = datetime.utcnow()
-                member.last_read_at = datetime.utcnow()
-                db.commit()
-                db.refresh(item)
+                if stored is None:
+                    continue
                 await _cast_hub.broadcast(
                     str(cast_id),
                     {
                         "type": "message",
-                        "message": {
-                            "id": item.id,
-                            "cast_id": cast_id,
-                            "sender_id": user.id,
-                            "sender_name": user.name,
-                            "message": item.message,
-                            "created_at": item.created_at.isoformat(),
-                            "client_id": client_id,
-                        },
+                        "message": stored,
                     },
                 )
             elif msg_type == "read":
-                member.last_read_at = datetime.utcnow()
-                db.commit()
+                await asyncio.to_thread(_mark_cast_read, cast_id, user.id)
             elif msg_type == "call_invite":
                 # Caller broadcasts a ring to all other cast members.
                 is_video = bool(payload.get("is_video", False))

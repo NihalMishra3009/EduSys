@@ -160,22 +160,41 @@ def create_cast(
         exists = db.query(User).filter(User.id == member_id).first()
         if not exists:
             continue
-        invite = (
-            db.query(CastInvite)
-            .filter(CastInvite.cast_id == item.id, CastInvite.invitee_id == member_id)
+        already_member = (
+            db.query(CastMember)
+            .filter(CastMember.cast_id == item.id, CastMember.user_id == member_id)
             .first()
         )
-        if invite:
+        if already_member:
             continue
-        db.add(
-            CastInvite(
-                cast_id=item.id,
-                inviter_id=current_user.id,
-                invitee_id=member_id,
-                status=CastInviteStatus.PENDING,
-                created_at=datetime.utcnow(),
+        if cast_type == CastType.INDIVIDUAL:
+            db.add(
+                CastMember(
+                    cast_id=item.id,
+                    user_id=member_id,
+                    role=CastMemberRole.MEMBER,
+                )
             )
-        )
+        else:
+            invite = (
+                db.query(CastInvite)
+                .filter(
+                    CastInvite.cast_id == item.id,
+                    CastInvite.invitee_id == member_id,
+                )
+                .first()
+            )
+            if invite:
+                continue
+            db.add(
+                CastInvite(
+                    cast_id=item.id,
+                    inviter_id=current_user.id,
+                    invitee_id=member_id,
+                    status=CastInviteStatus.PENDING,
+                    created_at=datetime.utcnow(),
+                )
+            )
     db.commit()
 
     return CastOut(

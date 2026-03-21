@@ -7,6 +7,7 @@ import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
+import "package:edusys_mobile/core/constants/app_colors.dart";
 
 import "hello_casts_call_screen.dart";
 
@@ -616,25 +617,32 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    final appBarTheme = Theme.of(context).appBarTheme;
+    final background =
+        dark ? AppColors.darkBackground : AppColors.lightBackground;
+    final appBarBg = appBarTheme.backgroundColor ??
+        (dark ? AppColors.darkSurface : AppColors.lightSurface);
+    final appBarFg = appBarTheme.foregroundColor ?? scheme.onSurface;
     return Stack(
       children: [
         Scaffold(
-          backgroundColor:
-              dark ? const Color(0xFF0B141A) : const Color(0xFFECE5DD),
+          backgroundColor: background,
           appBar: AppBar(
-            backgroundColor:
-                dark ? const Color(0xFF1F2C34) : const Color(0xFF075E54),
-            foregroundColor: Colors.white,
+            backgroundColor: appBarBg,
+            foregroundColor: appBarFg,
             titleSpacing: 0,
             title: Row(
               children: [
                 CircleAvatar(
                   radius: 18,
-                  backgroundColor: Colors.white24,
+                  backgroundColor: scheme.primary.withValues(alpha: 0.15),
                   child: Text(
                     widget.title.isNotEmpty ? widget.title[0].toUpperCase() : "?",
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700),
+                    style: TextStyle(
+                      color: appBarFg,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -645,15 +653,16 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                       Text(
                         widget.title,
                         style: GoogleFonts.spaceGrotesk(
-                            color: Colors.white,
+                            color: appBarFg,
                             fontSize: 16,
                             fontWeight: FontWeight.w700),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(widget.castType,
-                          style: const TextStyle(
-                              color: Colors.white70, fontSize: 12)),
+                          style: TextStyle(
+                              color: appBarFg.withValues(alpha: 0.7),
+                              fontSize: 12)),
                     ],
                   ),
                 ),
@@ -661,17 +670,17 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.call_rounded, color: Colors.white),
+                icon: Icon(Icons.call_rounded, color: appBarFg),
                 onPressed: () => _startCall(isVideo: false),
                 tooltip: "Voice call",
               ),
               IconButton(
-                icon: const Icon(Icons.videocam_rounded, color: Colors.white),
+                icon: Icon(Icons.videocam_rounded, color: appBarFg),
                 onPressed: () => _startCall(isVideo: true),
                 tooltip: "Video call",
               ),
               IconButton(
-                icon: const Icon(Icons.alarm_add_rounded, color: Colors.white),
+                icon: Icon(Icons.alarm_add_rounded, color: appBarFg),
                 onPressed: _sendScheduled,
                 tooltip: "Schedule alert",
               ),
@@ -681,8 +690,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             children: [
               if (_scheduled.isNotEmpty)
                 Container(
-                  color:
-                      dark ? const Color(0xFF1F2C34) : const Color(0xFFFFF9C4),
+                  color: scheme.secondary.withValues(alpha: dark ? 0.2 : 0.12),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: Row(
@@ -717,8 +725,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
               ),
               Container(
                 padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-                color:
-                    dark ? const Color(0xFF1F2C34) : const Color(0xFFF0F2F5),
+                color: scheme.surface,
                 child: Column(
                   children: [
                     if (_showAttachMenu)
@@ -744,9 +751,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                         Expanded(
                           child: Container(
                             decoration: BoxDecoration(
-                              color: dark
-                                  ? const Color(0xFF2A3942)
-                                  : Colors.white,
+                              color: scheme.surface,
                               borderRadius: BorderRadius.circular(24),
                             ),
                             child: TextField(
@@ -764,10 +769,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                         ),
                         const SizedBox(width: 8),
                         FloatingActionButton.small(
-                          backgroundColor: const Color(0xFF25D366),
+                          backgroundColor: scheme.primary,
                           onPressed: _send,
-                          child:
-                              const Icon(Icons.send_rounded, color: Colors.white),
+                          child: Icon(Icons.send_rounded,
+                              color: scheme.onPrimary),
                         ),
                       ],
                     ),
@@ -834,9 +839,10 @@ class _MessageBubble extends StatelessWidget {
     final isPending = msg["_pending"] == true;
     final isFailed = msg["_failed"] == true;
     final isAlert = type == "ALERT" || type == "REMINDER";
+    final scheme = Theme.of(context).colorScheme;
     final bubbleBg = isMe
-        ? (dark ? const Color(0xFF005C4B) : const Color(0xFFDCF8C6))
-        : (dark ? const Color(0xFF1F2C34) : Colors.white);
+        ? scheme.primary.withValues(alpha: dark ? 0.22 : 0.14)
+        : (dark ? AppColors.darkSurfaceElevated : AppColors.lightSurface);
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(18),
       topRight: const Radius.circular(18),
@@ -918,7 +924,13 @@ class _MessageBubble extends StatelessWidget {
                   ],
                 )
               else if (body != null && body.isNotEmpty)
-                Text(body, style: const TextStyle(fontSize: 14)),
+                Text(
+                  body,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: isMe ? scheme.onPrimary : scheme.onSurface,
+                  ),
+                ),
               const SizedBox(height: 4),
               Row(
                 mainAxisSize: MainAxisSize.min,
