@@ -15,7 +15,15 @@ from app.core.config import settings
 from app import models as _models  # Register metadata for all tables.
 from app.models.user import User, UserRole
 from app.models.classroom import Classroom
-from app.models.cast import CastMember, CastMemberRole, CastMessage, Cast
+from app.models.cast import (
+    Cast,
+    CastInvite,
+    CastInviteStatus,
+    CastMember,
+    CastMemberRole,
+    CastMessage,
+    CastType,
+)
 from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, learned, lecture, notification, resources, users, casts
 
 app = FastAPI(title="EduSys API", version="1.0.0")
@@ -345,6 +353,40 @@ def _auth_ws_user(token: str):
         return db.get(User, int(user_id))
     finally:
         db.close()
+
+
+def _auto_accept_individual_invite(
+    db: SessionLocal, cast_id: int, user_id: int
+) -> CastMember | None:
+    cast = db.get(Cast, cast_id)
+    if cast is None:
+        return None
+    if cast.cast_type != CastType.INDIVIDUAL:
+        return None
+    existing = (
+        db.query(CastMember)
+        .filter(CastMember.cast_id == cast_id, CastMember.user_id == user_id)
+        .first()
+    )
+    if existing is not None:
+        return existing
+    invite = (
+        db.query(CastInvite)
+        .filter(CastInvite.cast_id == cast_id, CastInvite.invitee_id == user_id)
+        .first()
+    )
+    if invite is None:
+        return None
+    member = CastMember(
+        cast_id=cast_id,
+        user_id=user_id,
+        role=CastMemberRole.MEMBER,
+    )
+    db.add(member)
+    invite.status = CastInviteStatus.ACCEPTED
+    invite.responded_at = datetime.utcnow()
+    db.commit()
+    return member
 
 
 def _store_cast_message(
@@ -816,6 +858,8 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
             .filter(CastMember.cast_id == cast_id, CastMember.user_id == user.id)
             .first()
         )
+        if member is None:
+            member = _auto_accept_individual_invite(db, cast_id, user.id)
         if member is None:
             await websocket.close(code=1008)
             return
