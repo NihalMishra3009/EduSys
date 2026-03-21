@@ -824,6 +824,26 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     }
   }
 
+  void _startCall({required bool isVideo}) {
+    if (_ws != null) {
+      try {
+        _ws!.add(jsonEncode({
+          "type": "call_invite",
+          "is_video": isVideo,
+        }));
+      } catch (_) {}
+    }
+    Navigator.push(
+      context,
+      buildHelloCastsCallRoute(
+        castId: widget.castId,
+        callTitle: widget.title,
+        callType: isVideo ? "Video" : "Voice",
+        isVideo: isVideo,
+      ),
+    );
+  }
+
   Future<void> _sendScheduled() async {
     final bodyCtrl = TextEditingController();
     DateTime? scheduledAt;
