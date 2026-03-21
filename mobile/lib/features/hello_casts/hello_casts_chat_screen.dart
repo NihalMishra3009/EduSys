@@ -1170,23 +1170,30 @@ class _MessageBubble extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     child: Row(
                       children: [
-                        const Icon(Icons.mic_rounded,
-                            size: 20, color: Color(0xFF25D366)),
+                        Icon(Icons.mic_rounded,
+                            size: 20,
+                            color: isMe ? Colors.white : const Color(0xFF25D366)),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Container(
                             height: 3,
                             decoration: BoxDecoration(
-                              color: Colors.grey.withValues(alpha: 0.4),
+                              color: (isMe ? Colors.white : Colors.grey)
+                                  .withValues(alpha: 0.4),
                               borderRadius: BorderRadius.circular(2),
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Text("${decoded["duration_secs"] ?? 0}s",
-                            style: const TextStyle(fontSize: 12)),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isMe ? Colors.white : Colors.black87,
+                            )),
                         const SizedBox(width: 6),
-                        const Icon(Icons.open_in_new_rounded, size: 14),
+                        Icon(Icons.open_in_new_rounded,
+                            size: 14,
+                            color: isMe ? Colors.white : Colors.black87),
                       ],
                     ),
                   )
@@ -1201,15 +1208,21 @@ class _MessageBubble extends StatelessWidget {
                               ? Icons.image_rounded
                               : Icons.insert_drive_file_rounded,
                           size: 18,
+                          color: isMe ? Colors.white : Colors.black87,
                         ),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(attachName ?? "File",
-                              style: const TextStyle(fontSize: 13),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: isMe ? Colors.white : Colors.black87,
+                              ),
                               overflow: TextOverflow.ellipsis),
                         ),
                         const SizedBox(width: 6),
-                        const Icon(Icons.download_rounded, size: 16),
+                        Icon(Icons.download_rounded,
+                            size: 16,
+                            color: isMe ? Colors.white : Colors.black87),
                       ],
                     ),
                   )
