@@ -37,35 +37,79 @@ import "package:permission_handler/permission_handler.dart";
 const bool kUseDemoDataEverywhere = false;
 const double kDockScrollBottomInset = 96;
 
-const List<Map<String, dynamic>> _demoProfessorClasses = [
-  {"id": 1, "name": "AI Lab 601"},
-  {"id": 2, "name": "DS Lab 602A"},
-  {"id": 3, "name": "Classroom 715"},
-  {"id": 4, "name": "Mini Project Room"},
-];
+List<Map<String, dynamic>> _departmentOptionsFromStudents(
+  List<Map<String, dynamic>> students,
+) {
+  final byId = <int, String>{};
+  for (final row in students) {
+    final depId = row["department_id"];
+    if (depId is! num) {
+      continue;
+    }
+    final id = depId.toInt();
+    final name = (row["department_name"] ?? row["class_name"] ?? "Department $id")
+        .toString()
+        .trim();
+    if (name.isNotEmpty) {
+      byId[id] = name;
+    }
+  }
+  final list = byId.entries
+      .map((e) => {"id": e.key, "name": e.value})
+      .toList()
+    ..sort((a, b) =>
+        (a["name"] as String).compareTo(b["name"] as String));
+  return list;
+}
 
-const Map<int, List<Map<String, dynamic>>> _demoClassStudents = {
-  1: [
-    {"id": 201, "name": "Aarav Patil"},
-    {"id": 202, "name": "Diya Shinde"},
-    {"id": 203, "name": "Rohan Kale"},
-  ],
-  2: [
-    {"id": 204, "name": "Meera Joshi"},
-    {"id": 205, "name": "Kabir Nair"},
-    {"id": 206, "name": "Sara Khan"},
-  ],
-  3: [
-    {"id": 207, "name": "Tanvi Deshpande"},
-    {"id": 208, "name": "Ishaan Gupta"},
-    {"id": 209, "name": "Riya Sen"},
-  ],
-  4: [
-    {"id": 210, "name": "Neel Vora"},
-    {"id": 211, "name": "Sana Sheikh"},
-    {"id": 212, "name": "Om Kulkarni"},
-  ],
-};
+List<Map<String, dynamic>> _applyDepartmentNames(
+  List<Map<String, dynamic>> students,
+  Map<int, String> departmentMap,
+) {
+  return students.map((row) {
+    final next = Map<String, dynamic>.from(row);
+    final depId = next["department_id"];
+    if (depId is num) {
+      final id = depId.toInt();
+      final name = departmentMap[id];
+      if ((next["department_name"] == null ||
+              (next["department_name"] ?? "").toString().trim().isEmpty) &&
+          name != null) {
+        next["department_name"] = name;
+      }
+      if ((next["class_name"] == null ||
+              (next["class_name"] ?? "").toString().trim().isEmpty) &&
+          (next["department_name"] ?? "").toString().trim().isNotEmpty) {
+        next["class_name"] = next["department_name"];
+      }
+    }
+    return next;
+  }).toList();
+}
+
+Future<Map<int, String>> _fetchDepartmentMap(ApiService api) async {
+  try {
+    final res = await api.listDepartments();
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      final rows = jsonDecode(res.body) as List<dynamic>;
+      final map = <int, String>{};
+      for (final row in rows) {
+        if (row is! Map<String, dynamic>) {
+          continue;
+        }
+        final id = row["id"];
+        final name = (row["name"] ?? "").toString().trim();
+        if (id is num && name.isNotEmpty) {
+          map[id.toInt()] = name;
+        }
+      }
+      return map;
+    }
+  } catch (_) {
+    // Ignore lookup failures.
+  }
+  return {};
+}
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -103,6 +147,23 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _openClassExplorer() async {
+    final departmentMap = await _fetchDepartmentMap(_api);
+    if (departmentMap.isNotEmpty) {
+      nextStudents = _applyDepartmentNames(nextStudents, departmentMap);
+    }
+    final departmentMap = await _fetchDepartmentMap(_api);
+    if (departmentMap.isNotEmpty) {
+      final studentList = nextStudents.whereType<Map<String, dynamic>>().toList();
+      if (studentList.isNotEmpty) {
+        final merged = _applyDepartmentNames(studentList, departmentMap);
+        nextStudents = merged;
+        nextStudentNames = _parseStudentNames(merged);
+        nextClasswiseStudents = _buildClasswiseAttendance(
+          merged,
+          summaries: nextSummary,
+        );
+      }
+    }
     if (!mounted) {
       return;
     }
@@ -824,13 +885,6 @@ class _ShareItScreenState extends State<_ShareItScreen> {
   TimeOfDay? _startTime;
   TimeOfDay? _endTime;
 
-  static const List<Map<String, dynamic>> _demoStudents = [
-    {"id": 101, "name": "Aarav Patil", "email": "aarav@sigce.edu.in", "class_name": "AIDS-A"},
-    {"id": 102, "name": "Diya Shinde", "email": "diya@sigce.edu.in", "class_name": "AIDS-A"},
-    {"id": 103, "name": "Rohan Kale", "email": "rohan@sigce.edu.in", "class_name": "AIDS-B"},
-    {"id": 104, "name": "Meera Joshi", "email": "meera@sigce.edu.in", "class_name": "AIDS-B"},
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -866,10 +920,11 @@ class _ShareItScreenState extends State<_ShareItScreen> {
                   ?.whereType<Map<String, dynamic>>()
                   .toList() ??
               nextRows;
-      nextStudents = (await _api.readCache("share_it_students") as List<dynamic>?)
-              ?.whereType<Map<String, dynamic>>()
-              .toList() ??
-          (nextStudents.isEmpty ? _demoStudents : nextStudents);
+      nextStudents =
+          (await _api.readCache("share_it_students") as List<dynamic>?)
+                  ?.whereType<Map<String, dynamic>>()
+                  .toList() ??
+              nextStudents;
     } else if (res.statusCode >= 200 && res.statusCode < 300) {
       nextRows = (jsonDecode(res.body) as List<dynamic>)
           .whereType<Map<String, dynamic>>()
@@ -880,8 +935,6 @@ class _ShareItScreenState extends State<_ShareItScreen> {
             .whereType<Map<String, dynamic>>()
             .toList();
         await _api.saveCache("share_it_students", nextStudents);
-      } else if (nextStudents.isEmpty) {
-        nextStudents = _demoStudents;
       }
     }
     if (!mounted) {
@@ -1041,7 +1094,7 @@ class _ShareItScreenState extends State<_ShareItScreen> {
       s["division"],
       s["section"],
       s["department_name"],
-      s["department_id"] == null ? null : "Class ${s["department_id"]}",
+      s["department_id"] == null ? null : "Department ${s["department_id"]}",
     ];
     for (final c in candidates) {
       final text = (c ?? "").toString().trim();
@@ -1473,7 +1526,7 @@ class _ClassExplorerSheetState extends State<_ClassExplorerSheet> {
         }
       }
 
-      final normalized = rawStudents
+      var normalized = rawStudents
           .whereType<Map<String, dynamic>>()
           .map((student) => <String, dynamic>{
                 "id": student["id"],
@@ -1483,44 +1536,9 @@ class _ClassExplorerSheetState extends State<_ClassExplorerSheet> {
                 "role": (student["role"] ?? "STUDENT").toString(),
               })
           .toList();
-      if (normalized.isEmpty) {
-        normalized.addAll([
-          {
-            "id": 101,
-            "name": "Aarav Mehta",
-            "email": "aarav@edusys.edu",
-            "department_id": 1,
-            "role": "STUDENT"
-          },
-          {
-            "id": 102,
-            "name": "Diya Rao",
-            "email": "diya@edusys.edu",
-            "department_id": 1,
-            "role": "STUDENT"
-          },
-          {
-            "id": 103,
-            "name": "Kabir Shah",
-            "email": "kabir@edusys.edu",
-            "department_id": 2,
-            "role": "STUDENT"
-          },
-          {
-            "id": 104,
-            "name": "Sara Thomas",
-            "email": "sara@edusys.edu",
-            "department_id": 2,
-            "role": "STUDENT"
-          },
-          {
-            "id": 105,
-            "name": "Rohan Iyer",
-            "email": "rohan@edusys.edu",
-            "department_id": 3,
-            "role": "STUDENT"
-          },
-        ]);
+      final departmentMap = await _fetchDepartmentMap(_api);
+      if (departmentMap.isNotEmpty) {
+        normalized = _applyDepartmentNames(normalized, departmentMap);
       }
 
       final attendanceResp = await _api.adminAllAttendance();
@@ -4731,12 +4749,13 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
             if (selectedClasses.isEmpty) {
               return const [];
             }
-            final rows = <Map<String, dynamic>>[];
-            for (final classId in selectedClasses) {
-              final list = _demoClassStudents[classId] ?? const [];
-              rows.addAll(list);
-            }
-            return rows;
+            return _students.where((row) {
+              final depId = row["department_id"];
+              if (depId is num) {
+                return selectedClasses.contains(depId.toInt());
+              }
+              return false;
+            }).toList();
           }
 
           void toggleClass(int id, bool selected) {
@@ -4745,9 +4764,14 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                 selectedClasses.add(id);
               } else {
                 selectedClasses.remove(id);
-                final list = _demoClassStudents[id] ?? const [];
-                for (final s in list) {
-                  selectedStudents.remove(s["id"] as int);
+                for (final s in _students) {
+                  final depId = s["department_id"];
+                  if (depId is num && depId.toInt() == id) {
+                    final sid = s["id"];
+                    if (sid is int) {
+                      selectedStudents.remove(sid);
+                    }
+                  }
                 }
               }
             });
@@ -4790,13 +4814,18 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
             final advertiseMinutes =
                 int.tryParse(advertiseMinutesController.text.trim()) ?? 2;
             final advertiseWindowMs = advertiseMinutes * 60 * 1000;
-            final firstClass = _demoProfessorClasses
-                .firstWhere((c) => selectedClasses.contains(c["id"] as int));
+            final classOptions = _departmentOptionsFromStudents(_students);
+            final firstClass = classOptions.firstWhere(
+              (c) => selectedClasses.contains(c["id"] as int),
+              orElse: () => classOptions.first,
+            );
             final classroomId = selectedSpaceId ?? (firstClass["id"] as int);
             final title = "Lecture - ${firstClass["name"]}";
-            final selected = _demoClassStudents.values
-                .expand((e) => e)
-                .where((s) => selectedStudents.contains(s["id"] as int))
+            final selected = _students
+                .where((s) {
+                  final sid = s["id"];
+                  return sid is int && selectedStudents.contains(sid);
+                })
                 .toList();
 
             Map<String, dynamic> payload = {
@@ -4851,8 +4880,9 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
           }
 
           final students = visibleStudents();
+          final classOptions = _departmentOptionsFromStudents(_students);
           final allClassesSelected =
-              selectedClasses.length == _demoProfessorClasses.length;
+              classOptions.isNotEmpty && selectedClasses.length == classOptions.length;
           final allStudentsSelected =
               students.isNotEmpty && selectedStudents.length == students.length;
           return SafeArea(
@@ -4914,8 +4944,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                           selectedClasses
                             ..clear()
                             ..addAll(
-                              _demoProfessorClasses
-                                  .map((c) => c["id"] as int),
+                              classOptions.map((c) => c["id"] as int),
                             );
                         } else {
                           selectedClasses.clear();
@@ -4926,7 +4955,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: _demoProfessorClasses.map((c) {
+                      children: classOptions.map((c) {
                         final id = c["id"] as int;
                         return FilterChip(
                           label: Text(c["name"].toString()),
@@ -5416,7 +5445,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
       row["division"],
       row["section"],
       row["department_name"],
-      row["department_id"] == null ? null : "Class ${row["department_id"]}",
+      row["department_id"] == null ? null : "Department ${row["department_id"]}",
     ];
     for (final c in candidates) {
       final text = (c ?? "").toString().trim();
@@ -5424,7 +5453,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
         return text;
       }
     }
-    return "Class A";
+    return "Department";
   }
 
   String _subjectFromLecture(Map<String, dynamic> row) {
@@ -10890,10 +10919,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   bool _bleRssiAuto = true;
   List<Map<String, dynamic>> _createdSpaces = [];
   final TextEditingController _spaceNameController = TextEditingController();
-  final TextEditingController _spaceThresholdController =
-      TextEditingController(text: "75");
-  final TextEditingController _thresholdLectureIdController =
-      TextEditingController();
+  // Attendance threshold editing removed.
   final TextEditingController _manualLectureId =
       TextEditingController(text: "1");
   Timer? _syncTimer;
@@ -10934,63 +10960,13 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       "end_time": "2026-02-20T13:49:00Z",
     },
   ];
-  static const List<Map<String, dynamic>> _demoStudents = [
-    {"id": 101, "name": "Aarav Patil", "class_name": "AIDS-A"},
-    {"id": 102, "name": "Diya Shinde", "class_name": "AIDS-A"},
-    {"id": 103, "name": "Rohan Kale", "class_name": "AIDS-B"},
-    {"id": 104, "name": "Meera Joshi", "class_name": "AIDS-B"},
-  ];
-  static const List<Map<String, dynamic>> _demoNearby = [
-    {
-      "student_name": "Aarav Patil",
-      "student_id": 101,
-      "device_id": "DEV-A1",
-      "sim_serial": "SIM-A1",
-      "lecture_id": 401,
-    },
-    {
-      "student_name": "Diya Shinde",
-      "student_id": 102,
-      "device_id": "DEV-D2",
-      "sim_serial": "SIM-D2",
-      "lecture_id": 401,
-    },
-  ];
-  static const List<Map<String, dynamic>> _demoClasswiseAttendance = [
-    {
-      "id": 101,
-      "name": "Aarav Patil",
-      "class_name": "AIDS-A",
-      "attendance": 87.5
-    },
-    {
-      "id": 102,
-      "name": "Diya Shinde",
-      "class_name": "AIDS-A",
-      "attendance": 74.0
-    },
-    {
-      "id": 103,
-      "name": "Rohan Kale",
-      "class_name": "AIDS-B",
-      "attendance": 92.0
-    },
-    {
-      "id": 104,
-      "name": "Meera Joshi",
-      "class_name": "AIDS-B",
-      "attendance": 69.5
-    },
-  ];
-
   @override
   void dispose() {
     _syncTimer?.cancel();
     _spaceNameController.dispose();
     _ceilingHeightController.dispose();
     _bleRssiController.dispose();
-    _spaceThresholdController.dispose();
-    _thresholdLectureIdController.dispose();
+    // Attendance threshold editing removed.
     _manualLectureId.dispose();
     super.dispose();
   }
@@ -11041,52 +11017,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   }
 
   Future<void> _load({bool silent = false}) async {
-    if (kUseDemoDataEverywhere) {
-      if (!mounted) {
-        return;
-      }
-      final demoSummary = <int, _StudentAttendanceSummary>{
-        101: const _StudentAttendanceSummary(
-            totalLectures: 24, presentCount: 21, attendancePercentage: 87.5),
-        102: const _StudentAttendanceSummary(
-            totalLectures: 24, presentCount: 18, attendancePercentage: 75.0),
-        103: const _StudentAttendanceSummary(
-            totalLectures: 24, presentCount: 22, attendancePercentage: 91.7),
-        104: const _StudentAttendanceSummary(
-            totalLectures: 24, presentCount: 17, attendancePercentage: 70.8),
-      };
-      final demoNames = <int, String>{
-        for (final s in _demoStudents)
-          (s["id"] as int): (s["name"] ?? "Student").toString(),
-      };
-      setState(() {
-        _loading = false;
-        _offline = false;
-        _records = _exampleAttendanceRecords;
-        _lectureHistory = _exampleLectureHistory;
-        _geofenceEnabled = true;
-        _students = _demoStudents;
-        _selectedStudentId = 101;
-        _nearbyStudents = _demoNearby;
-        _manualMarks = _exampleManualMarks;
-        _studentSummary = demoSummary;
-        _studentNames = demoNames;
-        _classwiseStudents = _demoClasswiseAttendance
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-        _editableAttendancePercent
-          ..clear()
-          ..addEntries(_demoClasswiseAttendance.map((e) {
-            final id = e["id"] as int;
-            final pct = (e["attendance"] as num).toDouble();
-            return MapEntry(id, pct);
-          }));
-        _monthlyPresent = 21;
-        _monthlyAbsent = 5;
-        _monthlyPercentage = 80.8;
-      });
-      return;
-    }
     if (!silent) {
       setState(() => _loading = true);
     }
@@ -11420,9 +11350,12 @@ class _AttendanceTabState extends State<_AttendanceTab> {
         "id": id,
         "name": (row["name"] ?? "Student #$id").toString(),
         "class_name": (row["class_name"] ??
+                row["department_name"] ??
                 row["classroom"] ??
                 row["division"] ??
-                "Class A")
+                (row["department_id"] == null
+                    ? "Department"
+                    : "Department ${row["department_id"]}"))
             .toString(),
         "attendance": summary?.attendancePercentage ?? 0.0,
       });
@@ -11453,11 +11386,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   bool _isDefaulter(double percent) => percent < 75.0;
 
   List<Map<String, dynamic>> _visibleClasswiseStudents() {
-    final source = _classwiseStudents.isEmpty
-        ? _demoClasswiseAttendance
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList()
-        : _classwiseStudents;
+    final source = _classwiseStudents;
     if (_classFilter == "All Classes") {
       return source;
     }
@@ -11467,11 +11396,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   }
 
   List<String> _classOptions() {
-    final source = _classwiseStudents.isEmpty
-        ? _demoClasswiseAttendance
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList()
-        : _classwiseStudents;
+    final source = _classwiseStudents;
     final names = source
         .map((e) => (e["class_name"] ?? "").toString())
         .where((e) => e.isNotEmpty)
@@ -11725,27 +11650,22 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     }
   }
 
-  Future<void> _updateLectureThreshold() async {
-    final lectureId = int.tryParse(_thresholdLectureIdController.text.trim());
-    if (lectureId == null) {
-      _toast("Enter a valid lecture ID");
-      return;
-    }
-    final percent = double.tryParse(_spaceThresholdController.text.trim());
-    if (percent == null || percent < 0 || percent > 100) {
-      _toast("Enter a threshold between 0 and 100");
-      return;
-    }
+  Future<void> _deleteSpace(int roomId) async {
     setState(() => _loading = true);
-    final res = await _api.updateLectureThreshold(
-      lectureId: lectureId,
-      requiredPresencePercent: percent,
-    );
+    final res = await _api.deleteClassroom(roomId);
     if (!mounted) return;
     setState(() => _loading = false);
-    _toast(_extractDetail(res.body, res.statusCode >= 200 && res.statusCode < 300
-        ? "Threshold updated"
-        : "Failed to update threshold"));
+    final ok = res.statusCode >= 200 && res.statusCode < 300;
+    _toast(_extractDetail(res.body, ok ? "Space deleted" : "Failed to delete space"));
+    if (ok) {
+      setState(() {
+        _createdSpaces.removeWhere((space) {
+          final id = space["id"];
+          return id is num && id.toInt() == roomId;
+        });
+      });
+      await _persistCreatedSpaces();
+    }
   }
 
   Future<void> _showPresentStudentsSheet(
@@ -11948,42 +11868,53 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                     const SectionTitle("Created Spaces"),
                     const SizedBox(height: 6),
                     ..._createdSpaces.take(6).map((space) {
-                      final id = space["id"]?.toString() ?? "-";
+                      final idNum = space["id"];
+                      final roomId = idNum is num ? idNum.toInt() : null;
+                      final id = roomId?.toString() ?? "-";
                       final name = space["name"]?.toString() ?? "Unnamed space";
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 6),
-                        child: Text("- $name (ID: $id)"),
+                        child: Row(
+                          children: [
+                            Expanded(child: Text("- $name (ID: $id)")),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline_rounded),
+                              tooltip: "Delete space",
+                              onPressed: roomId == null
+                                  ? null
+                                  : () async {
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (context) => AlertDialog(
+                                          title: const Text("Delete space?"),
+                                          content: Text(
+                                              "Remove \"$name\" permanently?"),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.of(context).pop(false),
+                                              child: const Text("Cancel"),
+                                            ),
+                                            ElevatedButton(
+                                              onPressed: () =>
+                                                  Navigator.of(context).pop(true),
+                                              child: const Text("Delete"),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                      if (confirm == true && roomId != null) {
+                                        await _deleteSpace(roomId);
+                                      }
+                                    },
+                            ),
+                          ],
+                        ),
                       );
                     }),
                   ],
                   const SizedBox(height: 12),
                   const Divider(),
-                  const SizedBox(height: 8),
-                  const SectionTitle("Update Attendance Threshold"),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _thresholdLectureIdController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: "Lecture ID",
-                      prefixIcon: Icon(Icons.numbers_rounded),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _spaceThresholdController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: "Required presence (%)",
-                      prefixIcon: Icon(Icons.percent_rounded),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  AppButton(
-                    label: "Update threshold",
-                    icon: Icons.tune_rounded,
-                    onPressed: _updateLectureThreshold,
-                  ),
                 ],
               ),
             ),

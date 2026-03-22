@@ -112,3 +112,21 @@ def get_classroom(
 
     return classroom
 
+
+@router.delete("/{classroom_id}")
+def delete_classroom(
+    classroom_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in (UserRole.ADMIN, UserRole.PROFESSOR):
+        raise HTTPException(status_code=403, detail="Only admin or professor can delete classrooms")
+
+    classroom = db.get(Classroom, classroom_id)
+    if not classroom:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+
+    db.delete(classroom)
+    db.commit()
+    return {"detail": "Classroom deleted"}
+

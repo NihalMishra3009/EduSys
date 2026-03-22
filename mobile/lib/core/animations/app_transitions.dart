@@ -20,14 +20,10 @@ class AppTransitions {
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
         final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
         final offset = Tween<Offset>(
-          begin: const Offset(0.04, 0.0),
+          begin: const Offset(0.12, 0.0),
           end: Offset.zero,
         ).animate(curved);
-        final fade = Tween<double>(begin: 0.0, end: 1.0).animate(curved);
-        return FadeTransition(
-          opacity: fade,
-          child: SlideTransition(position: offset, child: child),
-        );
+        return SlideTransition(position: offset, child: child);
       },
     );
   }

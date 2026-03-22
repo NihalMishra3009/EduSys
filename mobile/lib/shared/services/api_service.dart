@@ -1041,6 +1041,14 @@ class ApiService {
     );
   }
 
+  Future<http.Response> deleteClassroom(int classroomId) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/classroom/$classroomId",
+      sender: (uri) => _sharedClient.delete(uri, headers: headers),
+    );
+  }
+
   Future<http.Response> adminUpdateBoundary({
     required int classroomId,
     required double latitudeMin,
