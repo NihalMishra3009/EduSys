@@ -5,11 +5,8 @@ from app.models.attendance_record import AttendanceStatus
 
 class CheckpointRequest(BaseModel):
     lecture_id: int
-    latitude: float
-    longitude: float
-    gps_accuracy_m: float | None = None
-    effective_accuracy_m: float | None = None
-    raw_samples: list[dict] | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class CheckpointOut(BaseModel):

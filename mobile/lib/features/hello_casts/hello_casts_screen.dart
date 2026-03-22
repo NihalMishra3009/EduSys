@@ -30,21 +30,41 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   Timer? _clockTimer;
   WebSocket? _castsWs;
   Timer? _castsWsRetry;
-  DateTime _now = DateTime.now();
+  final ValueNotifier<DateTime> _nowNotifier =
+      ValueNotifier<DateTime>(DateTime.now());
 
   int _tabIndex = 0;
   String _chatFilter = "All";
-  bool _loading = true;
+  final ValueNotifier<bool> _loadingNotifier = ValueNotifier<bool>(true);
   bool _shownCastDebug = false;
   List<Map<String, dynamic>> _pendingCasts = [];
   final TextEditingController _searchCtrl = TextEditingController();
   String _searchQuery = "";
   final Map<int, _CastSearchIndex> _searchIndex = {};
 
-  List<Map<String, dynamic>> _casts = [];
-  List<Map<String, dynamic>> _alerts = [];
-  List<Map<String, dynamic>> _invites = [];
-  List<Map<String, dynamic>> _directory = [];
+  final ValueNotifier<List<Map<String, dynamic>>> _castsNotifier =
+      ValueNotifier<List<Map<String, dynamic>>>([]);
+  final ValueNotifier<List<Map<String, dynamic>>> _alertsNotifier =
+      ValueNotifier<List<Map<String, dynamic>>>([]);
+  final ValueNotifier<List<Map<String, dynamic>>> _invitesNotifier =
+      ValueNotifier<List<Map<String, dynamic>>>([]);
+  final ValueNotifier<List<Map<String, dynamic>>> _directoryNotifier =
+      ValueNotifier<List<Map<String, dynamic>>>([]);
+
+  List<Map<String, dynamic>> get _casts => _castsNotifier.value;
+  set _casts(List<Map<String, dynamic>> value) => _castsNotifier.value = value;
+
+  List<Map<String, dynamic>> get _alerts => _alertsNotifier.value;
+  set _alerts(List<Map<String, dynamic>> value) =>
+      _alertsNotifier.value = value;
+
+  List<Map<String, dynamic>> get _invites => _invitesNotifier.value;
+  set _invites(List<Map<String, dynamic>> value) =>
+      _invitesNotifier.value = value;
+
+  List<Map<String, dynamic>> get _directory => _directoryNotifier.value;
+  set _directory(List<Map<String, dynamic>> value) =>
+      _directoryNotifier.value = value;
 
   static const _offlineMembersDemo = [
     {"id": 201, "name": "Aarav Patil"},
@@ -124,7 +144,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       if (_alerts.isEmpty && _tabIndex != 2) return;
-      setState(() => _now = DateTime.now());
+      _nowNotifier.value = DateTime.now();
     });
   }
 
@@ -135,6 +155,12 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     _castsWsRetry?.cancel();
     _castsWs?.close();
     _searchCtrl.dispose();
+    _nowNotifier.dispose();
+    _loadingNotifier.dispose();
+    _castsNotifier.dispose();
+    _alertsNotifier.dispose();
+    _invitesNotifier.dispose();
+    _directoryNotifier.dispose();
     super.dispose();
   }
 
@@ -170,20 +196,16 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
           if (id == null) return;
           final exists = _casts.any((c) => (c["id"] as num?)?.toInt() == id);
           if (!exists && mounted) {
-            setState(() {
-              _casts = [cast, ..._casts];
-            });
+            _casts = [cast, ..._casts];
           }
         }
       } else if (type == "cast_deleted") {
         final castId = (msg["cast_id"] as num?)?.toInt();
         if (castId == null) return;
         if (mounted) {
-          setState(() {
-            _casts = _casts
-                .where((c) => (c["id"] as num?)?.toInt() != castId)
-                .toList();
-          });
+          _casts = _casts
+              .where((c) => (c["id"] as num?)?.toInt() != castId)
+              .toList();
         }
       }
     } catch (_) {}
@@ -208,10 +230,8 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                 .toList() ??
             <Map<String, dynamic>>[];
         if (cachedCasts.isNotEmpty && mounted) {
-          setState(() {
-            _casts = cachedCasts;
-            _loading = false;
-          });
+          _casts = cachedCasts;
+          _loadingNotifier.value = false;
           await _loadLocalSearchIndex(cachedCasts);
         }
       }
@@ -278,13 +298,11 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       }
 
       if (!mounted) return;
-      setState(() {
-        _casts = casts.isEmpty ? List<Map<String, dynamic>>.from(_demoCasts) : casts;
-        _invites = inviteRows;
-        _alerts = alertRows;
-        _directory = directoryRows;
-        _loading = false;
-      });
+      _casts = casts.isEmpty ? List<Map<String, dynamic>>.from(_demoCasts) : casts;
+      _invites = inviteRows;
+      _alerts = alertRows;
+      _directory = directoryRows;
+      _loadingNotifier.value = false;
       await _scheduleLocalAlerts(alertRows);
       await _loadLocalSearchIndex(_casts);
       if (!_shownCastDebug &&
@@ -301,7 +319,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       }
     } catch (_) {
       if (!silent && mounted) {
-        setState(() => _loading = false);
+        _loadingNotifier.value = false;
       }
     }
   }
@@ -346,10 +364,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     final res = await _api.deleteCast(castId: castId);
     if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      setState(() {
-        _casts =
-            _casts.where((c) => (c["id"] as num?)?.toInt() != castId).toList();
-      });
+      _casts = _casts.where((c) => (c["id"] as num?)?.toInt() != castId).toList();
       await _api.saveCache("casts_list", _casts);
       if (!mounted) return;
       GlassToast.show(context, "Cast deleted", icon: Icons.check_circle_outline);
@@ -492,7 +507,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     final nextAt = (days != null && days.isNotEmpty)
         ? _nextOccurrenceForDays(at, days)
         : at;
-    final diff = nextAt.difference(_now);
+    final diff = nextAt.difference(_nowNotifier.value);
     final timeLabel = _formatClock(nextAt);
     if (diff.inSeconds.abs() <= 60) {
       return "Now - $timeLabel";
@@ -1091,7 +1106,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         created = jsonDecode(res.body) as Map<String, dynamic>;
       } catch (_) {}
       if (created != null && mounted) {
-        setState(() => _alerts = [..._alerts, created!]);
+        _alerts = [..._alerts, created!];
         final scheduleAtParsed = _parseAlertAt(created["schedule_at"]);
         if (scheduleAtParsed != null) {
           await PushNotificationService.instance.scheduleAlertLocal(
@@ -1120,7 +1135,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     final res = await _api.deleteCastAlert(alertId: alertId);
     if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      setState(() => _alerts = _alerts.where((a) => a["id"] != alertId).toList());
+      _alerts = _alerts.where((a) => a["id"] != alertId).toList();
       await PushNotificationService.instance.cancelAlert(alertId);
     } else {
       GlassToast.show(context, "Unable to delete alert", icon: Icons.error_outline);
@@ -1295,7 +1310,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
               onDismissed: (_) {
                 final alertId = (a["id"] as num?)?.toInt();
                 if (alertId != null) {
-                  setState(() => _alerts = _alerts.where((x) => x["id"] != alertId).toList());
+                  _alerts = _alerts.where((x) => x["id"] != alertId).toList();
                 }
                 _deleteAlert(a);
               },
@@ -1317,10 +1332,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   @override
   Widget build(BuildContext context) {
     final tab = _tabs[_tabIndex];
-    final chats = _filteredCasts(_chatFilter)
-        .where((c) => (c["cast_type"] ?? "").toString().toLowerCase() != "community")
-        .toList();
-    final communities = _filteredCasts("Community");
     final dark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
@@ -1369,109 +1380,125 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                 onFilterChanged: (v) => setState(() => _chatFilter = v),
               ),
               const SizedBox(height: 10),
-              if (_invites.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _InviteBanner(
-                    count: _invites.length,
-                    onTap: _showInvites,
-                  ),
-                ),
+              ValueListenableBuilder<List<Map<String, dynamic>>>(
+                valueListenable: _invitesNotifier,
+                builder: (context, invites, _) {
+                  if (invites.isEmpty) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _InviteBanner(
+                      count: invites.length,
+                      onTap: _showInvites,
+                    ),
+                  );
+                },
+              ),
               Expanded(
-                child: _loading
-                      ? ListView(
-                          children: const [
-                            SizedBox(height: 30),
-                            Center(child: CircularProgressIndicator()),
-                          ],
-                        )
-                      : tab == "Chats"
-                          ? ListView(
-                              padding: const EdgeInsets.only(bottom: 24),
-                              children: chats.isEmpty
-                                  ? [const _EmptyState(message: "No casts yet")]
-                                  : chats
-                                      .map((c) => _CastTile(
-                                            title: c["name"]?.toString() ??
-                                                "Cast",
-                                            subtitle: _formatLastMessage(c),
-                                            trailing: c["unread_count"] !=
-                                                        null &&
-                                                    (c["unread_count"] as num)
-                                                            .toInt() >
-                                                        0
-                                                ? _UnreadBadge(
-                                                    count: (c["unread_count"]
-                                                            as num)
-                                                        .toInt())
-                                                : null,
-                                            onLongPress: () =>
-                                                _confirmDeleteCast(c),
-                                            onTap: () {
-                                              Navigator.of(context).push(
-                                                AppTransitions.fadeSlide(
-                                                  HelloCastsChatScreen(
-                                                    castId:
-                                                        (c["id"] as num).toInt(),
-                                                    title:
-                                                        c["name"]?.toString() ??
-                                                            "Cast",
-                                                    castType:
-                                                        c["cast_type"]?.toString() ??
-                                                            "Group",
-                                                  ),
-                                                ),
-                                              );
-                                            },
-                                          ))
-                                      .toList(),
-                            )
-                          : tab == "Communities"
-                              ? ListView(
-                                  padding: const EdgeInsets.only(bottom: 24),
-                                  children: communities.isEmpty
-                                      ? [
-                                          const _EmptyState(
-                                              message: "No communities yet")
-                                        ]
-                                      : communities
-                                          .map((c) => _CastTile(
-                                                title: c["name"]?.toString() ??
-                                                    "Community",
-                                                subtitle: "Community cast",
-                                                trailing: const Icon(
-                                                    Icons.chevron_right_rounded),
-                                                onLongPress: () =>
-                                                    _confirmDeleteCast(c),
-                                                onTap: () {
-                                                  Navigator.of(context).push(
-                                                    AppTransitions.fadeSlide(
-                                                      HelloCastsChatScreen(
-                                                        castId:
-                                                            (c["id"] as num)
-                                                                .toInt(),
-                                                        title: c["name"]
-                                                                ?.toString() ??
-                                                            "Community",
-                                                        castType: c["cast_type"]
-                                                                ?.toString() ??
-                                                            "Community",
-                                                      ),
-                                                    ),
-                                                  );
-                                                },
-                                              ))
-                                          .toList(),
-                                )
-                              : ListView(
-                                  padding: const EdgeInsets.only(bottom: 24),
-                                  children: _alerts.isEmpty
-                                      ? [
-                                          const _EmptyState(
-                                              message: "No alerts scheduled")
-                                        ]
-                                      : _buildAlertList(),
-                                ),
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([
+                    _loadingNotifier,
+                    _castsNotifier,
+                    _alertsNotifier,
+                    _invitesNotifier,
+                    _directoryNotifier,
+                    _nowNotifier,
+                  ]),
+                  builder: (context, _) {
+                    final isLoading = _loadingNotifier.value;
+                    final chats = _filteredCasts(_chatFilter)
+                        .where((c) =>
+                            (c["cast_type"] ?? "").toString().toLowerCase() !=
+                            "community")
+                        .toList();
+                    final communities = _filteredCasts("Community");
+                    if (isLoading) {
+                      return ListView(
+                        children: const [
+                          SizedBox(height: 30),
+                          Center(child: CircularProgressIndicator()),
+                        ],
+                      );
+                    }
+                    if (tab == "Chats") {
+                      return ListView(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        children: chats.isEmpty
+                            ? [const _EmptyState(message: "No casts yet")]
+                            : chats
+                                .map((c) => _CastTile(
+                                      title: c["name"]?.toString() ?? "Cast",
+                                      subtitle: _formatLastMessage(c),
+                                      trailing: c["unread_count"] != null &&
+                                              (c["unread_count"] as num)
+                                                      .toInt() >
+                                                  0
+                                          ? _UnreadBadge(
+                                              count: (c["unread_count"] as num)
+                                                  .toInt())
+                                          : null,
+                                      onLongPress: () => _confirmDeleteCast(c),
+                                      onTap: () {
+                                        Navigator.of(context).push(
+                                          AppTransitions.fadeSlide(
+                                            HelloCastsChatScreen(
+                                              castId: (c["id"] as num).toInt(),
+                                              title:
+                                                  c["name"]?.toString() ?? "Cast",
+                                              castType:
+                                                  c["cast_type"]?.toString() ??
+                                                      "Group",
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ))
+                                .toList(),
+                      );
+                    }
+                    if (tab == "Communities") {
+                      return ListView(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        children: communities.isEmpty
+                            ? const [
+                                _EmptyState(message: "No communities yet")
+                              ]
+                            : communities
+                                .map((c) => _CastTile(
+                                      title:
+                                          c["name"]?.toString() ?? "Community",
+                                      subtitle: "Community cast",
+                                      trailing: const Icon(
+                                          Icons.chevron_right_rounded),
+                                      onLongPress: () => _confirmDeleteCast(c),
+                                      onTap: () {
+                                        Navigator.of(context).push(
+                                          AppTransitions.fadeSlide(
+                                            HelloCastsChatScreen(
+                                              castId:
+                                                  (c["id"] as num).toInt(),
+                                              title: c["name"]?.toString() ??
+                                                  "Community",
+                                              castType: c["cast_type"]
+                                                      ?.toString() ??
+                                                  "Community",
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ))
+                                .toList(),
+                      );
+                    }
+                    return ListView(
+                      padding: const EdgeInsets.only(bottom: 24),
+                      children: _alerts.isEmpty
+                          ? const [
+                              _EmptyState(message: "No alerts scheduled")
+                            ]
+                          : _buildAlertList(),
+                    );
+                  },
+                ),
               ),
             ],
           ),

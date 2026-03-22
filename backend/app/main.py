@@ -29,7 +29,7 @@ from app.models.cast import (
     CastType,
 )
 from app.realtime import casts_list_hub
-from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, learned, lecture, notification, resources, users, casts
+from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, learned, lecture, notification, resources, users, casts
 from app.services.push_service import send_cast_message_push
 
 app = FastAPI(title="EduSys API", version="1.0.0")
@@ -86,7 +86,6 @@ app.include_router(attendance_smart.router, prefix="/attendance", tags=["attenda
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
-app.include_router(geo.router, prefix="/geo", tags=["geo"])
 app.include_router(department.router, prefix="/departments", tags=["departments"])
 app.include_router(notification.router, prefix="/notifications", tags=["notifications"])
 app.include_router(complaint.router, prefix="/complaints", tags=["complaints"])

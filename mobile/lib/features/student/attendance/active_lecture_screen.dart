@@ -124,36 +124,28 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         final decoded = jsonDecode(res.body) as Map<String, dynamic>;
         final sessionToken = decoded["session_token"]?.toString();
         final advertiseUntil = decoded["advertise_until"];
+        if (sessionToken == null || sessionToken.isEmpty) {
+          if (!mounted) return;
+          setState(() {
+            _loading = false;
+            _success = false;
+            _message = "Session token missing. Please retry.";
+          });
+          return;
+        }
+        final result = await _smartAttendance.instantMarkAttendance(
+          lectureId: lectureId,
+          roomId: classroomId,
+          sessionToken: sessionToken,
+          advertiseUntilMs:
+              advertiseUntil is num ? advertiseUntil.toInt() : null,
+        );
         if (!mounted) return;
         setState(() {
           _loading = false;
-          _success = true;
-          _message =
-              "Scanning for beacon… keep Bluetooth on and stay near the classroom.";
+          _success = result.success;
+          _message = result.message;
         });
-        if (sessionToken != null && sessionToken.isNotEmpty) {
-          _smartAttendance
-              .triggerAttendanceWindowScan(
-                lectureId: lectureId,
-                roomId: classroomId,
-                sessionToken: sessionToken,
-                advertiseUntilMs:
-                    advertiseUntil is num ? advertiseUntil.toInt() : null,
-              )
-              .then((result) {
-            if (!mounted) return;
-            setState(() {
-              _success = result.success;
-              _message = result.message;
-            });
-          }).catchError((e) {
-            if (!mounted) return;
-            setState(() {
-              _success = false;
-              _message = "Scan error. Please retry.";
-            });
-          });
-        }
       } else {
         if (!mounted) return;
         setState(() {
@@ -239,7 +231,7 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: const Icon(
-                                Icons.location_searching,
+                                Icons.bluetooth_searching_rounded,
                                 color: Color(0xFF20A4A0),
                               ),
                             ),

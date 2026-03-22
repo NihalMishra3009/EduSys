@@ -20,7 +20,6 @@ from app.schemas.admin import (
 from app.schemas.attendance import AttendanceRecordOut
 from app.schemas.audit import AuditLogOut
 from app.schemas.classroom import ClassroomBoundaryUpdate, ClassroomCreate, ClassroomOut
-from app.utils.geo import bounds_from_points, normalize_polygon_points, build_polygon_meta
 from app.schemas.user import UserOut
 from app.services.audit_service import write_audit_log
 
@@ -129,52 +128,22 @@ def create_classroom(
 ):
     _require_admin(current_user)
 
-    points = None
-    if payload.points:
-        try:
-            points = normalize_polygon_points([(p.latitude, p.longitude) for p in payload.points])
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    if points is None:
-        if payload.latitude_min is None or payload.latitude_max is None:
-            raise HTTPException(status_code=400, detail="Latitude bounds are required")
-        if payload.longitude_min is None or payload.longitude_max is None:
-            raise HTTPException(status_code=400, detail="Longitude bounds are required")
-        if payload.latitude_min > payload.latitude_max or payload.longitude_min > payload.longitude_max:
-            raise HTTPException(status_code=400, detail="Invalid rectangle bounds")
-        latitude_min = payload.latitude_min
-        latitude_max = payload.latitude_max
-        longitude_min = payload.longitude_min
-        longitude_max = payload.longitude_max
-        point_fields = {"polygon_points": None, "polygon_meta": None}
-    else:
-        storage_points = points[:-1] if len(points) > 1 and points[0] == points[-1] else points
-        latitude_min, latitude_max, longitude_min, longitude_max = bounds_from_points(storage_points)
-        accuracies = [p.accuracy_m for p in payload.points or [] if p.accuracy_m is not None]
-        effective_acc = round(sum(accuracies) / len(accuracies), 2) if accuracies else None
-        meta = build_polygon_meta(storage_points, None)
-        if effective_acc is not None:
-            meta["effective_fence_accuracy_m"] = effective_acc
-        point_fields = {
-            "polygon_points": [
-                {
-                    "lat": lat,
-                    "lng": lon,
-                    "accuracy_m": (payload.points or [])[idx].accuracy_m if payload.points else None,
-                }
-                for idx, (lat, lon) in enumerate(storage_points)
-            ],
-            "polygon_meta": meta,
-            "point1_lat": storage_points[0][0] if len(storage_points) > 0 else None,
-            "point1_lon": storage_points[0][1] if len(storage_points) > 0 else None,
-            "point2_lat": storage_points[1][0] if len(storage_points) > 1 else None,
-            "point2_lon": storage_points[1][1] if len(storage_points) > 1 else None,
-            "point3_lat": storage_points[2][0] if len(storage_points) > 2 else None,
-            "point3_lon": storage_points[2][1] if len(storage_points) > 2 else None,
-            "point4_lat": storage_points[3][0] if len(storage_points) > 3 else None,
-            "point4_lon": storage_points[3][1] if len(storage_points) > 3 else None,
-        }
+    latitude_min = payload.latitude_min or 0.0
+    latitude_max = payload.latitude_max or 0.0
+    longitude_min = payload.longitude_min or 0.0
+    longitude_max = payload.longitude_max or 0.0
+    point_fields = {
+        "polygon_points": None,
+        "polygon_meta": None,
+        "point1_lat": None,
+        "point1_lon": None,
+        "point2_lat": None,
+        "point2_lon": None,
+        "point3_lat": None,
+        "point3_lon": None,
+        "point4_lat": None,
+        "point4_lon": None,
+    }
 
     classroom = Classroom(
         name=payload.name,
@@ -208,72 +177,31 @@ def update_boundary(
 ):
     _require_admin(current_user)
 
-    points = None
-    if payload.points:
-        try:
-            points = normalize_polygon_points([(p.latitude, p.longitude) for p in payload.points])
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    if points is None:
-        if payload.latitude_min is None or payload.latitude_max is None:
-            raise HTTPException(status_code=400, detail="Latitude bounds are required")
-        if payload.longitude_min is None or payload.longitude_max is None:
-            raise HTTPException(status_code=400, detail="Longitude bounds are required")
-        if payload.latitude_min > payload.latitude_max or payload.longitude_min > payload.longitude_max:
-            raise HTTPException(status_code=400, detail="Invalid rectangle bounds")
-        latitude_min = payload.latitude_min
-        latitude_max = payload.latitude_max
-        longitude_min = payload.longitude_min
-        longitude_max = payload.longitude_max
-        point_fields = {
-            "polygon_points": None,
-            "polygon_meta": None,
-            "point1_lat": None,
-            "point1_lon": None,
-            "point2_lat": None,
-            "point2_lon": None,
-            "point3_lat": None,
-            "point3_lon": None,
-            "point4_lat": None,
-            "point4_lon": None,
-        }
-    else:
-        storage_points = points[:-1] if len(points) > 1 and points[0] == points[-1] else points
-        latitude_min, latitude_max, longitude_min, longitude_max = bounds_from_points(storage_points)
-        accuracies = [p.accuracy_m for p in payload.points or [] if p.accuracy_m is not None]
-        effective_acc = round(sum(accuracies) / len(accuracies), 2) if accuracies else None
-        meta = build_polygon_meta(storage_points, None)
-        if effective_acc is not None:
-            meta["effective_fence_accuracy_m"] = effective_acc
-        point_fields = {
-            "polygon_points": [
-                {
-                    "lat": lat,
-                    "lng": lon,
-                    "accuracy_m": (payload.points or [])[idx].accuracy_m if payload.points else None,
-                }
-                for idx, (lat, lon) in enumerate(storage_points)
-            ],
-            "polygon_meta": meta,
-            "point1_lat": storage_points[0][0] if len(storage_points) > 0 else None,
-            "point1_lon": storage_points[0][1] if len(storage_points) > 0 else None,
-            "point2_lat": storage_points[1][0] if len(storage_points) > 1 else None,
-            "point2_lon": storage_points[1][1] if len(storage_points) > 1 else None,
-            "point3_lat": storage_points[2][0] if len(storage_points) > 2 else None,
-            "point3_lon": storage_points[2][1] if len(storage_points) > 2 else None,
-            "point4_lat": storage_points[3][0] if len(storage_points) > 3 else None,
-            "point4_lon": storage_points[3][1] if len(storage_points) > 3 else None,
-        }
+    latitude_min = payload.latitude_min
+    latitude_max = payload.latitude_max
+    longitude_min = payload.longitude_min
+    longitude_max = payload.longitude_max
+    point_fields = {
+        "polygon_points": None,
+        "polygon_meta": None,
+        "point1_lat": None,
+        "point1_lon": None,
+        "point2_lat": None,
+        "point2_lon": None,
+        "point3_lat": None,
+        "point3_lon": None,
+        "point4_lat": None,
+        "point4_lon": None,
+    }
 
     classroom = db.get(Classroom, classroom_id)
     if not classroom:
         raise HTTPException(status_code=404, detail="Classroom not found")
 
-    classroom.latitude_min = latitude_min
-    classroom.latitude_max = latitude_max
-    classroom.longitude_min = longitude_min
-    classroom.longitude_max = longitude_max
+    classroom.latitude_min = latitude_min if latitude_min is not None else classroom.latitude_min
+    classroom.latitude_max = latitude_max if latitude_max is not None else classroom.latitude_max
+    classroom.longitude_min = longitude_min if longitude_min is not None else classroom.longitude_min
+    classroom.longitude_max = longitude_max if longitude_max is not None else classroom.longitude_max
     for key, value in point_fields.items():
         setattr(classroom, key, value)
     db.commit()

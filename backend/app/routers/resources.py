@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import File, UploadFile, Request
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.models.attendance_checkpoint import AttendanceCheckpoint
 from app.models.scan_event import ScanEvent
 from app.models.lecture_session import LectureSession
 from app.models.lecture import Lecture, LectureStatus
@@ -33,7 +32,6 @@ router = APIRouter()
 
 _notes: list[dict] = []
 _note_id = 1
-_geofence_enabled = True
 _manual_marks: list[dict] = []
 _manual_mark_id = 1
 _share_it_appointments: list[dict] = []
@@ -316,22 +314,6 @@ def student_count(db: Session = Depends(get_db), current_user: User = Depends(ge
         raise HTTPException(status_code=403, detail="Only professor/admin")
     count = db.query(User).filter(User.role == UserRole.STUDENT).count()
     return {"count": count}
-
-
-@router.get("/geofence-status")
-def geofence_status(current_user: User = Depends(get_current_user)):
-    if current_user.role not in (UserRole.PROFESSOR, UserRole.STUDENT, UserRole.ADMIN):
-        raise HTTPException(status_code=403, detail="Unauthorized")
-    return {"enabled": _geofence_enabled}
-
-
-@router.post("/geofence-toggle")
-def geofence_toggle(payload: dict, current_user: User = Depends(get_current_user)):
-    global _geofence_enabled
-    if current_user.role != UserRole.PROFESSOR:
-        raise HTTPException(status_code=403, detail="Only professor can toggle geofence")
-    _geofence_enabled = bool(payload.get("enabled", True))
-    return {"enabled": _geofence_enabled}
 
 
 @router.post("/manual-attendance")
@@ -619,7 +601,7 @@ def nearby_students(db: Session = Depends(get_db), current_user: User = Depends(
         for (lecture_id,) in db.query(Lecture.id).filter(Lecture.status == LectureStatus.ACTIVE).all()
     ]
     if not active_lecture_ids:
-        return {"enabled": _geofence_enabled, "students": []}
+        return {"students": []}
 
     cutoff = datetime.utcnow() - timedelta(minutes=10)
     cutoff_ms = int(cutoff.timestamp() * 1000)
@@ -631,15 +613,6 @@ def nearby_students(db: Session = Depends(get_db), current_user: User = Depends(
         .filter(ScanEvent.timestamp >= cutoff_ms)
         .filter(User.role == UserRole.STUDENT)
         .order_by(ScanEvent.timestamp.desc())
-        .all()
-    )
-    checkpoints = (
-        db.query(AttendanceCheckpoint, User)
-        .join(User, User.id == AttendanceCheckpoint.student_id)
-        .filter(AttendanceCheckpoint.lecture_id.in_(active_lecture_ids))
-        .filter(AttendanceCheckpoint.timestamp >= cutoff)
-        .filter(User.role == UserRole.STUDENT)
-        .order_by(AttendanceCheckpoint.timestamp.desc())
         .all()
     )
 
@@ -661,20 +634,4 @@ def nearby_students(db: Session = Depends(get_db), current_user: User = Depends(
             "source": "BLE",
         }
 
-    for checkpoint, student in checkpoints:
-        if student.id in unique_students:
-            continue
-        unique_students[student.id] = {
-            "student_id": student.id,
-            "student_name": student.name,
-            "email": student.email,
-            "device_id": student.device_id,
-            "sim_serial": student.sim_serial,
-            "last_seen_at": checkpoint.timestamp.isoformat(),
-            "lecture_id": checkpoint.lecture_id,
-            "latitude": checkpoint.latitude,
-            "longitude": checkpoint.longitude,
-            "source": "GPS",
-        }
-
-    return {"enabled": _geofence_enabled, "students": list(unique_students.values())}
+    return {"students": list(unique_students.values())}

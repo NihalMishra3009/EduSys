@@ -43,9 +43,11 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   final _api = ApiService();
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
-  List<Map<String, dynamic>> _messages = [];
-  List<Map<String, dynamic>> _scheduled = [];
-  bool _loading = true;
+  final ValueNotifier<List<Map<String, dynamic>>> _messagesNotifier =
+      ValueNotifier<List<Map<String, dynamic>>>([]);
+  final ValueNotifier<List<Map<String, dynamic>>> _scheduledNotifier =
+      ValueNotifier<List<Map<String, dynamic>>>([]);
+  final ValueNotifier<bool> _loadingNotifier = ValueNotifier<bool>(true);
   WebSocket? _ws;
   bool _showAttachMenu = false;
   Timer? _reconnectTimer;
@@ -53,7 +55,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Timer? _clockTimer;
   Timer? _typingTimer;
   Timer? _typingDebounce;
-  DateTime _now = DateTime.now();
+  final ValueNotifier<DateTime> _nowNotifier =
+      ValueNotifier<DateTime>(DateTime.now());
   int _clientMessageCounter = 0;
   String _myName = "Me";
   int? _myUserId;
@@ -75,6 +78,14 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Duration _audioDuration = Duration.zero;
   final Map<String, String> _voiceCache = {};
   final Map<String, String> _attachmentCache = {};
+
+  List<Map<String, dynamic>> get _messages => _messagesNotifier.value;
+  set _messages(List<Map<String, dynamic>> value) =>
+      _messagesNotifier.value = value;
+
+  List<Map<String, dynamic>> get _scheduled => _scheduledNotifier.value;
+  set _scheduled(List<Map<String, dynamic>> value) =>
+      _scheduledNotifier.value = value;
 
   String get _messagesCacheKey => "cast_messages_${widget.castId}";
   String get _docsCacheKey => "cast_docs_${widget.castId}";
@@ -98,7 +109,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted) return;
         if (_scheduled.isEmpty) return;
-        setState(() => _now = DateTime.now());
+        _nowNotifier.value = DateTime.now();
       });
     });
     _audioPlayer.positionStream.listen((pos) {
@@ -137,6 +148,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     _ws?.close();
+    _messagesNotifier.dispose();
+    _scheduledNotifier.dispose();
+    _loadingNotifier.dispose();
+    _nowNotifier.dispose();
     super.dispose();
   }
 
@@ -164,19 +179,17 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (messageList.isEmpty && alertList.isEmpty) {
       return;
     }
-    setState(() {
-      if (messageList.isNotEmpty) {
-        _messages = _sortedMessages(
-          messageList
-              .where((message) => !_deletedKeys.contains(_messageKey(message)))
-              .toList(),
-        );
-        _loading = false;
-      }
-      if (alertList.isNotEmpty) {
-        _scheduled = alertList;
-      }
-    });
+    if (messageList.isNotEmpty) {
+      _messages = _sortedMessages(
+        messageList
+            .where((message) => !_deletedKeys.contains(_messageKey(message)))
+            .toList(),
+      );
+      _loadingNotifier.value = false;
+    }
+    if (alertList.isNotEmpty) {
+      _scheduled = alertList;
+    }
     if (messageList.isNotEmpty) {
       _scrollToBottom(immediate: true);
     }
@@ -245,7 +258,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
 
   Future<void> _loadMessages({bool silent = false}) async {
     if (!silent && mounted && _messages.isEmpty) {
-      setState(() => _loading = true);
+      _loadingNotifier.value = true;
     }
     if (_messages.isEmpty) {
       final cached = await _api.readCache(_messagesCacheKey);
@@ -254,11 +267,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
               .toList() ??
           <Map<String, dynamic>>[];
       if (cachedRows.isNotEmpty && mounted) {
-        setState(() {
-          _messages = _sortedMessages(
-              cachedRows.where((m) => !_deletedKeys.contains(_messageKey(m))).toList());
-          _loading = false;
-        });
+        _messages = _sortedMessages(
+            cachedRows.where((m) => !_deletedKeys.contains(_messageKey(m))).toList());
+        _loadingNotifier.value = false;
       }
     }
 
@@ -279,16 +290,14 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       }
       final filtered =
           mergedMessages.where((m) => !_deletedKeys.contains(_messageKey(m))).toList();
-      setState(() {
-        _messages = _sortedMessages(filtered);
-        _loading = false;
-      });
+      _messages = _sortedMessages(filtered);
+      _loadingNotifier.value = false;
       unawaited(_persistMessages());
       unawaited(_cacheAttachmentsForMessages(filtered));
       _scrollToBottom(immediate: !_initialScrollDone);
       unawaited(_markRead());
     } else if (!silent) {
-      setState(() => _loading = false);
+      _loadingNotifier.value = false;
     }
 
     final sched = await _api.listCastAlerts();
@@ -297,7 +306,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           .whereType<Map<String, dynamic>>()
           .where((row) => (row["cast_id"] as num?)?.toInt() == widget.castId)
           .toList();
-      setState(() => _scheduled = list);
+      _scheduled = list;
       unawaited(_persistAlerts());
     }
   }
@@ -346,14 +355,14 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     withTime.sort((a, b) =>
         (a["time"] as DateTime).compareTo(b["time"] as DateTime));
     final upcoming = withTime.firstWhere(
-      (row) => (row["time"] as DateTime).isAfter(_now),
+      (row) => (row["time"] as DateTime).isAfter(_nowNotifier.value),
       orElse: () => withTime.first,
     );
     return upcoming["row"] as Map<String, dynamic>;
   }
 
   String _formatCountdown(DateTime at) {
-    final diff = at.difference(_now);
+    final diff = at.difference(_nowNotifier.value);
     if (diff.inSeconds.abs() <= 60) return "Now";
     if (diff.isNegative) return "Overdue";
     final totalMinutes = diff.inMinutes;
@@ -465,7 +474,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     final res = await _api.deleteCastAlert(alertId: alertId);
     if (!mounted) return;
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      setState(() => _scheduled = _scheduled.where((a) => a["id"] != alertId).toList());
+      _scheduled = _scheduled.where((a) => a["id"] != alertId).toList();
       await PushNotificationService.instance.cancelAlert(alertId);
     } else {
       GlassToast.show(context, "Unable to delete alert",
@@ -635,24 +644,23 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
             (message) => message["client_id"]?.toString() == clientId,
           );
     if (!mounted) return;
-    setState(() {
-      final normalized = {
-        ...incoming,
-        "_pending": false,
-        "_failed": false,
+    final normalized = {
+      ...incoming,
+      "_pending": false,
+      "_failed": false,
+    };
+    final updated = [..._messages];
+    if (indexById >= 0) {
+      updated[indexById] = normalized;
+    } else if (indexByClientId >= 0) {
+      updated[indexByClientId] = {
+        ...updated[indexByClientId],
+        ...normalized,
       };
-      if (indexById >= 0) {
-        _messages[indexById] = normalized;
-      } else if (indexByClientId >= 0) {
-        _messages[indexByClientId] = {
-          ..._messages[indexByClientId],
-          ...normalized,
-        };
-      } else {
-        _messages.add(normalized);
-      }
-      _messages = _sortedMessages(_messages);
-    });
+    } else {
+      updated.add(normalized);
+    }
+    _messages = _sortedMessages(updated);
     unawaited(_persistMessages());
     unawaited(_cacheAttachmentsForMessage(incoming));
     if (isMine || _shouldAutoScroll()) {
@@ -677,9 +685,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Future<void> _deleteLocal(Map<String, dynamic> message) async {
     final key = _messageKey(message);
     _deletedKeys.add(key);
-    setState(() {
-      _messages = _messages.where((m) => _messageKey(m) != key).toList();
-    });
+    _messages = _messages.where((m) => _messageKey(m) != key).toList();
     await _persistDeleted();
     unawaited(_persistMessages());
   }
@@ -1000,15 +1006,16 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     final localPath = await _resolveAttachmentPath(attachUrl, attachName);
     if (!mounted) return;
     if (localPath == null) return;
-    setState(() {
-      final index = _messages.indexWhere((m) => _messageKey(m) == _messageKey(message));
-      if (index >= 0) {
-        _messages[index] = {
-          ..._messages[index],
-          "_local_path": localPath,
-        };
-      }
-    });
+    final index =
+        _messages.indexWhere((m) => _messageKey(m) == _messageKey(message));
+    if (index >= 0) {
+      final updated = [..._messages];
+      updated[index] = {
+        ...updated[index],
+        "_local_path": localPath,
+      };
+      _messages = updated;
+    }
     unawaited(_persistMessages());
   }
 
@@ -1028,15 +1035,16 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       GlassToast.show(context, "Download failed", icon: Icons.error_outline);
       return;
     }
-    setState(() {
-      final index = _messages.indexWhere((m) => _messageKey(m) == _messageKey(message));
-      if (index >= 0) {
-        _messages[index] = {
-          ..._messages[index],
-          "_local_path": localPath,
-        };
-      }
-    });
+    final index =
+        _messages.indexWhere((m) => _messageKey(m) == _messageKey(message));
+    if (index >= 0) {
+      final updated = [..._messages];
+      updated[index] = {
+        ...updated[index],
+        "_local_path": localPath,
+      };
+      _messages = updated;
+    }
     unawaited(_persistMessages());
     GlassToast.show(context, "Saved offline",
         icon: Icons.download_done_rounded);
@@ -1527,7 +1535,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       "_failed": false,
       if (localPath != null && localPath.isNotEmpty) "_local_path": localPath,
     };
-    setState(() => _messages = _sortedMessages([..._messages, opt]));
+    _messages = _sortedMessages([..._messages, opt]);
     if (_replyTo != null) {
       setState(() => _replyTo = null);
     }
@@ -1562,31 +1570,30 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         "_failed": false,
         if (localPath != null && localPath.isNotEmpty) "_local_path": localPath,
       };
-      setState(() {
-        final index = _messages.indexWhere(
-          (message) => message["client_id"]?.toString() == clientId,
-        );
-        if (index >= 0) {
-          _messages[index] = sent;
-        } else {
-          _messages.add(sent);
-        }
-        _messages = _sortedMessages(_messages);
-      });
+      final updated = [..._messages];
+      final index = updated.indexWhere(
+        (message) => message["client_id"]?.toString() == clientId,
+      );
+      if (index >= 0) {
+        updated[index] = sent;
+      } else {
+        updated.add(sent);
+      }
+      _messages = _sortedMessages(updated);
       unawaited(_persistMessages());
     } else {
-      setState(() {
-        final index = _messages.indexWhere(
-          (message) => message["client_id"]?.toString() == clientId,
-        );
-        if (index >= 0) {
-          _messages[index] = {
-            ..._messages[index],
-            "_pending": false,
-            "_failed": true,
-          };
-        }
-      });
+      final updated = [..._messages];
+      final index = updated.indexWhere(
+        (message) => message["client_id"]?.toString() == clientId,
+      );
+      if (index >= 0) {
+        updated[index] = {
+          ...updated[index],
+          "_pending": false,
+          "_failed": true,
+        };
+        _messages = updated;
+      }
       unawaited(_persistMessages());
       GlassToast.show(context, "Failed to send", icon: Icons.error_outline);
     }
@@ -1717,7 +1724,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         created = jsonDecode(res.body) as Map<String, dynamic>;
       } catch (_) {}
       if (created != null) {
-        setState(() => _scheduled = [..._scheduled, created!]);
+        _scheduled = [..._scheduled, created!];
         unawaited(_persistAlerts());
         final scheduleAtParsed = _parseAlertAt(created["schedule_at"]);
         if (scheduleAtParsed != null) {
@@ -1924,71 +1931,79 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           ),
           body: Column(
             children: [
-              if (_scheduled.isNotEmpty)
-                Container(
-                  color: scheme.secondary.withValues(alpha: dark ? 0.18 : 0.12),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.alarm_rounded,
-                          size: 16, color: Colors.orange),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _nextAlert() == null
-                              ? "${_scheduled.length} scheduled alert${_scheduled.length > 1 ? "s" : ""}"
-                              : "${_formatCountdown(_parseAlertAt(_nextAlert()!["schedule_at"]) ?? _now)} - ${_formatClock(_parseAlertAt(_nextAlert()!["schedule_at"]) ?? _now)} - ${_nextAlert()!["title"] ?? "Alert"}",
-                          style: const TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.w600),
+              AnimatedBuilder(
+                animation: Listenable.merge([_scheduledNotifier, _nowNotifier]),
+                builder: (context, _) {
+                  if (_scheduled.isEmpty) return const SizedBox.shrink();
+                  return Container(
+                    color: scheme.secondary.withValues(alpha: dark ? 0.18 : 0.12),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.alarm_rounded,
+                            size: 16, color: Colors.orange),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _nextAlert() == null
+                                ? "${_scheduled.length} scheduled alert${_scheduled.length > 1 ? "s" : ""}"
+                                : "${_formatCountdown(_parseAlertAt(_nextAlert()!["schedule_at"]) ?? _nowNotifier.value)} - ${_formatClock(_parseAlertAt(_nextAlert()!["schedule_at"]) ?? _nowNotifier.value)} - ${_nextAlert()!["title"] ?? "Alert"}",
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
                         ),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          final next = _nextAlert();
-                          if (next != null) {
-                            _showAlertDetails(next);
-                          }
-                        },
-                        child: const Text("View"),
-                      ),
-                    ],
-                  ),
-                ),
+                        TextButton(
+                          onPressed: () {
+                            final next = _nextAlert();
+                            if (next != null) {
+                              _showAlertDetails(next);
+                            }
+                          },
+                          child: const Text("View"),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
               Expanded(
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : Builder(
-                        builder: (_) {
-                          final reactions = _collectReactions(_messages);
-                          final visible = _messages
-                              .where((m) => _messageType(m) != "REACTION")
-                              .toList();
-                          return ListView.builder(
-                            controller: _scrollCtrl,
-                            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                            itemCount: visible.length,
-                            itemBuilder: (_, i) => _MessageBubble(
-                              msg: visible[i],
-                              isMe: _isMe(visible[i]),
-                              isRead: _isReadByAny(visible[i]),
-                              decode: _decodeMessage,
-                              onLongPress: () =>
-                                  _showMessageActions(visible[i], _isMe(visible[i])),
-                              onOpenAttachment: _openAttachment,
-                              onOpenLink: _openLink,
-                              onOpenPreview: _openAttachmentPreview,
-                              onToggleVoice: _toggleVoiceNote,
-                              onDownload: _downloadForMessage,
-                              isAudioPlaying: _audioPlaying,
-                              playingUrl: _playingUrl,
-                              audioPosition: _audioPosition,
-                              audioDuration: _audioDuration,
-                              reactions: reactions[(visible[i]["id"] as num?)?.toInt()],
-                            ),
-                          );
-                        },
+                child: AnimatedBuilder(
+                  animation:
+                      Listenable.merge([_loadingNotifier, _messagesNotifier]),
+                  builder: (context, _) {
+                    if (_loadingNotifier.value) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final reactions = _collectReactions(_messages);
+                    final visible = _messages
+                        .where((m) => _messageType(m) != "REACTION")
+                        .toList();
+                    return ListView.builder(
+                      controller: _scrollCtrl,
+                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                      itemCount: visible.length,
+                      itemBuilder: (_, i) => _MessageBubble(
+                        msg: visible[i],
+                        isMe: _isMe(visible[i]),
+                        isRead: _isReadByAny(visible[i]),
+                        decode: _decodeMessage,
+                        onLongPress: () =>
+                            _showMessageActions(visible[i], _isMe(visible[i])),
+                        onOpenAttachment: _openAttachment,
+                        onOpenLink: _openLink,
+                        onOpenPreview: _openAttachmentPreview,
+                        onToggleVoice: _toggleVoiceNote,
+                        onDownload: _downloadForMessage,
+                        isAudioPlaying: _audioPlaying,
+                        playingUrl: _playingUrl,
+                        audioPosition: _audioPosition,
+                        audioDuration: _audioDuration,
+                        reactions: reactions[(visible[i]["id"] as num?)?.toInt()],
                       ),
+                    );
+                  },
+                ),
               ),
               Container(
                 padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),

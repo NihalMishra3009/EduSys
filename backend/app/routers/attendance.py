@@ -11,7 +11,6 @@ from app.models.classroom import Classroom
 from app.models.lecture import Lecture, LectureStatus
 from app.models.user import User, UserRole
 from app.schemas.attendance import CheckpointRequest, CheckpointOut, AttendanceRecordOut
-from app.utils.geo import is_inside_polygon, is_inside_rectangle
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -34,107 +33,15 @@ def create_checkpoint(
     if not classroom:
         raise HTTPException(status_code=404, detail="Classroom not found")
 
-    try:
-        points = None
-        if classroom.polygon_points:
-            points = []
-            for point in classroom.polygon_points:
-                if isinstance(point, dict):
-                    lat = point.get("lat", point.get("latitude"))
-                    lng = point.get("lng", point.get("longitude"))
-                    points.append((lat, lng))
-                elif isinstance(point, (list, tuple)) and len(point) >= 2:
-                    points.append((point[0], point[1]))
-            points = [(lat, lon) for lat, lon in points if lat is not None and lon is not None]
-        elif (
-            classroom.point1_lat is not None
-            and classroom.point1_lon is not None
-            and classroom.point2_lat is not None
-            and classroom.point2_lon is not None
-            and classroom.point3_lat is not None
-            and classroom.point3_lon is not None
-            and classroom.point4_lat is not None
-            and classroom.point4_lon is not None
-        ):
-            points = [
-                (classroom.point1_lat, classroom.point1_lon),
-                (classroom.point2_lat, classroom.point2_lon),
-                (classroom.point3_lat, classroom.point3_lon),
-                (classroom.point4_lat, classroom.point4_lon),
-            ]
-
-        if not points:
-            if classroom.latitude_min is None or classroom.latitude_max is None:
-                raise HTTPException(status_code=400, detail="Classroom polygon is missing")
-            inside = is_inside_rectangle(
-                latitude=payload.latitude,
-                longitude=payload.longitude,
-                latitude_min=classroom.latitude_min,
-                latitude_max=classroom.latitude_max,
-                longitude_min=classroom.longitude_min,
-                longitude_max=classroom.longitude_max,
-            )
-            decision = {
-                "present": inside,
-                "probability": 1.0 if inside else 0.0,
-                "signed_distance_m": 0.0,
-                "reason": "RECTANGLE",
-            }
-            best_position = {
-                "latitude": payload.latitude,
-                "longitude": payload.longitude,
-            }
-        else:
-            inside = is_inside_polygon(
-                latitude=payload.latitude,
-                longitude=payload.longitude,
-                points=points,
-            )
-            decision = {
-                "present": inside,
-                "probability": 1.0 if inside else 0.0,
-                "signed_distance_m": 0.0,
-                "reason": "POLYGON",
-            }
-            best_position = {
-                "latitude": payload.latitude,
-                "longitude": payload.longitude,
-            }
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    # GEO: Log evaluation for debugging.
-    logger.info(
-        "checkpoint: user=%s lecture=%s lat=%s lon=%s present=%s prob=%.2f dist=%.2f reason=%s",
-        current_user.id,
-        payload.lecture_id,
-        best_position["latitude"],
-        best_position["longitude"],
-        decision.get("present"),
-        decision.get("probability", 0.0) or 0.0,
-        decision.get("signed_distance_m", 0.0) or 0.0,
-        decision.get("reason"),
-    )
+    best_position = {
+        "latitude": payload.latitude or 0.0,
+        "longitude": payload.longitude or 0.0,
+    }
     record = (
         db.query(AttendanceRecord)
         .filter(AttendanceRecord.lecture_id == payload.lecture_id, AttendanceRecord.student_id == current_user.id)
         .first()
     )
-    if not decision.get("present"):
-        if record is None:
-            db.add(
-                AttendanceRecord(
-                    lecture_id=payload.lecture_id,
-                    student_id=current_user.id,
-                    presence_duration=0,
-                    status=AttendanceStatus.ABSENT,
-                )
-            )
-        elif record.status != AttendanceStatus.ABSENT:
-            record.status = AttendanceStatus.ABSENT
-        db.commit()
-        raise HTTPException(status_code=400, detail="Outside classroom geofence")
-
     if record is None:
         db.add(
             AttendanceRecord(
@@ -155,9 +62,9 @@ def create_checkpoint(
         longitude=best_position["longitude"],
         gps_accuracy_m=None,
         effective_accuracy_m=None,
-        probability=decision.get("probability"),
-        signed_distance_m=decision.get("signed_distance_m"),
-        decision_reason=decision.get("reason"),
+        probability=None,
+        signed_distance_m=None,
+        decision_reason=None,
         raw_samples=None,
     )
     db.add(checkpoint)

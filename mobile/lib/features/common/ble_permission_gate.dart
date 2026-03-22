@@ -55,15 +55,8 @@ class _BlePermissionGateState extends State<BlePermissionGate> {
     checks["Bluetooth Scan"] = await Permission.bluetoothScan.isGranted;
     checks["Bluetooth Connect"] = await Permission.bluetoothConnect.isGranted;
     checks["Bluetooth Advertise"] = await Permission.bluetoothAdvertise.isGranted;
-    checks["Location"] = await Permission.location.isGranted;
-    final locationService = await Permission.location.serviceStatus;
-    checks["Location Services On"] = locationService.isEnabled;
-    checks["Background Location"] = await Permission.locationAlways.isGranted;
-    checks["Activity Recognition"] = await Permission.activityRecognition.isGranted;
     if (Platform.isAndroid) {
       checks["Notifications"] = await Permission.notification.isGranted;
-      checks["Battery Optimization Disabled"] =
-          await Permission.ignoreBatteryOptimizations.isGranted;
     }
 
     final allGranted = !checks.values.any((v) => v == false);
@@ -81,11 +74,7 @@ class _BlePermissionGateState extends State<BlePermissionGate> {
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.bluetoothAdvertise,
-      Permission.location,
-      Permission.locationAlways,
-      Permission.activityRecognition,
       if (Platform.isAndroid) Permission.notification,
-      if (Platform.isAndroid) Permission.ignoreBatteryOptimizations,
     ].request();
     await _refresh();
   }
@@ -98,16 +87,6 @@ class _BlePermissionGateState extends State<BlePermissionGate> {
     }
   }
 
-  Future<void> _disableBatteryOptimization() async {
-    if (!Platform.isAndroid) return;
-    try {
-      await _nativeChannel.invokeMethod("requestIgnoreBatteryOptimizations");
-      await _nativeChannel.invokeMethod("openBatteryOptimizationSettings");
-    } catch (_) {
-      await openAppSettings();
-    }
-    await _refresh();
-  }
 
   Future<void> _openBluetoothSettings() async {
     if (!Platform.isAndroid) return;
@@ -119,15 +98,6 @@ class _BlePermissionGateState extends State<BlePermissionGate> {
     await _refresh();
   }
 
-  Future<void> _openLocationSettings() async {
-    if (!Platform.isAndroid) return;
-    try {
-      await _nativeChannel.invokeMethod("openLocationSettings");
-    } catch (_) {
-      // ignore
-    }
-    await _refresh();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -213,20 +183,10 @@ class _BlePermissionGateState extends State<BlePermissionGate> {
                 child: const Text("Open Settings"),
               ),
               const SizedBox(height: 10),
-              if (_checks["Battery Optimization Disabled"] == false)
-                OutlinedButton(
-                  onPressed: _disableBatteryOptimization,
-                  child: const Text("Disable Battery Optimization"),
-                ),
               if (_checks["Bluetooth On"] == false)
                 OutlinedButton(
                   onPressed: _openBluetoothSettings,
                   child: const Text("Turn On Bluetooth"),
-                ),
-              if (_checks["Location Services On"] == false)
-                OutlinedButton(
-                  onPressed: _openLocationSettings,
-                  child: const Text("Turn On Location Services"),
                 ),
             ],
           ),

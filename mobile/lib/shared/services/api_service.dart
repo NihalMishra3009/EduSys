@@ -829,7 +829,6 @@ class ApiService {
   Future<http.Response> submitCheckpoint({
     required int lectureId,
   }) async {
-    // GPS/location removed — attendance uses BLE + accelerometer only.
     final headers = await _headers(auth: true);
     final body = jsonEncode({"lecture_id": lectureId});
     return _sendWithFallback(
@@ -1413,23 +1412,6 @@ class ApiService {
     return _sendWithFallback(
       path: "/resources/student-count",
       sender: (uri) => _sharedClient.get(uri, headers: headers),
-    );
-  }
-
-  Future<http.Response> geofenceStatus() async {
-    final headers = await _headers(auth: true);
-    return _sendWithFallback(
-      path: "/resources/geofence-status",
-      sender: (uri) => _sharedClient.get(uri, headers: headers),
-    );
-  }
-
-  Future<http.Response> geofenceToggle(bool enabled) async {
-    final headers = await _headers(auth: true);
-    final body = jsonEncode({"enabled": enabled});
-    return _sendWithFallback(
-      path: "/resources/geofence-toggle",
-      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 

@@ -3,17 +3,13 @@ import "dart:convert";
 import "dart:io";
 import "dart:math" as math;
 import "dart:typed_data";
-import "dart:ui" as ui;
 
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/crash_log_service.dart";
 import "package:flutter/widgets.dart";
 import "package:flutter/services.dart";
 import "package:flutter_blue_plus/flutter_blue_plus.dart";
-import "package:flutter_background_service/flutter_background_service.dart";
 import "package:permission_handler/permission_handler.dart";
-import "package:sensors_plus/sensors_plus.dart";
-import "package:shared_preferences/shared_preferences.dart";
 import "package:uuid/uuid.dart";
 import "package:wakelock_plus/wakelock_plus.dart";
 
@@ -37,14 +33,10 @@ class SmartAttendanceService {
   final ValueNotifier<BleDebugState> bleDebugState =
       ValueNotifier(BleDebugState.initial());
 
-  StreamSubscription<AccelerometerEvent>? _accelSub;
-  StreamSubscription? _backgroundMotionSub;
-  DateTime? _lastMotionAt;
   bool _monitoring = false;
   bool _scanning = false;
   int? _cachedUserId;
   String? _currentSessionToken;
-  bool _backgroundEnabled = false;
   Timer? _autoScanTimer;
   Timer? _advertiseStopTimer;
   int? _currentRoomId;
@@ -68,8 +60,6 @@ class SmartAttendanceService {
   static const String bleServiceUuid = "7c8a2f5e-0d20-4c49-8b31-3f4b8f9c6a55";
   static const int manufacturerId = 0x0001;
   static const String _bleChannelName = "edusys/ble_advertise";
-  static const double _motionThreshold = 2.5;
-  static const Duration _motionCooldown = Duration(seconds: 5);
   static const Duration _scanWindow = Duration(minutes: 2);
   static const Duration _scanPauseInterval = Duration(minutes: 2);
   static const Duration _calibrationWindow = Duration(minutes: 5);
@@ -80,11 +70,8 @@ class SmartAttendanceService {
   static const int _minCalibrationSamples = 3;
   static const double _defaultInsideThreshold = -80;
   static const double _defaultOutsideThreshold = -92;
-  static const String _bgTrackingPrefKey = "attendance_background_enabled";
   static const MethodChannel _attendanceNativeChannel =
       MethodChannel("edusys/attendance_native");
-
-  AccelerometerEvent? _lastAccel;
 
   Future<void> setActiveRoomIds(List<int> roomIds) async {
     _activeRoomIds
@@ -103,25 +90,6 @@ class SmartAttendanceService {
         CrashLogService.log("MONITORING", "Permissions denied");
         return;
       }
-      await _loadBackgroundPreference();
-      final channelOk = await _ensureNotificationChannel();
-      if (!channelOk) {
-        _backgroundEnabled = false;
-        await _saveBackgroundPreference(false);
-        await _setBackgroundReceiversEnabled(false);
-        _startForegroundMotionListener();
-        return;
-      }
-      await _setBackgroundReceiversEnabled(_backgroundEnabled);
-      if (Platform.isAndroid) {
-        if (_backgroundEnabled) {
-          await _ensureBackgroundService();
-        } else {
-          _startForegroundMotionListener();
-        }
-      } else {
-        _startForegroundMotionListener();
-      }
       _refreshAutoScanTimer();
       CrashLogService.log("MONITORING", "Student monitoring started");
     } catch (e, s) {
@@ -131,67 +99,12 @@ class SmartAttendanceService {
   }
 
   Future<void> stopStudentMonitoring() async {
-    await _accelSub?.cancel();
-    _accelSub = null;
-    await _backgroundMotionSub?.cancel();
-    _backgroundMotionSub = null;
-    await _stopBackgroundService();
-    await _setBackgroundReceiversEnabled(false);
     _autoScanTimer?.cancel();
     _autoScanTimer = null;
     _monitoring = false;
   }
 
-  bool get backgroundTrackingEnabled => _backgroundEnabled;
   int get currentAdvertiseWindowMs => _currentAdvertiseWindowMs;
-
-  Future<bool> setBackgroundTrackingEnabled(bool enabled) async {
-    _backgroundEnabled = enabled;
-    await _saveBackgroundPreference(_backgroundEnabled);
-    if (!_monitoring) return _backgroundEnabled;
-    if (_backgroundEnabled) {
-      if (Platform.isAndroid) {
-        final bgOk = await _ensureBackgroundLocation(required: true);
-        final batteryOk = await _ensureBatteryOptimizationsDisabled();
-        if (!bgOk || !batteryOk) {
-          _backgroundEnabled = false;
-          await _saveBackgroundPreference(false);
-          await _setBackgroundReceiversEnabled(false);
-          _startForegroundMotionListener();
-          return _backgroundEnabled;
-        }
-      }
-      final channelOk = await _ensureNotificationChannel();
-      if (!channelOk) {
-        _backgroundEnabled = false;
-        await _saveBackgroundPreference(false);
-        await _setBackgroundReceiversEnabled(false);
-        _startForegroundMotionListener();
-        return _backgroundEnabled;
-      }
-      await _setBackgroundReceiversEnabled(true);
-      await _ensureBackgroundService();
-    } else {
-      await _stopBackgroundService();
-      await _setBackgroundReceiversEnabled(false);
-      _startForegroundMotionListener();
-    }
-    return _backgroundEnabled;
-  }
-
-  Future<void> _loadBackgroundPreference() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _backgroundEnabled = prefs.getBool(_bgTrackingPrefKey) ?? false;
-    } catch (_) {}
-  }
-
-  Future<void> _saveBackgroundPreference(bool enabled) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_bgTrackingPrefKey, enabled);
-    } catch (_) {}
-  }
 
   Future<bool> _ensureNotificationChannel() async {
     if (!Platform.isAndroid) return true;
@@ -205,13 +118,6 @@ class SmartAttendanceService {
     }
   }
 
-  Future<void> _setBackgroundReceiversEnabled(bool enabled) async {
-    if (!Platform.isAndroid) return;
-    try {
-      await _attendanceNativeChannel
-          .invokeMethod("setBackgroundReceivers", {"enabled": enabled});
-    } catch (_) {}
-  }
 
   Future<void> startProfessorSession({
     required int lectureId,
@@ -226,7 +132,7 @@ class SmartAttendanceService {
     final ok = await _requestProfessorPermissions();
     if (!ok) {
       throw Exception(
-        "Bluetooth, location, and background permissions are required. "
+        "Bluetooth permissions are required. "
         "Grant all permissions and disable battery optimization.",
       );
     }
@@ -372,30 +278,134 @@ class SmartAttendanceService {
     );
   }
 
+  Future<SmartAttendanceResult> instantMarkAttendance({
+    required int lectureId,
+    required int roomId,
+    required String sessionToken,
+    int? advertiseUntilMs,
+  }) async {
+    if (_scanning) {
+      return const SmartAttendanceResult(
+        success: false,
+        message: "Scan already in progress",
+      );
+    }
+    _scanning = true;
+    try {
+      final ok = await _requestStudentPermissions();
+      if (!ok) {
+        return const SmartAttendanceResult(
+          success: false,
+          message: "Permission required to scan",
+        );
+      }
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      Duration? windowOverride;
+      if (advertiseUntilMs != null && advertiseUntilMs > nowMs) {
+        final remainingMs = advertiseUntilMs - nowMs;
+        final cappedMs = math.min(remainingMs, 6000);
+        windowOverride = Duration(milliseconds: cappedMs);
+      }
+      final scanResult = await _scanBleWindow(
+        sessionToken,
+        roomId: roomId,
+        window: windowOverride ?? const Duration(seconds: 6),
+      );
+      if (scanResult.avgRssi == null) {
+        return const SmartAttendanceResult(
+          success: false,
+          message: "No beacon detected. Move closer and retry.",
+        );
+      }
+      final roomConfig = await _getRoomConfig(roomId);
+      final baseInside =
+          (roomConfig?["ble_rssi_threshold"] as num?)?.toDouble() ??
+              _defaultInsideThreshold;
+      final insideThreshold = baseInside.clamp(-95, -60).toDouble();
+      final insideNow = scanResult.avgRssi! >= insideThreshold;
+      if (!insideNow) {
+        return SmartAttendanceResult(
+          success: false,
+          message: "Not in range yet (RSSI ${scanResult.avgRssi?.toStringAsFixed(1)}).",
+        );
+      }
+
+      final state = _sessionStates.putIfAbsent(
+        sessionToken,
+        () => _SessionState(sessionToken: sessionToken),
+      );
+      state.scanIndex += 1;
+      final studentId = await _getCurrentUserId();
+      if (studentId == null) {
+        return const SmartAttendanceResult(
+          success: false,
+          message: "Unable to resolve student profile",
+        );
+      }
+      final entryRes = await _api.logAttendanceScan(
+        scanId: _uuid.v4(),
+        studentId: studentId,
+        lectureId: lectureId,
+        sessionToken: sessionToken,
+        type: "ENTRY",
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+        scanIndex: state.scanIndex,
+        rssi: scanResult.avgRssi,
+      );
+      if (entryRes.statusCode < 200 || entryRes.statusCode >= 300) {
+        CrashLogService.log(
+            "SCAN", "logAttendanceScan failed: ${entryRes.statusCode} ${entryRes.body}");
+        state.scanIndex -= 1;
+        return SmartAttendanceResult(
+          success: false,
+          message:
+              "Attendance submission failed (${entryRes.statusCode}). Please retry.",
+        );
+      }
+      _markController.add(AttendanceMarkEvent(
+        lectureId: lectureId,
+        studentId: studentId,
+        type: AttendanceMarkType.entry,
+        message: "Attendance marked",
+      ));
+      state.confirmedState = _PresenceState.inside;
+      state.entryWindowStart = null;
+      state.entryScanCount = 0;
+      state.weakSince = null;
+      return SmartAttendanceResult(
+        success: true,
+        message: "Attendance marked",
+      );
+    } catch (e, s) {
+      CrashLogService.log("SCAN_ERROR", e.toString(), stack: s);
+      return SmartAttendanceResult(
+        success: false,
+        message: "Scan error: $e",
+      );
+    } finally {
+      _scanning = false;
+    }
+  }
+
   Future<bool> _requestStudentPermissions() async {
     return _requestBlePermissions(
       includeAdvertise: false,
-      requireBackground: true,
     );
   }
 
   Future<bool> _requestProfessorPermissions() async {
     return _requestBlePermissions(
       includeAdvertise: true,
-      requireBackground: true,
     );
   }
 
   Future<bool> _requestBlePermissions({
     required bool includeAdvertise,
-    required bool requireBackground,
   }) async {
     final permissions = <Permission>[
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       if (includeAdvertise) Permission.bluetoothAdvertise,
-      Permission.location,
-      Permission.activityRecognition,
       if (Platform.isAndroid) Permission.notification,
     ];
 
@@ -411,38 +421,7 @@ class SmartAttendanceService {
       return false;
     }
 
-    if (Platform.isAndroid) {
-      final bgOk = await _ensureBackgroundLocation(required: requireBackground);
-      if (!bgOk) return false;
-      final batteryOk = await _ensureBatteryOptimizationsDisabled();
-      if (!batteryOk) return false;
-    }
-
     return true;
-  }
-
-  Future<bool> _ensureBackgroundLocation({required bool required}) async {
-    if (!required) return true;
-    final status = await Permission.locationAlways.status;
-    if (status.isGranted) return true;
-    final result = await Permission.locationAlways.request();
-    if (result.isGranted) return true;
-    CrashLogService.log("PERMISSIONS", "Background location denied");
-    await _openAppSettings();
-    return false;
-  }
-
-  Future<bool> _ensureBatteryOptimizationsDisabled() async {
-    final status = await Permission.ignoreBatteryOptimizations.status;
-    if (status.isGranted) return true;
-    final result = await Permission.ignoreBatteryOptimizations.request();
-    if (result.isGranted) return true;
-    CrashLogService.log("PERMISSIONS", "Battery optimization not disabled");
-    await _attendanceNativeChannel
-        .invokeMethod("requestIgnoreBatteryOptimizations");
-    await _attendanceNativeChannel
-        .invokeMethod("openBatteryOptimizationSettings");
-    return false;
   }
 
   Future<void> _openAppSettings() async {
@@ -453,147 +432,6 @@ class SmartAttendanceService {
     }
   }
 
-  Future<void> _ensureBackgroundService() async {
-    if (!Platform.isAndroid) return;
-    try {
-      final notificationGranted = await Permission.notification.isGranted;
-      if (!notificationGranted) {
-        CrashLogService.log("BGS", "Notifications disabled — using foreground listener");
-        _startForegroundMotionListener();
-        _backgroundEnabled = false;
-        await _saveBackgroundPreference(false);
-        await _setBackgroundReceiversEnabled(false);
-        return;
-      }
-      final channelOk = await _ensureNotificationChannel();
-      if (!channelOk) {
-        CrashLogService.log("BGS", "Channel missing — using foreground listener");
-        _startForegroundMotionListener();
-        _backgroundEnabled = false;
-        await _saveBackgroundPreference(false);
-        await _setBackgroundReceiversEnabled(false);
-        return;
-      }
-      final service = FlutterBackgroundService();
-      final isRunning = await service.isRunning();
-      CrashLogService.log("BGS", "Running: $isRunning");
-      if (!isRunning) {
-        await service.configure(
-          androidConfiguration: AndroidConfiguration(
-            onStart: smartAttendanceBackgroundStart,
-            isForegroundMode: true,
-            autoStart: false,
-            autoStartOnBoot: false,
-            initialNotificationTitle: "EduSys Attendance",
-            initialNotificationContent: "Attendance tracking active",
-            foregroundServiceTypes: const [AndroidForegroundType.dataSync],
-          ),
-          iosConfiguration: IosConfiguration(
-            onForeground: smartAttendanceBackgroundStart,
-            onBackground: _onIosBackground,
-            autoStart: true,
-          ),
-        );
-        await service.startService();
-        CrashLogService.log("BGS", "Started");
-      }
-
-      await _backgroundMotionSub?.cancel();
-      _backgroundMotionSub = service.on("motion").listen((_) {
-        _handleMotionDetected().catchError((e, s) {
-          CrashLogService.log("MOTION_ERROR", e.toString(),
-              stack: s as StackTrace?);
-        });
-      });
-
-      service.on("heartbeat").listen((_) {
-        _accelSub?.cancel();
-        _accelSub = null;
-      });
-
-      service.on("bgs_error").listen((data) {
-        CrashLogService.log("BGS_ERROR", data.toString());
-      });
-    } catch (e, s) {
-      CrashLogService.log("BGS_FAILED", e.toString(), stack: s);
-      _startForegroundMotionListener();
-      _backgroundEnabled = false;
-      await _saveBackgroundPreference(false);
-      await _setBackgroundReceiversEnabled(false);
-    }
-  }
-
-  Future<void> _stopBackgroundService() async {
-    if (!Platform.isAndroid) return;
-    try {
-      final service = FlutterBackgroundService();
-      service.invoke("stopService");
-    } catch (e) {
-      CrashLogService.log("BGS_STOP_ERROR", e.toString());
-    }
-    await _backgroundMotionSub?.cancel();
-    _backgroundMotionSub = null;
-  }
-
-  @pragma("vm:entry-point")
-  static Future<bool> _onIosBackground(ServiceInstance service) async {
-    WidgetsFlutterBinding.ensureInitialized();
-    ui.DartPluginRegistrant.ensureInitialized();
-    return true;
-  }
-
-  void _startForegroundMotionListener() {
-    CrashLogService.log("ACCEL", "Starting foreground listener");
-    _accelSub ??= accelerometerEventStream().listen(
-      (event) {
-        final last = _lastAccel;
-        if (last != null) {
-          final delta = math.sqrt(
-            math.pow(event.x - last.x, 2) +
-                math.pow(event.y - last.y, 2) +
-                math.pow(event.z - last.z, 2),
-          );
-          if (delta > _motionThreshold) {
-            _handleMotionDetected().catchError((e, s) {
-              CrashLogService.log("MOTION_ERROR", e.toString(),
-                  stack: s as StackTrace?);
-            });
-          }
-        }
-        _lastAccel = event;
-      },
-      onError: (e, s) {
-        CrashLogService.log("ACCEL_ERROR", e.toString(),
-            stack: s as StackTrace?);
-        Future.delayed(
-            const Duration(seconds: 3), _startForegroundMotionListener);
-      },
-    );
-  }
-
-  Future<void> _handleMotionDetected() async {
-    try {
-      final now = DateTime.now();
-      if (_lastMotionAt != null &&
-          now.difference(_lastMotionAt!) < _motionCooldown) {
-        return;
-      }
-      _lastMotionAt = now;
-      if (_scanning || _activeRoomIds.isEmpty) return;
-      for (final roomId in _activeRoomIds) {
-        final session = await _fetchActiveSession(roomId: roomId);
-        if (session == null) continue;
-        final lectureId = (session["lecture_id"] as num?)?.toInt();
-        if (lectureId == null) continue;
-        await _runAttendanceScan(
-            lectureId: lectureId, roomId: roomId, session: session);
-        _refreshAutoScanTimer();
-        break;
-      }
-    } catch (e, s) {
-      CrashLogService.log("MOTION_HANDLER_ERROR", e.toString(), stack: s);
-    }
-  }
 
   void _refreshAutoScanTimer() {
     _autoScanTimer?.cancel();
@@ -818,10 +656,7 @@ class SmartAttendanceService {
         }
         if (outsideNow) {
           state.weakSince ??= now;
-          final motionOk = _lastMotionAt != null &&
-              _lastMotionAt!.isAfter(state.weakSince!);
-          if (now.difference(state.weakSince!) >= _exitGraceDuration &&
-              motionOk) {
+          if (now.difference(state.weakSince!) >= _exitGraceDuration) {
             state.scanIndex += 1;
             final studentId = await _getCurrentUserId();
             if (studentId == null) {
@@ -1254,76 +1089,6 @@ class SmartAttendanceService {
         _currentLectureId = null;
       }
     });
-  }
-}
-
-@pragma("vm:entry-point")
-void smartAttendanceBackgroundStart(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  ui.DartPluginRegistrant.ensureInitialized();
-
-  if (service is AndroidServiceInstance) {
-    service.on("setAsForeground").listen((_) {
-      service.setAsForegroundService();
-    });
-    service.on("setAsBackground").listen((_) {
-      service.setAsBackgroundService();
-    });
-    service.on("stopService").listen((_) {
-      service.stopSelf();
-    });
-    await service.setAsForegroundService();
-  }
-
-  _BackgroundSensorState.start(service);
-
-  Timer.periodic(const Duration(seconds: 60), (_) {
-    service.invoke("heartbeat");
-  });
-}
-
-class _BackgroundSensorState {
-  static AccelerometerEvent? _last;
-
-  static void start(ServiceInstance service) {
-    _trySubscribe(service, attempt: 0);
-  }
-
-  static void _trySubscribe(ServiceInstance service, {required int attempt}) {
-    try {
-      accelerometerEventStream().listen(
-        (event) {
-          final last = _last;
-          if (last != null) {
-            final delta = math.sqrt(
-              math.pow(event.x - last.x, 2) +
-                  math.pow(event.y - last.y, 2) +
-                  math.pow(event.z - last.z, 2),
-            );
-            if (delta > SmartAttendanceService._motionThreshold) {
-              service.invoke("motion");
-            }
-          }
-          _last = event;
-        },
-        onError: (e) {
-          service.invoke("bgs_error", {"error": e.toString()});
-          if (attempt < 4) {
-            Future.delayed(const Duration(seconds: 3), () {
-              _trySubscribe(service, attempt: attempt + 1);
-            });
-          }
-        },
-        cancelOnError: true,
-      );
-    } catch (e) {
-      service.invoke("bgs_error", {"error": "subscribe_failed: $e"});
-      if (attempt < 4) {
-        Future.delayed(const Duration(seconds: 3), () {
-          _trySubscribe(service, attempt: attempt + 1);
-        });
-      }
-    }
   }
 }
 

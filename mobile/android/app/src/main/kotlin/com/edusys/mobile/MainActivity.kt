@@ -8,12 +8,9 @@ import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Intent
 import android.net.Uri
-import android.os.PowerManager
-import android.content.ComponentName
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.pm.PackageManager
-import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.telephony.SubscriptionManager
@@ -82,29 +79,12 @@ class MainActivity : FlutterActivity() {
                         createAttendanceChannel()
                         result.success(true)
                     }
-                    "setBackgroundReceivers" -> {
-                        val enabled = call.argument<Boolean>("enabled") ?: false
-                        setBackgroundReceiversEnabled(enabled)
-                        result.success(true)
-                    }
                     "openAppSettings" -> {
                         openAppSettings()
                         result.success(true)
                     }
-                    "requestIgnoreBatteryOptimizations" -> {
-                        requestIgnoreBatteryOptimizations()
-                        result.success(true)
-                    }
-                    "openBatteryOptimizationSettings" -> {
-                        openBatteryOptimizationSettings()
-                        result.success(true)
-                    }
                     "openBluetoothSettings" -> {
                         openBluetoothSettings()
-                        result.success(true)
-                    }
-                    "openLocationSettings" -> {
-                        openLocationSettings()
                         result.success(true)
                     }
                     else -> result.notImplemented()
@@ -214,25 +194,6 @@ class MainActivity : FlutterActivity() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun setBackgroundReceiversEnabled(enabled: Boolean) {
-        val pm = packageManager ?: return
-        val watchdog = ComponentName(
-            this,
-            "id.flutter.flutter_background_service.WatchdogReceiver"
-        )
-        val boot = ComponentName(
-            this,
-            "id.flutter.flutter_background_service.BootReceiver"
-        )
-        val state = if (enabled) {
-            PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-        } else {
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-        }
-        pm.setComponentEnabledSetting(watchdog, state, PackageManager.DONT_KILL_APP)
-        pm.setComponentEnabledSetting(boot, state, PackageManager.DONT_KILL_APP)
-    }
-
     private fun openAppSettings() {
         try {
             val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -245,32 +206,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun requestIgnoreBatteryOptimizations() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        try {
-            val power = getSystemService(PowerManager::class.java) ?: return
-            if (power.isIgnoringBatteryOptimizations(packageName)) return
-            val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-        } catch (_: Exception) {
-            // Ignore
-        }
-    }
-
-    private fun openBatteryOptimizationSettings() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        try {
-            val intent = Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-        } catch (_: Exception) {
-            // Ignore
-        }
-    }
 
     private fun openBluetoothSettings() {
         try {
@@ -283,16 +218,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun openLocationSettings() {
-        try {
-            val intent = Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-        } catch (_: Exception) {
-            // Ignore
-        }
-    }
 
     private fun stopAdvertising() {
         val bleAdvertiser = advertiser ?: return

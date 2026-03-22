@@ -3418,6 +3418,12 @@ class _HomeTabState extends State<_HomeTab> {
   Timer? _alertSyncTimer;
   final ValueNotifier<DateTime> _alertNow =
       ValueNotifier<DateTime>(DateTime.now());
+  Timer? _professorAttendanceTimer;
+  final ValueNotifier<List<dynamic>> _nearbyStudentsNotifier =
+      ValueNotifier<List<dynamic>>(<dynamic>[]);
+  final ValueNotifier<Map<int, _StudentAttendanceSummary>>
+      _studentSummaryNotifier =
+      ValueNotifier<Map<int, _StudentAttendanceSummary>>({});
   final Set<int> _suppressedActiveLectureIds = {};
 
 
@@ -3469,7 +3475,6 @@ class _HomeTabState extends State<_HomeTab> {
               "student_id": id,
               "student_name": (row["name"] ?? "Student #$id").toString(),
               "lecture_id": nextActive.first["id"],
-              "inside_geofence": inside,
             };
           }).toList();
         }
@@ -3657,6 +3662,20 @@ class _HomeTabState extends State<_HomeTab> {
       }
       await _syncCastAlerts();
     });
+    _professorAttendanceTimer =
+        Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (!mounted || kUseDemoDataEverywhere) {
+        return;
+      }
+      final role = context.read<AuthProvider>().role ?? "STUDENT";
+      if (role != "PROFESSOR") {
+        return;
+      }
+      if (_active.isEmpty) {
+        return;
+      }
+      await _syncProfessorAttendanceSnapshot();
+    });
     _load();
   }
 
@@ -3666,7 +3685,10 @@ class _HomeTabState extends State<_HomeTab> {
     _activeSyncTimer?.cancel();
     _roomSyncTimer?.cancel();
     _alertSyncTimer?.cancel();
+    _professorAttendanceTimer?.cancel();
     _alertNow.dispose();
+    _nearbyStudentsNotifier.dispose();
+    _studentSummaryNotifier.dispose();
     super.dispose();
   }
 
@@ -3754,6 +3776,37 @@ class _HomeTabState extends State<_HomeTab> {
     }
   }
 
+  Future<void> _syncProfessorAttendanceSnapshot() async {
+    if (!mounted) return;
+    try {
+      final nearbyRes = await _api.nearbyStudents();
+      if (nearbyRes.statusCode >= 200 && nearbyRes.statusCode < 300) {
+        final decoded = jsonDecode(nearbyRes.body);
+        List<dynamic> nextNearby = _nearbyStudents;
+        if (decoded is Map<String, dynamic>) {
+          nextNearby = (decoded["students"] as List<dynamic>? ?? const []);
+        } else if (decoded is List<dynamic>) {
+          nextNearby = decoded;
+        }
+        if (_listChanged(nextNearby, _nearbyStudents)) {
+          _nearbyStudents = nextNearby;
+          _nearbyStudentsNotifier.value = nextNearby;
+        }
+      }
+      final summaryRes = await _api.lectureStudentSummary();
+      if (summaryRes.statusCode >= 200 && summaryRes.statusCode < 300) {
+        final rows = jsonDecode(summaryRes.body) as List<dynamic>;
+        final nextSummary = _parseStudentSummary(rows);
+        if (_summaryChanged(nextSummary, _studentSummary)) {
+          _studentSummary = nextSummary;
+          _studentSummaryNotifier.value = nextSummary;
+        }
+      }
+    } catch (_) {
+      // Ignore snapshot refresh failures.
+    }
+  }
+
   bool _listChanged(List<dynamic> next, List<dynamic> current) {
     if (next.length != current.length) return true;
     try {
@@ -3761,6 +3814,24 @@ class _HomeTabState extends State<_HomeTab> {
     } catch (_) {
       return true;
     }
+  }
+
+  bool _summaryChanged(
+    Map<int, _StudentAttendanceSummary> next,
+    Map<int, _StudentAttendanceSummary> current,
+  ) {
+    if (next.length != current.length) return true;
+    for (final entry in next.entries) {
+      final cur = current[entry.key];
+      if (cur == null) return true;
+      final value = entry.value;
+      if (cur.totalLectures != value.totalLectures ||
+          cur.presentCount != value.presentCount ||
+          cur.attendancePercentage != value.attendancePercentage) {
+        return true;
+      }
+    }
+    return false;
   }
 
   String _normalizeRoomCode(String raw, {required String title}) {
@@ -4040,6 +4111,8 @@ class _HomeTabState extends State<_HomeTab> {
       _studentCount = nextStudentCount;
       _alertNow.value = DateTime.now();
     });
+    _nearbyStudentsNotifier.value = nextNearby;
+    _studentSummaryNotifier.value = nextSummary;
     await _syncCalendarFromSources(
       scheduled: nextScheduled,
       docEdAppointments: nextDocEdAppointments,
@@ -4199,8 +4272,8 @@ class _HomeTabState extends State<_HomeTab> {
             active: _active,
             scheduled: _scheduled,
             history: _history,
-            nearbyStudents: _nearbyStudents,
-            studentSummary: _studentSummary,
+            nearbyStudentsListenable: _nearbyStudentsNotifier,
+            studentSummaryListenable: _studentSummaryNotifier,
             studentNames: _studentNames,
             docEdAppointments: _docEdAppointments,
             complaints: _complaints,
@@ -4371,7 +4444,7 @@ class _StudentDashboard extends StatelessWidget {
                 const SizedBox(height: 14),
                 AppButton(
                   label: "Mark Presence",
-                  icon: Icons.location_on_rounded,
+                  icon: Icons.meeting_room_rounded,
                   onPressed: () {
                     Navigator.of(context).push(
                       AppTransitions.fadeSlide(const ActiveLectureScreen()),
@@ -4529,7 +4602,7 @@ class _StudentDashboard extends StatelessWidget {
                       const SizedBox(height: 4),
                       _eventMeta(Icons.schedule_rounded, event["time"] ?? ""),
                       const SizedBox(height: 4),
-                      _eventMeta(Icons.location_on_rounded, event["venue"] ?? ""),
+                      _eventMeta(Icons.meeting_room_rounded, event["venue"] ?? ""),
                     ],
                   ),
                 ),
@@ -4768,8 +4841,8 @@ class _ProfessorDashboard extends StatefulWidget {
     required this.active,
     required this.scheduled,
     required this.history,
-    required this.nearbyStudents,
-    required this.studentSummary,
+    required this.nearbyStudentsListenable,
+    required this.studentSummaryListenable,
     required this.studentNames,
     required this.docEdAppointments,
     required this.complaints,
@@ -4784,8 +4857,9 @@ class _ProfessorDashboard extends StatefulWidget {
   final List<dynamic> active;
   final List<dynamic> scheduled;
   final List<dynamic> history;
-  final List<dynamic> nearbyStudents;
-  final Map<int, _StudentAttendanceSummary> studentSummary;
+  final ValueListenable<List<dynamic>> nearbyStudentsListenable;
+  final ValueListenable<Map<int, _StudentAttendanceSummary>>
+      studentSummaryListenable;
   final Map<int, String> studentNames;
   final List<dynamic> docEdAppointments;
   final List<dynamic> complaints;
@@ -4812,6 +4886,12 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   DateTime _now = DateTime.now();
   int? _lastPresentCount;
   int? _lastActiveLectureId;
+  VoidCallback? _presenceListener;
+
+  List<dynamic> get _nearbyStudents =>
+      widget.nearbyStudentsListenable.value;
+  Map<int, _StudentAttendanceSummary> get _studentSummary =>
+      widget.studentSummaryListenable.value;
 
   @override
   void initState() {
@@ -4822,23 +4902,19 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
       }
       setState(() => _now = DateTime.now());
     });
-  }
-
-  @override
-  void didUpdateWidget(covariant _ProfessorDashboard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final activeLectureId =
-        _activeLectureId(widget.active.isEmpty ? null : widget.active.first);
-    final presentStudents = _studentsPresentForActiveLecture(activeLectureId);
-    final currentCount = presentStudents.length;
-    if (_lastActiveLectureId != activeLectureId) {
-      _lastActiveLectureId = activeLectureId;
-      _lastPresentCount = currentCount;
-      return;
-    }
-    if (_lastPresentCount != null && currentCount != _lastPresentCount) {
-      final diff = currentCount - _lastPresentCount!;
-      if (mounted) {
+    _presenceListener = () {
+      if (!mounted) return;
+      final activeLectureId =
+          _activeLectureId(widget.active.isEmpty ? null : widget.active.first);
+      final presentStudents = _studentsPresentForActiveLecture(activeLectureId);
+      final currentCount = presentStudents.length;
+      if (_lastActiveLectureId != activeLectureId) {
+        _lastActiveLectureId = activeLectureId;
+        _lastPresentCount = currentCount;
+        return;
+      }
+      if (_lastPresentCount != null && currentCount != _lastPresentCount) {
+        final diff = currentCount - _lastPresentCount!;
         if (diff > 0) {
           GlassToast.show(
             context,
@@ -4852,8 +4928,21 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
             icon: Icons.info_outline,
           );
         }
+        _lastPresentCount = currentCount;
       }
-      _lastPresentCount = currentCount;
+    };
+    widget.nearbyStudentsListenable.addListener(_presenceListener!);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfessorDashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nearbyStudentsListenable !=
+        widget.nearbyStudentsListenable) {
+      if (_presenceListener != null) {
+        oldWidget.nearbyStudentsListenable.removeListener(_presenceListener!);
+        widget.nearbyStudentsListenable.addListener(_presenceListener!);
+      }
     }
   }
 
@@ -4861,6 +4950,9 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   void dispose() {
     _clockTimer?.cancel();
     _rescanPollTimer?.cancel();
+    if (_presenceListener != null) {
+      widget.nearbyStudentsListenable.removeListener(_presenceListener!);
+    }
     super.dispose();
   }
 
@@ -5574,7 +5666,6 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
     final todayCompletedOverview = _todayCompletedLectures(displayHistory);
     final activeLectureId =
         _activeLectureId(widget.active.isEmpty ? null : widget.active.first);
-    final presentStudents = _studentsPresentForActiveLecture(activeLectureId);
     final currentSlot = _currentTimetableSlot();
     final upcomingSlots = _upcomingTimetableSlots();
     final todayMeetings = _todayMeetings(widget.scheduled);
@@ -5622,47 +5713,55 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            "Student Present: ${presentStudents.length}",
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: Theme.of(context).colorScheme.primary,
+                    ValueListenableBuilder<List<dynamic>>(
+                      valueListenable: widget.nearbyStudentsListenable,
+                      builder: (context, nearby, _) {
+                        final presentStudents =
+                            _studentsPresentForActiveLecture(activeLectureId);
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                "Student Present: ${presentStudents.length}",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: presentStudents.isEmpty
-                              ? null
-                              : () => _showPresentStudentsSheet(
-                                    context,
-                                    students: presentStudents,
-                                    lectureId: activeLectureId,
-                                  ),
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          child: const Text("View"),
-                        ),
-                        const SizedBox(width: 4),
-                        TextButton(
-                          onPressed: _endingLecture ? null : _endActiveLecture,
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          child: Text(_endingLecture ? "Ending..." : "End Lecture"),
-                        ),
-                      ],
+                            TextButton(
+                              onPressed: presentStudents.isEmpty
+                                  ? null
+                                  : () => _showPresentStudentsSheet(
+                                        context,
+                                        students: presentStudents,
+                                        lectureId: activeLectureId,
+                                      ),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              child: const Text("View"),
+                            ),
+                            const SizedBox(width: 4),
+                            TextButton(
+                              onPressed: _endingLecture ? null : _endActiveLecture,
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              child:
+                                  Text(_endingLecture ? "Ending..." : "End Lecture"),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ],
                 ],
@@ -6382,7 +6481,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
     }
     final seen = <int>{};
     final list = <_PresentStudent>[];
-    for (final row in widget.nearbyStudents) {
+    for (final row in _nearbyStudents) {
       if (row is! Map<String, dynamic>) {
         continue;
       }
@@ -6401,10 +6500,6 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
         continue;
       }
       seen.add(studentId);
-      final inside = row["inside_geofence"];
-      if (inside is bool && inside == false) {
-        continue;
-      }
       final name = (row["student_name"] ??
               widget.studentNames[studentId] ??
               "Student #$studentId")
@@ -6413,7 +6508,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
         _PresentStudent(
           id: studentId,
           name: name,
-          summary: widget.studentSummary[studentId],
+          summary: _studentSummary[studentId],
         ),
       );
     }
@@ -11396,7 +11491,7 @@ class _LecturesTabState extends State<_LecturesTab> {
                           child: AppButton(
                             label: "Mark",
                             onPressed: () => _markPresence(id),
-                            icon: Icons.my_location_rounded,
+                            icon: Icons.bluetooth_searching_rounded,
                           ),
                         ),
                     ],
@@ -11419,23 +11514,79 @@ class _AttendanceTab extends StatefulWidget {
 
 class _AttendanceTabState extends State<_AttendanceTab> {
   final ApiService _api = ApiService();
-  bool _loading = false;
-  bool _offline = false;
-  List<dynamic> _records = [];
-  List<dynamic> _lectureHistory = [];
-  bool _geofenceEnabled = true;
-  List<dynamic> _students = [];
-  List<dynamic> _nearbyStudents = [];
-  List<dynamic> _manualMarks = [];
-  Map<int, _StudentAttendanceSummary> _studentSummary = {};
-  Map<int, String> _studentNames = {};
-  List<Map<String, dynamic>> _classwiseStudents = [];
+  final ValueNotifier<bool> _loadingNotifier = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _offlineNotifier = ValueNotifier<bool>(false);
+  final ValueNotifier<List<dynamic>> _recordsNotifier =
+      ValueNotifier<List<dynamic>>([]);
+  final ValueNotifier<List<dynamic>> _lectureHistoryNotifier =
+      ValueNotifier<List<dynamic>>([]);
+  final ValueNotifier<List<dynamic>> _studentsNotifier =
+      ValueNotifier<List<dynamic>>([]);
+  final ValueNotifier<List<dynamic>> _nearbyStudentsNotifier =
+      ValueNotifier<List<dynamic>>([]);
+  final ValueNotifier<List<dynamic>> _manualMarksNotifier =
+      ValueNotifier<List<dynamic>>([]);
+  final ValueNotifier<Map<int, _StudentAttendanceSummary>>
+      _studentSummaryNotifier =
+      ValueNotifier<Map<int, _StudentAttendanceSummary>>({});
+  final ValueNotifier<Map<int, String>> _studentNamesNotifier =
+      ValueNotifier<Map<int, String>>({});
+  final ValueNotifier<List<Map<String, dynamic>>> _classwiseStudentsNotifier =
+      ValueNotifier<List<Map<String, dynamic>>>([]);
+  final ValueNotifier<int> _monthlyPresentNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<int> _monthlyAbsentNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<double> _monthlyPercentageNotifier =
+      ValueNotifier<double>(0);
+
+  bool get _loading => _loadingNotifier.value;
+  set _loading(bool value) => _loadingNotifier.value = value;
+
+  bool get _offline => _offlineNotifier.value;
+  set _offline(bool value) => _offlineNotifier.value = value;
+
+  List<dynamic> get _records => _recordsNotifier.value;
+  set _records(List<dynamic> value) => _recordsNotifier.value = value;
+
+  List<dynamic> get _lectureHistory => _lectureHistoryNotifier.value;
+  set _lectureHistory(List<dynamic> value) =>
+      _lectureHistoryNotifier.value = value;
+
+  List<dynamic> get _students => _studentsNotifier.value;
+  set _students(List<dynamic> value) => _studentsNotifier.value = value;
+
+  List<dynamic> get _nearbyStudents => _nearbyStudentsNotifier.value;
+  set _nearbyStudents(List<dynamic> value) =>
+      _nearbyStudentsNotifier.value = value;
+
+  List<dynamic> get _manualMarks => _manualMarksNotifier.value;
+  set _manualMarks(List<dynamic> value) => _manualMarksNotifier.value = value;
+
+  Map<int, _StudentAttendanceSummary> get _studentSummary =>
+      _studentSummaryNotifier.value;
+  set _studentSummary(Map<int, _StudentAttendanceSummary> value) =>
+      _studentSummaryNotifier.value = value;
+
+  Map<int, String> get _studentNames => _studentNamesNotifier.value;
+  set _studentNames(Map<int, String> value) =>
+      _studentNamesNotifier.value = value;
+
+  List<Map<String, dynamic>> get _classwiseStudents =>
+      _classwiseStudentsNotifier.value;
+  set _classwiseStudents(List<Map<String, dynamic>> value) =>
+      _classwiseStudentsNotifier.value = value;
+
+  int get _monthlyPresent => _monthlyPresentNotifier.value;
+  set _monthlyPresent(int value) => _monthlyPresentNotifier.value = value;
+
+  int get _monthlyAbsent => _monthlyAbsentNotifier.value;
+  set _monthlyAbsent(int value) => _monthlyAbsentNotifier.value = value;
+
+  double get _monthlyPercentage => _monthlyPercentageNotifier.value;
+  set _monthlyPercentage(double value) =>
+      _monthlyPercentageNotifier.value = value;
   final Map<int, double> _editableAttendancePercent = {};
   String _historyFilter = "Daily";
   String _classFilter = "All Classes";
-  int _monthlyPresent = 0;
-  int _monthlyAbsent = 0;
-  double _monthlyPercentage = 0;
   int? _selectedStudentId;
   final TextEditingController _ceilingHeightController = TextEditingController();
   final TextEditingController _bleRssiController = TextEditingController();
@@ -11491,6 +11642,19 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     _bleRssiController.dispose();
     // Attendance threshold editing removed.
     _manualLectureId.dispose();
+    _loadingNotifier.dispose();
+    _offlineNotifier.dispose();
+    _recordsNotifier.dispose();
+    _lectureHistoryNotifier.dispose();
+    _studentsNotifier.dispose();
+    _nearbyStudentsNotifier.dispose();
+    _manualMarksNotifier.dispose();
+    _studentSummaryNotifier.dispose();
+    _studentNamesNotifier.dispose();
+    _classwiseStudentsNotifier.dispose();
+    _monthlyPresentNotifier.dispose();
+    _monthlyAbsentNotifier.dispose();
+    _monthlyPercentageNotifier.dispose();
     super.dispose();
   }
 
@@ -11541,11 +11705,10 @@ class _AttendanceTabState extends State<_AttendanceTab> {
 
   Future<void> _load({bool silent = false}) async {
     if (!silent) {
-      setState(() => _loading = true);
+      _loading = true;
     }
     final role = context.read<AuthProvider>().role ?? "STUDENT";
     final res = await _api.attendanceHistory();
-    final geoRes = role == "PROFESSOR" ? await _api.geofenceStatus() : null;
     final studentRes = role == "PROFESSOR" ? await _api.studentsList() : null;
     final nearbyRes = role == "PROFESSOR" ? await _api.nearbyStudents() : null;
     final manualRes =
@@ -11557,7 +11720,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     final isOffline = !(await _api.isBackendOnlineCached());
 
     List<dynamic> nextRecords = _records;
-    bool nextGeofenceEnabled = _geofenceEnabled;
     List<dynamic> nextStudents = _students;
     List<dynamic> nextNearbyStudents = _nearbyStudents;
     List<dynamic> nextManualMarks = _manualMarks;
@@ -11574,10 +11736,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
           (await _api.readCache("attendance_records") as List<dynamic>?) ??
               nextRecords;
       if (role == "PROFESSOR") {
-        final geoCache = await _api.readCache("attendance_geofence")
-            as Map<String, dynamic>?;
-        nextGeofenceEnabled =
-            geoCache?["enabled"] as bool? ?? nextGeofenceEnabled;
         nextStudents =
             (await _api.readCache("attendance_students") as List<dynamic>?) ??
                 nextStudents;
@@ -11616,15 +11774,6 @@ class _AttendanceTabState extends State<_AttendanceTab> {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         nextRecords = jsonDecode(res.body) as List<dynamic>;
         await _api.saveCache("attendance_records", nextRecords);
-      }
-      if (geoRes != null &&
-          geoRes.statusCode >= 200 &&
-          geoRes.statusCode < 300) {
-        nextGeofenceEnabled = (jsonDecode(geoRes.body)
-                as Map<String, dynamic>)["enabled"] as bool? ??
-            true;
-        await _api
-            .saveCache("attendance_geofence", {"enabled": nextGeofenceEnabled});
       }
       if (studentRes != null &&
           studentRes.statusCode >= 200 &&
@@ -11686,32 +11835,32 @@ class _AttendanceTabState extends State<_AttendanceTab> {
     if (!mounted) {
       return;
     }
-    setState(() {
-      _loading = false;
-      _offline = isOffline;
-      _records = nextRecords;
-      _geofenceEnabled = nextGeofenceEnabled;
-      _students = nextStudents;
-      _selectedStudentId ??=
-          _students.isNotEmpty ? _students.first["id"] as int : null;
-      _nearbyStudents = nextNearbyStudents;
-      _manualMarks = nextManualMarks;
-      _lectureHistory = nextLectureHistory;
-      _studentSummary = nextSummary;
-      _studentNames = nextStudentNames;
-      _classwiseStudents = nextClasswiseStudents;
-      for (final row in _classwiseStudents) {
-        final id = row["id"];
-        if (id is! int) {
-          continue;
-        }
-        _editableAttendancePercent[id] =
-            _editableAttendancePercent[id] ?? _baseAttendancePercent(row);
+    _loading = false;
+    _offline = isOffline;
+    _records = nextRecords;
+    _students = nextStudents;
+    _nearbyStudents = nextNearbyStudents;
+    _manualMarks = nextManualMarks;
+    _lectureHistory = nextLectureHistory;
+    _studentSummary = nextSummary;
+    _studentNames = nextStudentNames;
+    _classwiseStudents = nextClasswiseStudents;
+    for (final row in _classwiseStudents) {
+      final id = row["id"];
+      if (id is! int) {
+        continue;
       }
-      _monthlyPresent = nextMonthlyPresent;
-      _monthlyAbsent = nextMonthlyAbsent;
-      _monthlyPercentage = nextMonthlyPercentage;
-    });
+      _editableAttendancePercent[id] =
+          _editableAttendancePercent[id] ?? _baseAttendancePercent(row);
+    }
+    _monthlyPresent = nextMonthlyPresent;
+    _monthlyAbsent = nextMonthlyAbsent;
+    _monthlyPercentage = nextMonthlyPercentage;
+    if (_selectedStudentId == null && _students.isNotEmpty) {
+      setState(() {
+        _selectedStudentId = _students.first["id"] as int;
+      });
+    }
   }
 
   Future<void> _openCreateSpaceDialog() async {
@@ -11802,7 +11951,7 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                   const SizedBox(height: 12),
                   AppButton(
                     label: "Create space",
-                    icon: Icons.add_location_alt_rounded,
+                    icon: Icons.add_circle_outline_rounded,
                     onPressed: canSave ? _createSpace : null,
                   ),
                 ],
@@ -12174,10 +12323,10 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   }
 
   Future<void> _deleteSpace(int roomId) async {
-    setState(() => _loading = true);
+    _loading = true;
     final res = await _api.deleteClassroom(roomId);
     if (!mounted) return;
-    setState(() => _loading = false);
+    _loading = false;
     final ok = res.statusCode >= 200 && res.statusCode < 300;
     _toast(_extractDetail(res.body, ok ? "Space deleted" : "Failed to delete space"));
     if (ok) {
@@ -12352,10 +12501,27 @@ class _AttendanceTabState extends State<_AttendanceTab> {
   @override
   Widget build(BuildContext context) {
     final role = context.watch<AuthProvider>().role ?? "STUDENT";
-    return ListView(
-      padding:
-          const EdgeInsets.fromLTRB(14, 10, 14, 18 + kDockScrollBottomInset),
-      children: [
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        _loadingNotifier,
+        _offlineNotifier,
+        _recordsNotifier,
+        _lectureHistoryNotifier,
+        _studentsNotifier,
+        _nearbyStudentsNotifier,
+        _manualMarksNotifier,
+        _studentSummaryNotifier,
+        _studentNamesNotifier,
+        _classwiseStudentsNotifier,
+        _monthlyPresentNotifier,
+        _monthlyAbsentNotifier,
+        _monthlyPercentageNotifier,
+      ]),
+      builder: (context, _) {
+        return ListView(
+          padding:
+              const EdgeInsets.fromLTRB(14, 10, 14, 18 + kDockScrollBottomInset),
+          children: [
           if (_offline && role != "PROFESSOR")
             const Card(
               child: ListTile(
@@ -12762,7 +12928,9 @@ class _AttendanceTabState extends State<_AttendanceTab> {
                 ),
               ),
           ],
-      ],
+          ],
+        );
+      },
     );
   }
 }
@@ -12779,9 +12947,6 @@ class _SettingsTabState extends State<_SettingsTab> {
   final SmartAttendanceService _smartAttendance = SmartAttendanceService();
   String _deviceId = "Loading...";
   String _sim = "Loading...";
-  bool _backgroundTracking = false;
-  bool _updatingBackgroundTracking = false;
-  static const String _bgTrackingPrefKey = "attendance_background_enabled";
   final List<Map<String, dynamic>> _complaints = [
     {
       "id": 1,
@@ -12803,7 +12968,6 @@ class _SettingsTabState extends State<_SettingsTab> {
   void initState() {
     super.initState();
     _loadDevice();
-    _loadAttendancePrefs();
   }
 
   Future<void> _loadDevice() async {
@@ -12816,27 +12980,6 @@ class _SettingsTabState extends State<_SettingsTab> {
     });
   }
 
-  Future<void> _loadAttendancePrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final enabled = prefs.getBool(_bgTrackingPrefKey) ?? false;
-    if (!mounted) return;
-    setState(() {
-      _backgroundTracking = enabled;
-    });
-  }
-
-  Future<void> _toggleBackgroundTracking(bool enabled) async {
-    setState(() => _updatingBackgroundTracking = true);
-    final actualEnabled =
-        await _smartAttendance.setBackgroundTrackingEnabled(enabled);
-    if (!mounted) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_bgTrackingPrefKey, actualEnabled);
-    setState(() {
-      _backgroundTracking = actualEnabled;
-      _updatingBackgroundTracking = false;
-    });
-  }
 
   Future<void> _raiseComplaint() async {
     final titleController = TextEditingController();
@@ -12998,36 +13141,6 @@ class _SettingsTabState extends State<_SettingsTab> {
                 title: "Attendance",
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      "Background tracking",
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  Switch.adaptive(
-                    value: _backgroundTracking,
-                    onChanged: _updatingBackgroundTracking
-                        ? null
-                        : (value) => _toggleBackgroundTracking(value),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _backgroundTracking
-                    ? "Keeps scanning while the app is not open (shows a notification)."
-                    : "Scans automatically while the app is open.",
-                style: TextStyle(
-                  color: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.color
-                      ?.withValues(alpha: 0.72),
-                ),
-              ),
-              const SizedBox(height: 10),
               AppButton(
                 label: "BLE Debug",
                 icon: Icons.bluetooth_searching_rounded,

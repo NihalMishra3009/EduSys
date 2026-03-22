@@ -50,10 +50,7 @@ class _BleDebugScreenState extends State<BleDebugScreen> {
       "Bluetooth Scan": Permission.bluetoothScan,
       "Bluetooth Connect": Permission.bluetoothConnect,
       "Bluetooth Advertise": Permission.bluetoothAdvertise,
-      "Location": Permission.location,
-      "Location Always": Permission.locationAlways,
       "Notifications": Permission.notification,
-      "Ignore Battery Opt": Permission.ignoreBatteryOptimizations,
     };
     final statusMap = <String, PermissionStatus>{};
     for (final entry in permissions.entries) {
@@ -168,4 +165,3 @@ class _BleDebugScreenState extends State<BleDebugScreen> {
     );
   }
 }
-

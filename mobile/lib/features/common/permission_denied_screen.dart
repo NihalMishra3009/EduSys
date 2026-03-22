@@ -13,22 +13,15 @@ class PermissionDeniedScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Location permission is required.", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+            const Text("Bluetooth permission is required.", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
             const SizedBox(height: 10),
-            const Text("Enable location permission and GPS to mark attendance."),
+            const Text("Enable Bluetooth permissions to mark attendance."),
             const SizedBox(height: 16),
             FilledButton(
               onPressed: () async {
                 await openAppSettings();
               },
               child: const Text("Open App Settings"),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: () async {
-                await openAppSettings();
-              },
-              child: const Text("Open Location Settings"),
             ),
           ],
         ),
