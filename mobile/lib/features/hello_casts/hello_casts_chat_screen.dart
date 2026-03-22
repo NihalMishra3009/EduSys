@@ -1436,6 +1436,12 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                 children: [
                   Expanded(
                     child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
                       onPressed: () async {
                         final d = await showDatePicker(
                           context: ctx,
@@ -1451,14 +1457,19 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                         scheduleDate == null
                             ? "Set date"
                             : "${scheduleDate!.day.toString().padLeft(2, "0")}/"
-                                "${scheduleDate!.month.toString().padLeft(2, "0")}/"
-                                "${scheduleDate!.year}",
+                                "${scheduleDate!.month.toString().padLeft(2, "0")}",
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
                       onPressed: () async {
                         final t = await showTimePicker(
                           context: ctx,
