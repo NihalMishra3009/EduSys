@@ -610,6 +610,58 @@ class _StudentMenuDrawer extends StatelessWidget {
   }
 }
 
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.title,
+    required this.child,
+    this.trailing,
+  });
+
+  final String title;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(
+          scheme.primary.withValues(alpha: dark ? 0.10 : 0.06),
+          scheme.surface,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: scheme.onSurface.withValues(alpha: dark ? 0.16 : 0.10),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (trailing != null) trailing!,
+            ],
+          ),
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
 class _DrawerItem extends StatelessWidget {
   const _DrawerItem({
     required this.icon,
@@ -4953,107 +5005,179 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SectionTitle("Start Lecture"),
-                    const SizedBox(height: 8),
-                    const Text("Select space"),
-                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Expanded(child: SectionTitle("Start Lecture")),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.12),
+                          ),
+                          child: Text(
+                            "${selectedStudents.length} selected",
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.primary,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: advertiseMinutesController,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         labelText: "BLE advertise minutes (X)",
                         hintText: "e.g., 2",
+                        prefixIcon: Icon(Icons.timer_rounded),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    if (createdSpaces.isEmpty)
-                      const Text("No spaces created yet.")
-                    else
-                      ...createdSpaces.map((space) {
-                        final id = (space["id"] as num?)?.toInt();
-                        final name =
-                            (space["name"] ?? "Space #$id").toString();
-                        final isSelected = id != null && selectedSpaceId == id;
-                        return ListTile(
-                          dense: true,
-                          enabled: id != null,
-                          contentPadding: EdgeInsets.zero,
-                          onTap: id == null
-                              ? null
-                              : () => setSheetState(() => selectedSpaceId = id),
-                          leading: Icon(
-                            isSelected
-                                ? Icons.radio_button_checked
-                                : Icons.radio_button_unchecked,
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: "Select space",
+                      child: createdSpaces.isEmpty
+                          ? const Text("No spaces created yet.")
+                          : Column(
+                              children: createdSpaces.map((space) {
+                                final id = (space["id"] as num?)?.toInt();
+                                final name =
+                                    (space["name"] ?? "Space #$id").toString();
+                                final isSelected =
+                                    id != null && selectedSpaceId == id;
+                                return ListTile(
+                                  dense: true,
+                                  enabled: id != null,
+                                  contentPadding: EdgeInsets.zero,
+                                  onTap: id == null
+                                      ? null
+                                      : () => setSheetState(
+                                          () => selectedSpaceId = id),
+                                  leading: Icon(
+                                    isSelected
+                                        ? Icons.radio_button_checked
+                                        : Icons.radio_button_unchecked,
+                                  ),
+                                  title: Text(name),
+                                  subtitle:
+                                      id == null ? null : Text("Space ID: $id"),
+                                );
+                              }).toList(),
+                            ),
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: "Select classes",
+                      trailing: Text(
+                        "${selectedClasses.length}/${classOptions.length}",
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CheckboxListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            value: allClassesSelected,
+                            onChanged: (value) => setSheetState(() {
+                              if (value == true) {
+                                selectedClasses
+                                  ..clear()
+                                  ..addAll(
+                                    classOptions.map((c) => c["id"] as int),
+                                  );
+                              } else {
+                                selectedClasses.clear();
+                              }
+                            }),
+                            title: const Text("Select all classes"),
                           ),
-                          title: Text(name),
-                        );
-                      }),
-                    const SizedBox(height: 12),
-                    const Text("Select classes"),
-                    const SizedBox(height: 6),
-                    CheckboxListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      value: allClassesSelected,
-                      onChanged: (value) => setSheetState(() {
-                        if (value == true) {
-                          selectedClasses
-                            ..clear()
-                            ..addAll(
-                              classOptions.map((c) => c["id"] as int),
-                            );
-                        } else {
-                          selectedClasses.clear();
-                        }
-                      }),
-                      title: const Text("Select all classes"),
-                    ),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: classOptions.map((c) {
-                        final id = c["id"] as int;
-                        return FilterChip(
-                          label: Text(c["name"].toString()),
-                          selected: selectedClasses.contains(id),
-                          onSelected: (value) => toggleClass(id, value),
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text("Select students"),
-                    const SizedBox(height: 6),
-                    if (students.isEmpty)
-                      const Text("Select a class to load students.")
-                    else ...[
-                      CheckboxListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        value: allStudentsSelected,
-                        onChanged: (value) => setSheetState(() {
-                          if (value == true) {
-                            selectedStudents
-                              ..clear()
-                              ..addAll(students.map((s) => s["id"] as int));
-                          } else {
-                            selectedStudents.clear();
-                          }
-                        }),
-                        title: const Text("Select all students"),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: classOptions.map((c) {
+                              final id = c["id"] as int;
+                              return FilterChip(
+                                label: Text(c["name"].toString()),
+                                selected: selectedClasses.contains(id),
+                                onSelected: (value) => toggleClass(id, value),
+                              );
+                            }).toList(),
+                          ),
+                        ],
                       ),
-                      ...students.map((s) {
-                        final id = s["id"] as int;
-                        final name = s["name"].toString();
-                        return CheckboxListTile(
-                          dense: true,
-                          value: selectedStudents.contains(id),
-                          onChanged: (value) =>
-                              toggleStudent(id, value ?? false),
-                          title: Text(name),
-                        );
-                      }),
-                    ],
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: "Select students",
+                      trailing: Text(
+                        "${selectedStudents.length}/${students.length}",
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      child: students.isEmpty
+                          ? const Text("Select a class to load students.")
+                          : Column(
+                              children: [
+                                CheckboxListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  value: allStudentsSelected,
+                                  onChanged: (value) => setSheetState(() {
+                                    if (value == true) {
+                                      selectedStudents
+                                        ..clear()
+                                        ..addAll(
+                                            students.map((s) => s["id"] as int));
+                                    } else {
+                                      selectedStudents.clear();
+                                    }
+                                  }),
+                                  title: const Text("Select all students"),
+                                ),
+                                ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxHeight: 240),
+                                  child: ListView.separated(
+                                    shrinkWrap: true,
+                                    itemCount: students.length,
+                                    separatorBuilder: (_, __) =>
+                                        const SizedBox(height: 4),
+                                    itemBuilder: (_, index) {
+                                      final s = students[index];
+                                      final id = s["id"] as int;
+                                      final name = s["name"].toString();
+                                      return CheckboxListTile(
+                                        dense: true,
+                                        value: selectedStudents.contains(id),
+                                        onChanged: (value) =>
+                                            toggleStudent(id, value ?? false),
+                                        title: Text(name),
+                                        contentPadding: EdgeInsets.zero,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
