@@ -4796,6 +4796,10 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   bool _endingLecture = false;
   bool _endPortalOpen = false;
   Timer? _clockTimer;
+  Timer? _rescanPollTimer;
+  int? _currentLectureId;
+  int? _currentRoomId;
+  int? _lastAdvertiseUntil;
   DateTime _now = DateTime.now();
   int? _lastPresentCount;
   int? _lastActiveLectureId;
@@ -4847,7 +4851,60 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _rescanPollTimer?.cancel();
     super.dispose();
+  }
+
+  void _beginRescanPolling({required int lectureId, required int roomId}) {
+    _currentLectureId = lectureId;
+    _currentRoomId = roomId;
+    _rescanPollTimer?.cancel();
+    _rescanPollTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+      await _checkForRescanRequests();
+    });
+  }
+
+  void _stopRescanPolling() {
+    _rescanPollTimer?.cancel();
+    _rescanPollTimer = null;
+    _currentLectureId = null;
+    _currentRoomId = null;
+    _lastAdvertiseUntil = null;
+  }
+
+  Future<void> _checkForRescanRequests() async {
+    final lectureId = _currentLectureId;
+    final roomId = _currentRoomId;
+    if (lectureId == null || roomId == null) return;
+    try {
+      final res = await _api.getActiveAttendanceSession(lectureId: lectureId);
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return;
+      }
+      if (res.body.isEmpty) return;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map<String, dynamic>) {
+        return;
+      }
+      final serverUntil = (decoded["advertise_until"] as num?)?.toInt();
+      final sessionToken = decoded["session_token"]?.toString();
+      final windowMs =
+          (decoded["advertise_window_ms"] as num?)?.toInt() ?? 120000;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (serverUntil != null &&
+          serverUntil > nowMs &&
+          (serverUntil > (_lastAdvertiseUntil ?? 0)) &&
+          sessionToken != null &&
+          sessionToken.isNotEmpty) {
+        _lastAdvertiseUntil = serverUntil;
+        await _smartAttendance.handleProfessorRescanRequest(
+          lectureId: lectureId,
+          roomId: roomId,
+          sessionToken: sessionToken,
+          advertiseWindowMs: windowMs,
+        );
+      }
+    } catch (_) {}
   }
 
   List<_TimetableSlot> _todayTimetableSlots() {
@@ -5065,6 +5122,10 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                     selectedStudentIds:
                         selected.map((e) => (e["id"] as int?) ?? 0).where((e) => e > 0).toList(),
                     scheduledStart: payload["scheduled_start"] as int?,
+                  );
+                  _beginRescanPolling(
+                    lectureId: lectureId,
+                    roomId: classroomId,
                   );
                 } catch (_) {
                   if (!context.mounted) return;
@@ -5456,6 +5517,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                                 "end_time":
                                     DateTime.now().toUtc().toIso8601String(),
                               };
+                              _stopRescanPolling();
                               if (widget.onLectureEnded != null) {
                                 await widget.onLectureEnded!(endedPayload);
                               }
@@ -6062,6 +6124,10 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                                 minAttendancePercent: 75,
                                 advertiseWindowMs: 120000,
                                 scheduledStart: firstScheduledStart,
+                              );
+                              _beginRescanPolling(
+                                lectureId: firstLectureId,
+                                roomId: firstRoomId,
                               );
                             } catch (_) {
                               if (!context.mounted) return;

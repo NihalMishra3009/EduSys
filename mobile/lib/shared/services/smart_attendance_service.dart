@@ -75,7 +75,7 @@ class SmartAttendanceService {
   static const Duration _calibrationWindow = Duration(minutes: 5);
   static const Duration _exitGraceDuration = Duration(minutes: 5);
   static const Duration _entryConfirmWindow = Duration(minutes: 2);
-  static const int _entryConfirmScans = 2;
+  static const int _entryConfirmScans = 1;
   static const int _maxCalibrationSamples = 100;
   static const int _minCalibrationSamples = 3;
   static const double _defaultInsideThreshold = -80;

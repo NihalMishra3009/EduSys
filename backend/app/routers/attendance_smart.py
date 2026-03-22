@@ -299,7 +299,7 @@ def log_scan_event(
         db.commit()
     now_ms = int(datetime.utcnow().timestamp() * 1000)
     if session.advertise_until:
-        grace_ms = 30000
+        grace_ms = 300000
         if now_ms > (session.advertise_until + grace_ms):
             raise HTTPException(status_code=400, detail="Attendance window closed")
     selected = session.selected_student_ids or []
