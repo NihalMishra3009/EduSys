@@ -888,11 +888,21 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         final localPath = await _resolveVoicePath(url);
         if (!mounted) return;
         if (localPath == null) {
-          GlassToast.show(context, "Unable to load voice note",
-              icon: Icons.error_outline);
-          return;
+          try {
+            await _audioPlayer.setAudioSource(AudioSource.uri(Uri.parse(url)));
+          } catch (_) {
+            if (!mounted) return;
+            GlassToast.show(context, "Unable to load voice note",
+                icon: Icons.error_outline);
+            return;
+          }
+        } else {
+          try {
+            await _audioPlayer.setFilePath(localPath);
+          } catch (_) {
+            await _audioPlayer.setAudioSource(AudioSource.uri(Uri.parse(url)));
+          }
         }
-        await _audioPlayer.setFilePath(localPath);
         if (!mounted) return;
         _playingUrl = url;
         await _audioPlayer.play();
