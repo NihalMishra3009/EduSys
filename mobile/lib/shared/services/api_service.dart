@@ -1542,6 +1542,36 @@ class ApiService {
     );
   }
 
+  Future<http.Response> registerPushToken({
+    required String token,
+    String? platform,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "token": token,
+      "platform": platform,
+    });
+    return _sendWithFallback(
+      path: "/notifications/push-token",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> unregisterPushToken({
+    required String token,
+    String? platform,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "token": token,
+      "platform": platform,
+    });
+    return _sendWithFallback(
+      path: "/notifications/push-token",
+      sender: (uri) => _sharedClient.delete(uri, headers: headers, body: body),
+    );
+  }
+
   Future<http.Response> learnedListSubjects() async {
     final headers = await _headers(auth: true);
     return _sendWithFallback(path: "/learned/subjects", sender: (uri) => http.get(uri, headers: headers));

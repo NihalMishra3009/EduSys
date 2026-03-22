@@ -29,6 +29,7 @@ from app.models.cast import (
 )
 from app.realtime import casts_list_hub
 from app.routers import admin, attendance, attendance_smart, audit, auth, classroom, complaint, department, geo, learned, lecture, notification, resources, users, casts
+from app.services.push_service import send_cast_message_push
 
 app = FastAPI(title="EduSys API", version="1.0.0")
 app.add_middleware(
@@ -489,6 +490,25 @@ def _delete_cast_message(cast_id: int, message_id: int, user_id: int) -> bool:
         db.delete(message)
         db.commit()
         return True
+    finally:
+        db.close()
+
+
+def _send_cast_push_background(
+    cast_id: int,
+    sender_id: int,
+    sender_name: str,
+    raw_message: str,
+) -> None:
+    db = SessionLocal()
+    try:
+        send_cast_message_push(
+            db,
+            cast_id=cast_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            raw_message=raw_message,
+        )
     finally:
         db.close()
 
@@ -955,6 +975,15 @@ async def cast_chat_socket(websocket: WebSocket, cast_id: int):
                             "type": "message",
                             "message": stored,
                         },
+                    )
+                    asyncio.create_task(
+                        asyncio.to_thread(
+                            _send_cast_push_background,
+                            cast_id,
+                            user.id,
+                            user.name or peer_id,
+                            text,
+                        )
                     )
 
                 asyncio.create_task(_store_and_broadcast())

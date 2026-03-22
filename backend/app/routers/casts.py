@@ -1,10 +1,11 @@
 from datetime import datetime
 import asyncio
+import threading
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
+from app.core.database import get_db, SessionLocal
 from app.core.deps import get_current_user
 from app.models.cast import (
     Cast,
@@ -31,8 +32,29 @@ from app.schemas.cast import (
     CastInviteRespondRequest,
 )
 from app.realtime import casts_list_hub
+from app.services.push_service import send_cast_message_push
 
 router = APIRouter()
+
+
+def _dispatch_cast_push(
+    *,
+    cast_id: int,
+    sender_id: int,
+    sender_name: str,
+    raw_message: str,
+) -> None:
+    db = SessionLocal()
+    try:
+        send_cast_message_push(
+            db,
+            cast_id=cast_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            raw_message=raw_message,
+        )
+    finally:
+        db.close()
 
 
 def _ensure_member(db: Session, cast_id: int, user_id: int) -> CastMember:
@@ -306,11 +328,22 @@ def send_message(
     db.commit()
     db.refresh(item)
     sender = db.get(User, current_user.id)
+    sender_name = sender.name if sender else "Me"
+    threading.Thread(
+        target=_dispatch_cast_push,
+        kwargs={
+            "cast_id": cast_id,
+            "sender_id": current_user.id,
+            "sender_name": sender_name,
+            "raw_message": item.message,
+        },
+        daemon=True,
+    ).start()
     return CastMessageOut(
         id=item.id,
         cast_id=item.cast_id,
         sender_id=item.sender_id,
-        sender_name=sender.name if sender else "Me",
+        sender_name=sender_name,
         message=item.message,
         created_at=item.created_at,
     )

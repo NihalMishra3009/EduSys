@@ -23,3 +23,8 @@ class NotificationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PushTokenUpsertRequest(BaseModel):
+    token: str
+    platform: str | None = None

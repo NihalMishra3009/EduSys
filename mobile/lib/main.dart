@@ -7,11 +7,14 @@ import "package:edusys_mobile/core/theme/liquid_glass_shell.dart";
 import "package:edusys_mobile/core/theme/app_theme.dart";
 import "package:edusys_mobile/core/utils/app_navigator.dart";
 import "package:edusys_mobile/shared/services/crash_log_service.dart";
+import "package:edusys_mobile/shared/services/push_notification_service.dart";
 import "package:flutter/material.dart";
 import "package:flutter/rendering.dart";
 import "package:provider/provider.dart";
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await PushNotificationService.instance.initialize();
   FlutterError.onError = (FlutterErrorDetails details) {
     CrashLogService.log(
       "FLUTTER_ERROR",

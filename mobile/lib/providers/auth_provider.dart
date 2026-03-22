@@ -4,6 +4,7 @@ import "dart:io";
 import "package:edusys_mobile/config/api_config.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/device_binding_service.dart";
+import "package:edusys_mobile/shared/services/push_notification_service.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 
@@ -65,6 +66,8 @@ class AuthProvider extends ChangeNotifier {
         if (!refreshed && _role == null) {
           await logout(clearError: false);
           _error = "Session expired. Please login again.";
+        } else {
+          await PushNotificationService.instance.syncAfterLogin();
         }
       }
     } finally {
@@ -152,6 +155,7 @@ class AuthProvider extends ChangeNotifier {
         await _apiService.saveUserContext(role: _role!, name: _name!, email: _email!);
       }
       _preferRegisterForNewUser = false;
+      await PushNotificationService.instance.syncAfterLogin();
       notifyListeners();
       return true;
     } catch (e) {
@@ -243,6 +247,7 @@ class AuthProvider extends ChangeNotifier {
           );
         }
 
+        await PushNotificationService.instance.syncAfterLogin();
         notifyListeners();
         return true;
       }
@@ -272,6 +277,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> logout({bool clearError = true}) async {
+    await PushNotificationService.instance.unregisterOnLogout();
     _token = null;
     _role = null;
     _name = null;

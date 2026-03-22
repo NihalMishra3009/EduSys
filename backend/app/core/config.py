@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
     dev_show_otp_in_response: bool = Field(default=False, alias="DEV_SHOW_OTP_IN_RESPONSE")
     device_binding_enabled: bool = Field(default=False, alias="DEVICE_BINDING_ENABLED")
+    fcm_server_key: str | None = Field(default=None, alias="FCM_SERVER_KEY")
 
     model_config = SettingsConfigDict(
         # Resolve env files relative to the codebase so local runs work from

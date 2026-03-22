@@ -5,7 +5,12 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.notification import AppNotification
 from app.models.user import User, UserRole
-from app.schemas.notification import NotificationCreateRequest, NotificationOut
+from app.schemas.notification import (
+    NotificationCreateRequest,
+    NotificationOut,
+    PushTokenUpsertRequest,
+)
+from app.services.push_service import disable_push_token, upsert_push_token
 
 router = APIRouter()
 
@@ -62,3 +67,38 @@ def mark_notification_read(
     item.is_read = True
     db.commit()
     return {"detail": "Marked as read"}
+
+
+@router.post("/push-token")
+def register_push_token(
+    payload: PushTokenUpsertRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token is required")
+    upsert_push_token(
+        db,
+        user_id=current_user.id,
+        token=token,
+        platform=payload.platform,
+    )
+    return {"detail": "Push token registered"}
+
+
+@router.delete("/push-token")
+def unregister_push_token(
+    payload: PushTokenUpsertRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token is required")
+    disable_push_token(
+        db,
+        user_id=current_user.id,
+        token=token,
+    )
+    return {"detail": "Push token unregistered"}

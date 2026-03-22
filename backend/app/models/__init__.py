@@ -7,6 +7,7 @@ from app.models.attendance_record import AttendanceRecord, AttendanceStatus
 from app.models.audit_log import AuditLog
 from app.models.department import Department
 from app.models.notification import AppNotification, NotificationType
+from app.models.device_push_token import DevicePushToken
 from app.models.complaint import Complaint, ComplaintStatus
 from app.models.assignment import Assignment
 from app.models.assignment_submission import AssignmentSubmission
@@ -30,6 +31,7 @@ __all__ = [
     "Department",
     "AppNotification",
     "NotificationType",
+    "DevicePushToken",
     "Complaint",
     "ComplaintStatus",
     "Assignment",
