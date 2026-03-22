@@ -1417,8 +1417,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
 
   Future<void> _sendScheduled() async {
     final bodyCtrl = TextEditingController();
-    DateTime? scheduledAt;
-    String repeat = "ONCE";
+    DateTime? scheduleDate;
+    TimeOfDay? scheduleTime;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1432,45 +1432,50 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                 decoration: const InputDecoration(labelText: "Message"),
               ),
               const SizedBox(height: 10),
-              HelloCastsClockLayout(
-                scheduledAt: scheduledAt,
-                onPick: () async {
-                  final d = await showDatePicker(
-                    context: ctx,
-                    initialDate:
-                        scheduledAt ?? DateTime.now().add(const Duration(minutes: 5)),
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime(2100),
-                  );
-                  if (d == null) return;
-                  if (!ctx.mounted) return;
-                  final t = await showTimePicker(
-                    context: ctx,
-                    initialTime:
-                        TimeOfDay.fromDateTime(scheduledAt ?? DateTime.now()),
-                  );
-                  if (t == null) return;
-                  if (!ctx.mounted) return;
-                  setLocal(() => scheduledAt =
-                      DateTime(d.year, d.month, d.day, t.hour, t.minute));
-                },
-                onAdd15: () => setLocal(
-                    () => scheduledAt = _shiftSchedule(scheduledAt, minutes: 15)),
-                onSub15: () => setLocal(
-                    () => scheduledAt = _shiftSchedule(scheduledAt, minutes: -15)),
-                onAddHour: () => setLocal(
-                    () => scheduledAt = _shiftSchedule(scheduledAt, hours: 1)),
-                onSubHour: () => setLocal(
-                    () => scheduledAt = _shiftSchedule(scheduledAt, hours: -1)),
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                initialValue: repeat,
-                decoration: const InputDecoration(labelText: "Repeat"),
-                items: const ["ONCE", "EVERY_2H", "DAILY", "WEEKLY"]
-                    .map((r) => DropdownMenuItem(value: r, child: Text(r)))
-                    .toList(),
-                onChanged: (v) => setLocal(() => repeat = v ?? "ONCE"),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () async {
+                        final d = await showDatePicker(
+                          context: ctx,
+                          initialDate: scheduleDate ?? DateTime.now(),
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime(2100),
+                        );
+                        if (d == null) return;
+                        if (!ctx.mounted) return;
+                        setLocal(() => scheduleDate = d);
+                      },
+                      child: Text(
+                        scheduleDate == null
+                            ? "Set date"
+                            : "${scheduleDate!.day.toString().padLeft(2, "0")}/"
+                                "${scheduleDate!.month.toString().padLeft(2, "0")}/"
+                                "${scheduleDate!.year}",
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () async {
+                        final t = await showTimePicker(
+                          context: ctx,
+                          initialTime: scheduleTime ?? TimeOfDay.now(),
+                        );
+                        if (t == null) return;
+                        if (!ctx.mounted) return;
+                        setLocal(() => scheduleTime = t);
+                      },
+                      child: Text(
+                        scheduleTime == null
+                            ? "Set time"
+                            : scheduleTime!.format(ctx),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1487,28 +1492,33 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         ),
       ),
     );
-    if (ok != true || scheduledAt == null || !mounted) return;
+    if (ok != true || !mounted) return;
+    if (scheduleDate == null || scheduleTime == null) {
+      GlassToast.show(context, "Select date & time", icon: Icons.info_outline);
+      return;
+    }
+
+    DateTime scheduledAt = DateTime(
+      scheduleDate!.year,
+      scheduleDate!.month,
+      scheduleDate!.day,
+      scheduleTime!.hour,
+      scheduleTime!.minute,
+    );
 
     final now = DateTime.now();
-    if (!scheduledAt!.isAfter(now)) {
+    if (!scheduledAt.isAfter(now)) {
       scheduledAt = now.add(const Duration(minutes: 1));
       GlassToast.show(context, "Time passed. Alert set for now.",
           icon: Icons.info_outline);
     }
 
-    final intervalMinutes = switch (repeat) {
-      "EVERY_2H" => 120,
-      "DAILY" => 1440,
-      "WEEKLY" => 10080,
-      _ => null,
-    };
-
     final res = await _api.createCastAlert(
       castId: widget.castId,
       title: "Alert",
       message: bodyCtrl.text.trim(),
-      scheduleAt: scheduledAt!,
-      intervalMinutes: intervalMinutes,
+      scheduleAt: scheduledAt,
+      intervalMinutes: null,
       active: true,
     );
     if (!mounted) return;
