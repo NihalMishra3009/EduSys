@@ -5,6 +5,7 @@ import "dart:io";
 import "package:edusys_mobile/core/utils/time_format.dart";
 import "package:edusys_mobile/core/animations/app_transitions.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/services/push_notification_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "package:google_fonts/google_fonts.dart";
@@ -285,6 +286,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         _directory = directoryRows;
         _loading = false;
       });
+      await _scheduleLocalAlerts(alertRows);
       await _loadLocalSearchIndex(_casts);
       if (!_shownCastDebug &&
           casts.isEmpty &&
@@ -495,12 +497,12 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     final diff = at.difference(_now);
     final timeLabel = _formatClock(at);
     if (diff.inSeconds.abs() <= 60) {
-      return "Now â€¢ $timeLabel";
+      return "Now - $timeLabel";
     }
     if (diff.isNegative) {
-      return "Overdue â€¢ $timeLabel";
+      return "Overdue - $timeLabel";
     }
-    return "In ${_formatDuration(diff)} â€¢ $timeLabel";
+    return "In ${_formatDuration(diff)} - $timeLabel";
   }
 
   String _formatDuration(Duration diff) {
@@ -864,89 +866,165 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     DateTime? scheduleAt;
     String repeat = "ONCE";
 
-    final ok = await showDialog<bool>(
+    final ok = await showModalBottomSheet<bool>(
       context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) {
-          return AlertDialog(
-            title: const Text("Schedule Alert"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<int>(
-                  initialValue: castId.value,
-                  decoration: const InputDecoration(labelText: "Cast"),
-                  items: _casts.map((c) {
-                    return DropdownMenuItem<int>(
-                      value: (c["id"] as num?)?.toInt(),
-                      child: Text(c["name"]?.toString() ?? "Cast"),
-                    );
-                  }).toList(),
-                  onChanged: (v) => setLocal(() => castId.value = v),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: titleCtrl,
-                  decoration: const InputDecoration(labelText: "Title"),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: messageCtrl,
-                  decoration: const InputDecoration(labelText: "Message"),
-                ),
-                const SizedBox(height: 10),
-                HelloCastsClockLayout(
-                  scheduledAt: scheduleAt,
-                  onPick: () async {
-                    final d = await showDatePicker(
-                      context: ctx,
-                      initialDate:
-                          scheduleAt ?? DateTime.now().add(const Duration(minutes: 5)),
-                      firstDate: DateTime.now(),
-                      lastDate: DateTime(2100),
-                    );
-                    if (d == null) return;
-                    if (!ctx.mounted) return;
-                    final t = await showTimePicker(
-                      context: ctx,
-                      initialTime: TimeOfDay.fromDateTime(
-                        scheduleAt ?? DateTime.now(),
+          return SafeArea(
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+              decoration: BoxDecoration(
+                color: Theme.of(ctx).colorScheme.surface,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 18,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF9A3D).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.alarm_rounded,
+                            color: Color(0xFFFF9A3D)),
                       ),
-                    );
-                    if (t == null) return;
-                    if (!ctx.mounted) return;
-                    setLocal(() {
-                      scheduleAt =
-                          DateTime(d.year, d.month, d.day, t.hour, t.minute);
-                    });
-                  },
-                  onAdd15: () => setLocal(
-                      () => scheduleAt = _shiftSchedule(scheduleAt, minutes: 15)),
-                  onSub15: () => setLocal(
-                      () => scheduleAt = _shiftSchedule(scheduleAt, minutes: -15)),
-                  onAddHour: () => setLocal(
-                      () => scheduleAt = _shiftSchedule(scheduleAt, hours: 1)),
-                  onSubHour: () => setLocal(
-                      () => scheduleAt = _shiftSchedule(scheduleAt, hours: -1)),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: repeat,
-                  decoration: const InputDecoration(labelText: "Repeat"),
-                  items: const [
-                    "ONCE",
-                    "EVERY_2H",
-                    "DAILY",
-                    "WEEKLY",
-                  ].map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
-                  onChanged: (v) => setLocal(() => repeat = v ?? "ONCE"),
-                ),
-              ],
+                      const SizedBox(width: 12),
+                      Text(
+                        "Schedule alert",
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<int>(
+                    initialValue: castId.value,
+                    decoration: const InputDecoration(labelText: "Cast"),
+                    items: _casts.map((c) {
+                      return DropdownMenuItem<int>(
+                        value: (c["id"] as num?)?.toInt(),
+                        child: Text(c["name"]?.toString() ?? "Cast"),
+                      );
+                    }).toList(),
+                    onChanged: (v) => setLocal(() => castId.value = v),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: titleCtrl,
+                    decoration: const InputDecoration(labelText: "Title"),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: messageCtrl,
+                    decoration: const InputDecoration(labelText: "Message"),
+                  ),
+                  const SizedBox(height: 14),
+                  HelloCastsClockLayout(
+                    scheduledAt: scheduleAt,
+                    onPick: () async {
+                      final d = await showDatePicker(
+                        context: ctx,
+                        initialDate:
+                            scheduleAt ?? DateTime.now().add(const Duration(minutes: 5)),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime(2100),
+                      );
+                      if (d == null) return;
+                      if (!ctx.mounted) return;
+                      final t = await showTimePicker(
+                        context: ctx,
+                        initialTime: TimeOfDay.fromDateTime(
+                          scheduleAt ?? DateTime.now(),
+                        ),
+                      );
+                      if (t == null) return;
+                      if (!ctx.mounted) return;
+                      setLocal(() {
+                        scheduleAt =
+                            DateTime(d.year, d.month, d.day, t.hour, t.minute);
+                      });
+                    },
+                    onAdd15: () => setLocal(
+                        () => scheduleAt = _shiftSchedule(scheduleAt, minutes: 15)),
+                    onSub15: () => setLocal(
+                        () => scheduleAt = _shiftSchedule(scheduleAt, minutes: -15)),
+                    onAddHour: () => setLocal(
+                        () => scheduleAt = _shiftSchedule(scheduleAt, hours: 1)),
+                    onSubHour: () => setLocal(
+                        () => scheduleAt = _shiftSchedule(scheduleAt, hours: -1)),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    "Repeat",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      _RepeatChip(
+                        label: "Once",
+                        active: repeat == "ONCE",
+                        onTap: () => setLocal(() => repeat = "ONCE"),
+                      ),
+                      _RepeatChip(
+                        label: "Every 2h",
+                        active: repeat == "EVERY_2H",
+                        onTap: () => setLocal(() => repeat = "EVERY_2H"),
+                      ),
+                      _RepeatChip(
+                        label: "Daily",
+                        active: repeat == "DAILY",
+                        onTap: () => setLocal(() => repeat = "DAILY"),
+                      ),
+                      _RepeatChip(
+                        label: "Weekly",
+                        active: repeat == "WEEKLY",
+                        onTap: () => setLocal(() => repeat = "WEEKLY"),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text("Cancel"),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text("Schedule"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Schedule")),
-            ],
           );
         },
       ),
@@ -978,12 +1056,119 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       } catch (_) {}
       if (created != null && mounted) {
         setState(() => _alerts = [..._alerts, created!]);
+        final scheduleAtParsed = _parseAlertAt(created["schedule_at"]);
+        if (scheduleAtParsed != null) {
+          await PushNotificationService.instance.scheduleAlertLocal(
+            alertId: (created["id"] as num).toInt(),
+            castId: (created["cast_id"] as num).toInt(),
+            title: created["title"]?.toString() ?? "Alert",
+            body: created["message"]?.toString() ??
+                created["title"]?.toString() ??
+                "Alert",
+            scheduleAt: scheduleAtParsed,
+          );
+        }
       }
+      if (!mounted) return;
       GlassToast.show(context, "Alert scheduled", icon: Icons.check_circle_rounded);
       _loadData();
     } else {
       GlassToast.show(context, "Unable to schedule", icon: Icons.error_outline);
     }
+  }
+
+  Future<void> _deleteAlert(Map<String, dynamic> alert) async {
+    final alertId = (alert["id"] as num?)?.toInt();
+    if (alertId == null) return;
+    final res = await _api.deleteCastAlert(alertId: alertId);
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      setState(() => _alerts = _alerts.where((a) => a["id"] != alertId).toList());
+      await PushNotificationService.instance.cancelAlert(alertId);
+    } else {
+      GlassToast.show(context, "Unable to delete alert", icon: Icons.error_outline);
+    }
+  }
+
+  Future<void> _scheduleLocalAlerts(List<Map<String, dynamic>> alerts) async {
+    for (final alert in alerts) {
+      final alertId = (alert["id"] as num?)?.toInt();
+      final castId = (alert["cast_id"] as num?)?.toInt();
+      final scheduleAt = _parseAlertAt(alert["schedule_at"]);
+      if (alertId == null || castId == null || scheduleAt == null) continue;
+      await PushNotificationService.instance.scheduleAlertLocal(
+        alertId: alertId,
+        castId: castId,
+        title: alert["title"]?.toString() ?? "Alert",
+        body: alert["message"]?.toString() ??
+            alert["title"]?.toString() ??
+            "Alert",
+        scheduleAt: scheduleAt,
+      );
+    }
+  }
+
+  String _castNameById(int castId) {
+    final match =
+        _casts.firstWhere((c) => (c["id"] as num?)?.toInt() == castId, orElse: () => {});
+    final name = match["name"]?.toString();
+    if (name != null && name.isNotEmpty) return name;
+    return "Cast $castId";
+  }
+
+  List<Widget> _buildAlertList() {
+    final Map<int, List<Map<String, dynamic>>> grouped = {};
+    for (final alert in _alerts) {
+      final castId = (alert["cast_id"] as num?)?.toInt() ?? -1;
+      grouped.putIfAbsent(castId, () => []).add(alert);
+    }
+
+    final widgets = <Widget>[];
+    for (final entry in grouped.entries) {
+      final castId = entry.key;
+      final list = entry.value;
+      list.sort((a, b) {
+        final atA = _parseAlertAt(a["schedule_at"]);
+        final atB = _parseAlertAt(b["schedule_at"]);
+        if (atA == null || atB == null) return 0;
+        return atA.compareTo(atB);
+      });
+      widgets.add(
+        _AlertSectionHeader(
+          title: _castNameById(castId),
+          count: list.length,
+        ),
+      );
+      widgets.addAll(
+        list.map(
+          (a) {
+            final title = a["title"]?.toString() ?? "Alert";
+            final when = _formatAlertWhen(a);
+            return Dismissible(
+              key: ValueKey("alert_${a["id"]}"),
+              direction: DismissDirection.endToStart,
+              background: Container(
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withValues(alpha: 0.9),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.delete_rounded, color: Colors.white),
+              ),
+              onDismissed: (_) => _deleteAlert(a),
+              child: _AlertTile(
+                title: title,
+                subtitle: when,
+                castName: _castNameById(castId),
+              ),
+            );
+          },
+        ),
+      );
+      widgets.add(const SizedBox(height: 10));
+    }
+    return widgets;
   }
 
   @override
@@ -1142,13 +1327,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                                           const _EmptyState(
                                               message: "No alerts scheduled")
                                         ]
-                                      : _alerts.map((a) {
-                                          final title =
-                                              a["title"]?.toString() ?? "Alert";
-                                          final when = _formatAlertWhen(a);
-                                          return _AlertTile(
-                                              title: title, subtitle: when);
-                                        }).toList(),
+                                      : _buildAlertList(),
                                 ),
               ),
             ],
@@ -1338,16 +1517,24 @@ class _CastTile extends StatelessWidget {
 }
 
 class _AlertTile extends StatelessWidget {
-  const _AlertTile({required this.title, required this.subtitle});
+  const _AlertTile({
+    required this.title,
+    required this.subtitle,
+    required this.castName,
+  });
   final String title;
   final String subtitle;
+  final String castName;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       leading: Container(
-        width: 40,
-        height: 40,
+        width: 44,
+        height: 44,
         decoration: BoxDecoration(
           color: const Color(0xFFFF9A3D),
           borderRadius: BorderRadius.circular(12),
@@ -1355,7 +1542,109 @@ class _AlertTile extends StatelessWidget {
         child: const Icon(Icons.alarm_rounded, color: Colors.white),
       ),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-      subtitle: Text(subtitle),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(subtitle),
+          const SizedBox(height: 2),
+          Text(
+            castName,
+            style: TextStyle(
+              fontSize: 12,
+              color: dark
+                  ? scheme.onSurface.withValues(alpha: 0.65)
+                  : Colors.black54,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+      trailing: Icon(Icons.chevron_left_rounded,
+          color: scheme.onSurface.withValues(alpha: 0.5)),
+    );
+  }
+}
+
+class _AlertSectionHeader extends StatelessWidget {
+  const _AlertSectionHeader({required this.title, required this.count});
+  final String title;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              "$count alert${count == 1 ? "" : "s"}",
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: scheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RepeatChip extends StatelessWidget {
+  const _RepeatChip({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: active
+              ? scheme.primary.withValues(alpha: 0.2)
+              : scheme.surface.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: active
+                ? scheme.primary.withValues(alpha: 0.6)
+                : scheme.onSurface.withValues(alpha: 0.08),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: active ? scheme.primary : scheme.onSurface,
+          ),
+        ),
+      ),
     );
   }
 }

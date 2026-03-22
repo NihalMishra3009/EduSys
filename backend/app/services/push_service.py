@@ -5,7 +5,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.cast import Cast, CastMember
+from app.models.cast import Cast, CastAlert, CastMember
 from app.models.device_push_token import DevicePushToken
 
 
@@ -76,30 +76,7 @@ def send_cast_message_push(
     if cast is None:
         return
 
-    member_user_ids = [
-        row.user_id
-        for row in db.query(CastMember).filter(CastMember.cast_id == cast_id).all()
-        if row.user_id != sender_id
-    ]
-    if not member_user_ids:
-        return
-
-    token_rows = (
-        db.query(DevicePushToken)
-        .filter(DevicePushToken.user_id.in_(member_user_ids), DevicePushToken.active.is_(True))
-        .all()
-    )
-    if not token_rows:
-        return
-
-    unique_tokens: list[str] = []
-    seen: set[str] = set()
-    for row in token_rows:
-        token = (row.token or "").strip()
-        if not token or token in seen:
-            continue
-        seen.add(token)
-        unique_tokens.append(token)
+    unique_tokens = _collect_cast_tokens(db, cast_id, exclude_user_id=sender_id)
     if not unique_tokens:
         return
 
@@ -137,6 +114,95 @@ def send_cast_message_push(
         return
 
     _deactivate_invalid_tokens(db, unique_tokens, response.text)
+
+
+def send_cast_alert_push(
+    db: Session,
+    *,
+    cast_id: int,
+    alert_id: int,
+    title: str,
+    message: str | None,
+    schedule_at: datetime,
+) -> None:
+    server_key = (settings.fcm_server_key or "").strip()
+    if not server_key:
+        return
+
+    cast = db.get(Cast, cast_id)
+    if cast is None:
+        return
+
+    unique_tokens = _collect_cast_tokens(db, cast_id)
+    if not unique_tokens:
+        return
+
+    body = (message or "").strip() or title
+    payload = {
+        "registration_ids": unique_tokens,
+        "priority": "high",
+        "content_available": True,
+        "data": {
+            "type": "cast_alert",
+            "cast_id": str(cast_id),
+            "alert_id": str(alert_id),
+            "title": title,
+            "body": body,
+            "schedule_at": schedule_at.isoformat(),
+        },
+    }
+
+    headers = {
+        "Authorization": f"key={server_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = httpx.post(
+            "https://fcm.googleapis.com/fcm/send",
+            headers=headers,
+            json=payload,
+            timeout=8.0,
+        )
+    except Exception:
+        return
+
+    if response.status_code < 200 or response.status_code >= 300:
+        return
+
+    _deactivate_invalid_tokens(db, unique_tokens, response.text)
+
+
+def _collect_cast_tokens(
+    db: Session,
+    cast_id: int,
+    *,
+    exclude_user_id: int | None = None,
+) -> list[str]:
+    member_user_ids = [
+        row.user_id
+        for row in db.query(CastMember).filter(CastMember.cast_id == cast_id).all()
+        if exclude_user_id is None or row.user_id != exclude_user_id
+    ]
+    if not member_user_ids:
+        return []
+
+    token_rows = (
+        db.query(DevicePushToken)
+        .filter(DevicePushToken.user_id.in_(member_user_ids), DevicePushToken.active.is_(True))
+        .all()
+    )
+    if not token_rows:
+        return []
+
+    unique_tokens: list[str] = []
+    seen: set[str] = set()
+    for row in token_rows:
+        token = (row.token or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        unique_tokens.append(token)
+    return unique_tokens
 
 
 def _cast_message_preview(raw_message: str) -> str:

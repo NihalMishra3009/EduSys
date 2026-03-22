@@ -32,7 +32,7 @@ from app.schemas.cast import (
     CastInviteRespondRequest,
 )
 from app.realtime import casts_list_hub
-from app.services.push_service import send_cast_message_push
+from app.services.push_service import send_cast_message_push, send_cast_alert_push
 
 router = APIRouter()
 
@@ -52,6 +52,28 @@ def _dispatch_cast_push(
             sender_id=sender_id,
             sender_name=sender_name,
             raw_message=raw_message,
+        )
+    finally:
+        db.close()
+
+
+def _dispatch_cast_alert_push(
+    *,
+    cast_id: int,
+    alert_id: int,
+    title: str,
+    message: str | None,
+    schedule_at: datetime,
+) -> None:
+    db = SessionLocal()
+    try:
+        send_cast_alert_push(
+            db,
+            cast_id=cast_id,
+            alert_id=alert_id,
+            title=title,
+            message=message,
+            schedule_at=schedule_at,
         )
     finally:
         db.close()
@@ -689,4 +711,36 @@ def create_alert(
     db.add(item)
     db.commit()
     db.refresh(item)
+    threading.Thread(
+        target=_dispatch_cast_alert_push,
+        kwargs={
+            "cast_id": item.cast_id,
+            "alert_id": item.id,
+            "title": item.title,
+            "message": item.message,
+            "schedule_at": item.schedule_at,
+        },
+        daemon=True,
+    ).start()
     return item
+
+
+@router.delete("/alerts/{alert_id}")
+def delete_alert(
+    alert_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    alert = db.get(CastAlert, alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    member = _ensure_member(db, alert.cast_id, current_user.id)
+    if (
+        current_user.role not in (UserRole.ADMIN, UserRole.PROFESSOR)
+        and member.role != CastMemberRole.ADMIN
+        and alert.created_by != current_user.id
+    ):
+        raise HTTPException(status_code=403, detail="Not allowed to delete alert")
+    db.delete(alert)
+    db.commit()
+    return {"ok": True, "alert_id": alert_id}

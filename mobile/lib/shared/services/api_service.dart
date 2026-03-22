@@ -1503,6 +1503,14 @@ class ApiService {
     );
   }
 
+  Future<http.Response> deleteCastAlert({required int alertId}) async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/casts/alerts/$alertId",
+      sender: (uri) => _sharedClient.delete(uri, headers: headers),
+    );
+  }
+
   Future<http.Response> markCastRead({required int castId}) async {
     final headers = await _headers(auth: true);
     return _sendWithFallback(

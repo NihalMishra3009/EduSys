@@ -4,6 +4,7 @@ import "dart:io";
 
 import "package:edusys_mobile/core/utils/time_format.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/services/push_notification_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
@@ -1403,6 +1404,18 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       if (created != null) {
         setState(() => _scheduled = [..._scheduled, created!]);
         unawaited(_persistAlerts());
+        final scheduleAtParsed = _parseAlertAt(created["schedule_at"]);
+        if (scheduleAtParsed != null) {
+          await PushNotificationService.instance.scheduleAlertLocal(
+            alertId: (created["id"] as num).toInt(),
+            castId: (created["cast_id"] as num).toInt(),
+            title: created["title"]?.toString() ?? "Alert",
+            body: created["message"]?.toString() ??
+                created["title"]?.toString() ??
+                "Alert",
+            scheduleAt: scheduleAtParsed,
+          );
+        }
       } else {
         await _loadMessages();
       }

@@ -6,6 +6,8 @@ import "package:firebase_core/firebase_core.dart";
 import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/widgets.dart";
 import "package:flutter_local_notifications/flutter_local_notifications.dart";
+import "package:timezone/data/latest.dart" as tz;
+import "package:timezone/timezone.dart" as tz;
 
 const String _castChannelId = "cast_messages";
 const String _castChannelName = "Cast messages";
@@ -15,6 +17,10 @@ const String _actionReply = "cast_reply";
 const String _payloadCastIdKey = "cast_id";
 const String _payloadTypeKey = "type";
 const String _payloadTypeCastMessage = "cast_message";
+const String _payloadTypeCastAlert = "cast_alert";
+const String _alertChannelId = "cast_alerts";
+const String _alertChannelName = "Cast alerts";
+const String _alertChannelDescription = "Scheduled cast alerts";
 
 @pragma("vm:entry-point")
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -48,6 +54,7 @@ class PushNotificationService {
     if (_initialized) return;
     await Firebase.initializeApp();
     await _initLocalNotifications();
+    tz.initializeTimeZones();
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
     final messaging = FirebaseMessaging.instance;
@@ -86,19 +93,37 @@ class PushNotificationService {
 
   Future<void> showNotificationForRemoteMessage(RemoteMessage message) async {
     final data = message.data;
-    if (data[_payloadTypeKey] != _payloadTypeCastMessage) {
+    final type = data[_payloadTypeKey];
+    if (type == _payloadTypeCastMessage) {
+      final castId = int.tryParse(data[_payloadCastIdKey] ?? "");
+      if (castId == null) return;
+
+      final title = (data["title"] ?? "New message").toString();
+      final body = (data["body"] ?? "You have a new cast message").toString();
+      await _showCastNotification(
+        castId: castId,
+        title: title,
+        body: body,
+      );
       return;
     }
-    final castId = int.tryParse(data[_payloadCastIdKey] ?? "");
-    if (castId == null) return;
-
-    final title = (data["title"] ?? "New message").toString();
-    final body = (data["body"] ?? "You have a new cast message").toString();
-    await _showCastNotification(
-      castId: castId,
-      title: title,
-      body: body,
-    );
+    if (type == _payloadTypeCastAlert) {
+      final castId = int.tryParse(data[_payloadCastIdKey] ?? "");
+      final alertId = int.tryParse(data["alert_id"] ?? "");
+      final scheduleAtRaw = data["schedule_at"];
+      if (castId == null || alertId == null || scheduleAtRaw == null) return;
+      final scheduleAt = DateTime.tryParse(scheduleAtRaw.toString());
+      if (scheduleAt == null) return;
+      final title = (data["title"] ?? "Alert").toString();
+      final body = (data["body"] ?? title).toString();
+      await scheduleAlertLocal(
+        alertId: alertId,
+        castId: castId,
+        title: title,
+        body: body,
+        scheduleAt: scheduleAt,
+      );
+    }
   }
 
   Future<void> handleNotificationAction(NotificationResponse response) async {
@@ -164,9 +189,16 @@ class PushNotificationService {
       description: _castChannelDescription,
       importance: Importance.max,
     );
+    const alertChannel = AndroidNotificationChannel(
+      _alertChannelId,
+      _alertChannelName,
+      description: _alertChannelDescription,
+      importance: Importance.max,
+    );
     final androidPlugin =
         _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     await androidPlugin?.createNotificationChannel(channel);
+    await androidPlugin?.createNotificationChannel(alertChannel);
   }
 
   Future<void> _showCastNotification({
@@ -215,6 +247,82 @@ class PushNotificationService {
         android: androidDetails,
         iOS: iosDetails,
       ),
+      payload: castId.toString(),
+    );
+  }
+
+  Future<void> scheduleAlertLocal({
+    required int alertId,
+    required int castId,
+    required String title,
+    required String body,
+    required DateTime scheduleAt,
+  }) async {
+    final target = scheduleAt.toLocal();
+    final now = DateTime.now();
+    if (!target.isAfter(now)) {
+      await _showAlertNow(
+        alertId: alertId,
+        castId: castId,
+        title: title,
+        body: body,
+      );
+      return;
+    }
+
+    final androidDetails = AndroidNotificationDetails(
+      _alertChannelId,
+      _alertChannelName,
+      channelDescription: _alertChannelDescription,
+      importance: Importance.max,
+      priority: Priority.high,
+      category: AndroidNotificationCategory.alarm,
+    );
+    const iosDetails = DarwinNotificationDetails(
+      interruptionLevel: InterruptionLevel.timeSensitive,
+      categoryIdentifier: "cast_alert",
+    );
+
+    await _local.zonedSchedule(
+      alertId,
+      title,
+      body,
+      tz.TZDateTime.from(target, tz.local),
+      NotificationDetails(android: androidDetails, iOS: iosDetails),
+      payload: castId.toString(),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+
+  Future<void> cancelAlert(int alertId) async {
+    await _local.cancel(alertId);
+  }
+
+  Future<void> _showAlertNow({
+    required int alertId,
+    required int castId,
+    required String title,
+    required String body,
+  }) async {
+    final androidDetails = AndroidNotificationDetails(
+      _alertChannelId,
+      _alertChannelName,
+      channelDescription: _alertChannelDescription,
+      importance: Importance.max,
+      priority: Priority.high,
+      category: AndroidNotificationCategory.alarm,
+    );
+    const iosDetails = DarwinNotificationDetails(
+      interruptionLevel: InterruptionLevel.timeSensitive,
+      categoryIdentifier: "cast_alert",
+    );
+    await _local.show(
+      alertId,
+      title,
+      body,
+      NotificationDetails(android: androidDetails, iOS: iosDetails),
       payload: castId.toString(),
     );
   }
