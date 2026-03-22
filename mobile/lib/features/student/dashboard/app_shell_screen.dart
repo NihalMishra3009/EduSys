@@ -3416,8 +3416,8 @@ class _HomeTabState extends State<_HomeTab> {
   Timer? _activeSyncTimer;
   Timer? _roomSyncTimer;
   Timer? _alertSyncTimer;
-  Timer? _alertTickTimer;
-  DateTime _alertNow = DateTime.now();
+  final ValueNotifier<DateTime> _alertNow =
+      ValueNotifier<DateTime>(DateTime.now());
   final Set<int> _suppressedActiveLectureIds = {};
 
 
@@ -3657,11 +3657,6 @@ class _HomeTabState extends State<_HomeTab> {
       }
       await _syncCastAlerts();
     });
-    _alertTickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-      if (_castAlerts.isEmpty) return;
-      setState(() => _alertNow = DateTime.now());
-    });
     _load();
   }
 
@@ -3671,7 +3666,7 @@ class _HomeTabState extends State<_HomeTab> {
     _activeSyncTimer?.cancel();
     _roomSyncTimer?.cancel();
     _alertSyncTimer?.cancel();
-    _alertTickTimer?.cancel();
+    _alertNow.dispose();
     super.dispose();
   }
 
@@ -3684,7 +3679,7 @@ class _HomeTabState extends State<_HomeTab> {
       }
       final rows = await _filterSuppressedActiveAsync(
           jsonDecode(res.body) as List<dynamic>);
-      if (mounted) {
+      if (mounted && _listChanged(rows, _active)) {
         setState(() => _active = rows);
       }
     } catch (_) {
@@ -3721,7 +3716,7 @@ class _HomeTabState extends State<_HomeTab> {
       }
       final rows = jsonDecode(res.body) as List<dynamic>;
       await _api.saveCache("home_rooms", rows);
-      if (mounted) {
+      if (mounted && _listChanged(rows, _rooms)) {
         setState(() => _rooms = rows);
       }
     } catch (_) {
@@ -3748,14 +3743,23 @@ class _HomeTabState extends State<_HomeTab> {
       }
       final rows = _parseMapList(jsonDecode(res.body));
       await _api.saveCache("home_cast_alerts", rows);
-      if (mounted) {
+      if (mounted && _listChanged(rows, _castAlerts)) {
         setState(() {
           _castAlerts = rows;
-          _alertNow = DateTime.now();
         });
       }
+      _alertNow.value = DateTime.now();
     } catch (_) {
       // Ignore transient failures.
+    }
+  }
+
+  bool _listChanged(List<dynamic> next, List<dynamic> current) {
+    if (next.length != current.length) return true;
+    try {
+      return jsonEncode(next) != jsonEncode(current);
+    } catch (_) {
+      return true;
     }
   }
 
@@ -4034,7 +4038,7 @@ class _HomeTabState extends State<_HomeTab> {
       _studentNames = nextNames;
       _departmentName = nextDepartmentName;
       _studentCount = nextStudentCount;
-      _alertNow = DateTime.now();
+      _alertNow.value = DateTime.now();
     });
     await _syncCalendarFromSources(
       scheduled: nextScheduled,
@@ -4207,17 +4211,22 @@ class _HomeTabState extends State<_HomeTab> {
             onLectureEnded: _handleLectureEnded,
           )
         else
-          _StudentDashboard(
-            loading: _loading,
-            active: _active,
-            scheduled: _scheduled,
-            rooms: _rooms,
-            history: _history,
-            castAlerts: _castAlerts,
-            now: _alertNow,
-            onJoinRoom: _openRoomFromHome,
-            onOpenConnected: widget.onOpenConnected,
-            onOpenCasts: _openCasts,
+          ValueListenableBuilder<DateTime>(
+            valueListenable: _alertNow,
+            builder: (context, now, _) {
+              return _StudentDashboard(
+                loading: _loading,
+                active: _active,
+                scheduled: _scheduled,
+                rooms: _rooms,
+                history: _history,
+                castAlerts: _castAlerts,
+                now: now,
+                onJoinRoom: _openRoomFromHome,
+                onOpenConnected: widget.onOpenConnected,
+                onOpenCasts: _openCasts,
+              );
+            },
           ),
       ],
     );
@@ -11073,6 +11082,10 @@ class _LecturesTabState extends State<_LecturesTab> {
   bool _offline = false;
   List<dynamic> _active = [];
   Timer? _syncTimer;
+  Timer? _rescanPollTimer;
+  int? _currentLectureId;
+  int? _currentRoomId;
+  int? _lastAdvertiseUntil;
   static const List<Map<String, dynamic>> _demoActive = [
     {"id": 901, "classroom_id": 12},
     {"id": 902, "classroom_id": 14},
@@ -11090,6 +11103,7 @@ class _LecturesTabState extends State<_LecturesTab> {
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _rescanPollTimer?.cancel();
     _classroomController.dispose();
     _lectureIdController.dispose();
     _advertiseMinutesController.dispose();
@@ -11165,6 +11179,14 @@ class _LecturesTabState extends State<_LecturesTab> {
           }
           return;
         }
+        _currentLectureId = lectureId;
+        _currentRoomId = id;
+        _lastAdvertiseUntil = null;
+        _rescanPollTimer?.cancel();
+        _rescanPollTimer =
+            Timer.periodic(const Duration(seconds: 30), (_) async {
+          await _checkForRescanRequests();
+        });
       } catch (_) {
         // Keep lecture start flow alive even if parsing fails.
       }
@@ -11186,6 +11208,37 @@ class _LecturesTabState extends State<_LecturesTab> {
     );
     _show("End window started for $advertiseMinutes min. Finalizing soon.");
     await _load();
+  }
+
+  Future<void> _checkForRescanRequests() async {
+    final lectureId = _currentLectureId;
+    final roomId = _currentRoomId;
+    if (lectureId == null || roomId == null) return;
+    try {
+      final res = await _api.getActiveAttendanceSession(lectureId: lectureId);
+      if (res.statusCode < 200 || res.statusCode >= 300) return;
+      if (res.body.isEmpty) return;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map<String, dynamic>) return;
+      final serverUntil = (decoded["advertise_until"] as num?)?.toInt();
+      final sessionToken = decoded["session_token"]?.toString();
+      final windowMs =
+          (decoded["advertise_window_ms"] as num?)?.toInt() ?? 120000;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (serverUntil != null &&
+          serverUntil > nowMs &&
+          (serverUntil > (_lastAdvertiseUntil ?? 0)) &&
+          sessionToken != null &&
+          sessionToken.isNotEmpty) {
+        _lastAdvertiseUntil = serverUntil;
+        await _smartAttendance.handleProfessorRescanRequest(
+          lectureId: lectureId,
+          roomId: roomId,
+          sessionToken: sessionToken,
+          advertiseWindowMs: windowMs,
+        );
+      }
+    } catch (_) {}
   }
 
   Future<int?> _promptAdvertiseMinutes() async {

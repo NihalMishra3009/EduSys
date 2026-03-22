@@ -1,3 +1,4 @@
+import "dart:async";
 import "dart:convert";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
@@ -22,9 +23,14 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
   bool _loading = false;
   String _message = "";
   bool _success = false;
+  Timer? _rescanPollTimer;
+  int? _currentLectureId;
+  int? _currentRoomId;
+  int? _lastAdvertiseUntil;
 
   @override
   void dispose() {
+    _rescanPollTimer?.cancel();
     _classroomController.dispose();
     _lectureIdController.dispose();
     _thresholdController.dispose();
@@ -76,6 +82,14 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
         advertiseWindowMs: advertiseWindowMs,
         scheduledStart: scheduledStart,
       );
+      _currentLectureId = lectureId;
+      _currentRoomId = classroomId;
+      _lastAdvertiseUntil = null;
+      _rescanPollTimer?.cancel();
+      _rescanPollTimer =
+          Timer.periodic(const Duration(seconds: 30), (_) async {
+        await _checkForRescanRequests();
+      });
     }
   }
 
@@ -145,6 +159,37 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
     );
     controller.dispose();
     return result;
+  }
+
+  Future<void> _checkForRescanRequests() async {
+    final lectureId = _currentLectureId;
+    final roomId = _currentRoomId;
+    if (lectureId == null || roomId == null) return;
+    try {
+      final res = await _api.getActiveAttendanceSession(lectureId: lectureId);
+      if (res.statusCode < 200 || res.statusCode >= 300) return;
+      if (res.body.isEmpty) return;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map<String, dynamic>) return;
+      final serverUntil = (decoded["advertise_until"] as num?)?.toInt();
+      final sessionToken = decoded["session_token"]?.toString();
+      final windowMs =
+          (decoded["advertise_window_ms"] as num?)?.toInt() ?? 120000;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (serverUntil != null &&
+          serverUntil > nowMs &&
+          (serverUntil > (_lastAdvertiseUntil ?? 0)) &&
+          sessionToken != null &&
+          sessionToken.isNotEmpty) {
+        _lastAdvertiseUntil = serverUntil;
+        await _smartAttendance.handleProfessorRescanRequest(
+          lectureId: lectureId,
+          roomId: roomId,
+          sessionToken: sessionToken,
+          advertiseWindowMs: windowMs,
+        );
+      }
+    } catch (_) {}
   }
 
   String _parseMessage(String body, {required String fallback}) {

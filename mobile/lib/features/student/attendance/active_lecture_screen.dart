@@ -124,22 +124,40 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
         final decoded = jsonDecode(res.body) as Map<String, dynamic>;
         final sessionToken = decoded["session_token"]?.toString();
         final advertiseUntil = decoded["advertise_until"];
-        if (sessionToken != null && sessionToken.isNotEmpty) {
-          await _smartAttendance.triggerAttendanceWindowScan(
-            lectureId: lectureId,
-            roomId: classroomId,
-            sessionToken: sessionToken,
-            advertiseUntilMs: advertiseUntil is num ? advertiseUntil.toInt() : null,
-          );
-        }
         if (!mounted) return;
         setState(() {
+          _loading = false;
           _success = true;
-          _message = "Attendance window requested. Keep Bluetooth on.";
+          _message =
+              "Scanning for beacon… keep Bluetooth on and stay near the classroom.";
         });
+        if (sessionToken != null && sessionToken.isNotEmpty) {
+          _smartAttendance
+              .triggerAttendanceWindowScan(
+                lectureId: lectureId,
+                roomId: classroomId,
+                sessionToken: sessionToken,
+                advertiseUntilMs:
+                    advertiseUntil is num ? advertiseUntil.toInt() : null,
+              )
+              .then((result) {
+            if (!mounted) return;
+            setState(() {
+              _success = result.success;
+              _message = result.message;
+            });
+          }).catchError((e) {
+            if (!mounted) return;
+            setState(() {
+              _success = false;
+              _message = "Scan error. Please retry.";
+            });
+          });
+        }
       } else {
         if (!mounted) return;
         setState(() {
+          _loading = false;
           _success = false;
           _message = _extractMessage(res.body, fallback: "Unable to request attendance");
         });
@@ -147,13 +165,10 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
+        _loading = false;
         _success = false;
         _message = "Unable to request attendance. Please retry.";
       });
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
     }
   }
 

@@ -333,7 +333,7 @@ class SmartAttendanceService {
     );
   }
 
-  Future<void> triggerAttendanceWindowScan({
+  Future<SmartAttendanceResult> triggerAttendanceWindowScan({
     required int lectureId,
     required int roomId,
     required String sessionToken,
@@ -347,7 +347,7 @@ class SmartAttendanceService {
       final cappedMs = math.min(remainingMs, _scanWindow.inMilliseconds);
       windowOverride = Duration(milliseconds: cappedMs);
     }
-    await _runAttendanceScan(
+    return _runAttendanceScan(
       lectureId: lectureId,
       roomId: roomId,
       session: {
@@ -365,7 +365,11 @@ class SmartAttendanceService {
     required int roomId,
   }) async {
     CrashLogService.log("SCAN", "Manual scan lectureId=$lectureId roomId=$roomId");
-    return _runAttendanceScan(lectureId: lectureId, roomId: roomId);
+    return _runAttendanceScan(
+      lectureId: lectureId,
+      roomId: roomId,
+      scanWindowOverride: const Duration(seconds: 15),
+    );
   }
 
   Future<bool> _requestStudentPermissions() async {
@@ -774,7 +778,7 @@ class SmartAttendanceService {
             return const SmartAttendanceResult(
                 success: false, message: "Unable to resolve student profile");
           }
-          await _api.logAttendanceScan(
+          final exitRes1 = await _api.logAttendanceScan(
             scanId: _uuid.v4(),
             studentId: studentId,
             lectureId: lectureId,
@@ -786,6 +790,15 @@ class SmartAttendanceService {
             forced: true,
             reason: "LECTURE_END_WINDOW",
           );
+          if (exitRes1.statusCode < 200 || exitRes1.statusCode >= 300) {
+            CrashLogService.log(
+                "SCAN", "logAttendanceScan failed: ${exitRes1.statusCode} ${exitRes1.body}");
+            state.scanIndex -= 1;
+            return SmartAttendanceResult(
+              success: false,
+              message: "Attendance submission failed (${exitRes1.statusCode}). Please retry.",
+            );
+          }
           await _api.suppressActiveLectureId(lectureId);
           _markController.add(AttendanceMarkEvent(
             lectureId: lectureId,
@@ -816,7 +829,7 @@ class SmartAttendanceService {
               return const SmartAttendanceResult(
                   success: false, message: "Unable to resolve student profile");
             }
-            await _api.logAttendanceScan(
+            final exitRes2 = await _api.logAttendanceScan(
               scanId: _uuid.v4(),
               studentId: studentId,
               lectureId: lectureId,
@@ -826,6 +839,16 @@ class SmartAttendanceService {
               scanIndex: state.scanIndex,
               rssi: scanResult.avgRssi,
             );
+            if (exitRes2.statusCode < 200 || exitRes2.statusCode >= 300) {
+              CrashLogService.log(
+                  "SCAN", "logAttendanceScan failed: ${exitRes2.statusCode} ${exitRes2.body}");
+              state.scanIndex -= 1;
+              return SmartAttendanceResult(
+                success: false,
+                message:
+                    "Attendance submission failed (${exitRes2.statusCode}). Please retry.",
+              );
+            }
             await _api.suppressActiveLectureId(lectureId);
             _markController.add(AttendanceMarkEvent(
               lectureId: lectureId,
@@ -883,7 +906,7 @@ class SmartAttendanceService {
               return const SmartAttendanceResult(
                   success: false, message: "Unable to resolve student profile");
             }
-            await _api.logAttendanceScan(
+            final entryRes = await _api.logAttendanceScan(
               scanId: _uuid.v4(),
               studentId: studentId,
               lectureId: lectureId,
@@ -893,6 +916,16 @@ class SmartAttendanceService {
               scanIndex: state.scanIndex,
               rssi: scanResult.avgRssi,
             );
+            if (entryRes.statusCode < 200 || entryRes.statusCode >= 300) {
+              CrashLogService.log(
+                  "SCAN", "logAttendanceScan failed: ${entryRes.statusCode} ${entryRes.body}");
+              state.scanIndex -= 1;
+              return SmartAttendanceResult(
+                success: false,
+                message:
+                    "Attendance submission failed (${entryRes.statusCode}). Please retry.",
+              );
+            }
             _markController.add(AttendanceMarkEvent(
               lectureId: lectureId,
               studentId: studentId,
