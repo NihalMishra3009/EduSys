@@ -20,6 +20,7 @@ dependencies:
   google_fonts: ^6.2.1
   firebase_core: ^3.15.2
   firebase_messaging: ^15.2.10
+  flutter_local_notifications: ^17.2.3
   flutter_blue_plus: ^1.31.6
   sensors_plus: ^6.1.1
   flutter_background_service: ^5.1.0

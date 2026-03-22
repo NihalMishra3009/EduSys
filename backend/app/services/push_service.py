@@ -104,18 +104,18 @@ def send_cast_message_push(
         return
 
     message_body = _cast_message_preview(raw_message)
+    title = cast.name or "New cast message"
+    body = f"{sender_name}: {message_body}"
     payload = {
         "registration_ids": unique_tokens,
         "priority": "high",
-        "notification": {
-            "title": cast.name or "New cast message",
-            "body": f"{sender_name}: {message_body}",
-            "sound": "default",
-        },
+        "content_available": True,
         "data": {
             "type": "cast_message",
             "cast_id": str(cast_id),
             "sender_id": str(sender_id),
+            "title": title,
+            "body": body,
         },
     }
 
