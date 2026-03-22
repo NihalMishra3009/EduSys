@@ -14,16 +14,20 @@ class AppTransitions {
 
   static Route<T> fadeSlide<T>(Widget page) {
     return PageRouteBuilder<T>(
-      transitionDuration: const Duration(milliseconds: 250),
-      reverseTransitionDuration: const Duration(milliseconds: 250),
+      transitionDuration: const Duration(milliseconds: 160),
+      reverseTransitionDuration: const Duration(milliseconds: 140),
       pageBuilder: (context, animation, secondaryAnimation) => page,
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        final curved = CurvedAnimation(parent: animation, curve: Curves.easeInOut);
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
         final offset = Tween<Offset>(
-          begin: const Offset(0.08, 0.0),
+          begin: const Offset(0.04, 0.0),
           end: Offset.zero,
         ).animate(curved);
-        return SlideTransition(position: offset, child: child);
+        final fade = Tween<double>(begin: 0.0, end: 1.0).animate(curved);
+        return FadeTransition(
+          opacity: fade,
+          child: SlideTransition(position: offset, child: child),
+        );
       },
     );
   }
