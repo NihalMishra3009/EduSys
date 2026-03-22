@@ -35,7 +35,16 @@ def create_department(
 
 @router.get("", response_model=list[DepartmentOut])
 def list_departments(db: Session = Depends(get_db)):
-    return db.query(Department).order_by(Department.name.asc()).all()
+    rows = db.query(Department).order_by(Department.name.asc()).all()
+    if rows:
+        return rows
+    # Mock departments for early testing.
+    return [
+        DepartmentOut(id=1, name="AIDS"),
+        DepartmentOut(id=2, name="COMP"),
+        DepartmentOut(id=3, name="IOT"),
+        DepartmentOut(id=4, name="MECH"),
+    ]
 
 
 @router.post("/assign")

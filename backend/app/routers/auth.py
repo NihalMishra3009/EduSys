@@ -78,8 +78,27 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     normalized_email = payload.email.lower()
     if not _is_college_email(normalized_email):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Use your college email ID to register")
-    if db.query(User).filter(User.email == normalized_email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
+    existing = db.query(User).filter(User.email == normalized_email).first()
+    if existing:
+        if existing.is_profile_complete:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        # Re-send OTP for incomplete registrations.
+        otp_code = f"{random.randint(100000, 999999)}"
+        existing.otp_code = otp_code
+        existing.otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
+        existing.device_id = payload.device_id
+        existing.sim_serial = payload.sim_serial
+        try:
+            send_otp_email(normalized_email, otp_code)
+            db.commit()
+        except EmailSendError as exc:
+            db.rollback()
+            raise HTTPException(status_code=503, detail=str(exc))
+        return RegisterResponse(
+            detail="OTP resent to your email. Verify to complete registration.",
+            email=normalized_email,
+            otp_dev_code=otp_code if settings.dev_show_otp_in_response else None,
+        )
 
     otp_code = f"{random.randint(100000, 999999)}"
 
