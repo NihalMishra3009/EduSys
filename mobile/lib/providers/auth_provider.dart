@@ -39,6 +39,7 @@ class AuthProvider extends ChangeNotifier {
   String? _name;
   String? _email;
   String? _profilePhotoUrl;
+  String? _profilePhotoLocalPath;
   String? _error;
   bool _preferRegisterForNewUser = false;
 
@@ -49,6 +50,7 @@ class AuthProvider extends ChangeNotifier {
   String? get name => _name;
   String? get email => _email;
   String? get profilePhotoUrl => _profilePhotoUrl;
+  String? get profilePhotoLocalPath => _profilePhotoLocalPath;
   String? get error => _error;
   bool get preferRegisterForNewUser => _preferRegisterForNewUser;
 
@@ -61,6 +63,7 @@ class AuthProvider extends ChangeNotifier {
       _name = await _apiService.getSavedName();
       _email = await _apiService.getSavedEmail();
       _profilePhotoUrl = await _apiService.getSavedProfilePhoto();
+      _profilePhotoLocalPath = await _apiService.getSavedProfilePhotoLocal();
       final hasKnownAccount = await _apiService.hasKnownAccount();
       _preferRegisterForNewUser = !hasKnownAccount && _token == null;
 
@@ -73,8 +76,23 @@ class AuthProvider extends ChangeNotifier {
           await PushNotificationService.instance.syncAfterLogin();
         }
       }
+      await _ensureLocalProfilePhoto();
     } finally {
       _isBootstrapping = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _ensureLocalProfilePhoto() async {
+    if (_profilePhotoUrl == null || _profilePhotoUrl!.isEmpty) {
+      return;
+    }
+    if (_profilePhotoLocalPath != null && _profilePhotoLocalPath!.isNotEmpty) {
+      return;
+    }
+    final local = await _apiService.cacheProfilePhotoLocally(_profilePhotoUrl);
+    if (local != null && local.isNotEmpty) {
+      _profilePhotoLocalPath = local;
       notifyListeners();
     }
   }
@@ -252,6 +270,8 @@ class AuthProvider extends ChangeNotifier {
         _name = nameFromLogin;
         _email = emailFromLogin;
         _profilePhotoUrl = photoFromLogin;
+        _profilePhotoLocalPath =
+            await _apiService.cacheProfilePhotoLocally(_profilePhotoUrl);
         _preferRegisterForNewUser = false;
         await _apiService.markKnownAccount();
 
@@ -262,6 +282,10 @@ class AuthProvider extends ChangeNotifier {
             email: _email!,
             profilePhotoUrl: _profilePhotoUrl,
           );
+          if (_profilePhotoLocalPath != null &&
+              _profilePhotoLocalPath!.isNotEmpty) {
+            await _apiService.saveProfilePhotoLocal(_profilePhotoLocalPath);
+          }
         }
 
         await PushNotificationService.instance.syncAfterLogin();
@@ -300,6 +324,7 @@ class AuthProvider extends ChangeNotifier {
     _name = null;
     _email = null;
     _profilePhotoUrl = null;
+    _profilePhotoLocalPath = null;
     if (clearError) {
       _error = null;
     }
@@ -333,6 +358,8 @@ class AuthProvider extends ChangeNotifier {
       _email = json["email"] as String?;
       _role = (json["role"] as String?)?.toUpperCase() ?? _role;
       _profilePhotoUrl = json["profile_photo_url"] as String? ?? _profilePhotoUrl;
+      _profilePhotoLocalPath =
+          await _apiService.cacheProfilePhotoLocally(_profilePhotoUrl);
 
       if (_role != null && _name != null && _email != null) {
         await _apiService.saveUserContext(
@@ -341,6 +368,10 @@ class AuthProvider extends ChangeNotifier {
           email: _email!,
           profilePhotoUrl: _profilePhotoUrl,
         );
+        if (_profilePhotoLocalPath != null &&
+            _profilePhotoLocalPath!.isNotEmpty) {
+          await _apiService.saveProfilePhotoLocal(_profilePhotoLocalPath);
+        }
       }
 
       notifyListeners();
@@ -406,6 +437,8 @@ class AuthProvider extends ChangeNotifier {
         _name = json["name"] as String?;
         _email = json["email"] as String?;
         _profilePhotoUrl = json["profile_photo_url"] as String?;
+        _profilePhotoLocalPath =
+            await _apiService.cacheProfilePhotoLocally(_profilePhotoUrl);
 
         if (_role != null && _name != null && _email != null) {
           await _apiService.saveUserContext(
@@ -414,6 +447,10 @@ class AuthProvider extends ChangeNotifier {
             email: _email!,
             profilePhotoUrl: _profilePhotoUrl,
           );
+          if (_profilePhotoLocalPath != null &&
+              _profilePhotoLocalPath!.isNotEmpty) {
+            await _apiService.saveProfilePhotoLocal(_profilePhotoLocalPath);
+          }
           _preferRegisterForNewUser = false;
           await _apiService.markKnownAccount();
         }

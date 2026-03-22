@@ -13,6 +13,7 @@ import "package:flutter/material.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:http/http.dart" as http;
 import "package:provider/provider.dart";
+import "package:path_provider/path_provider.dart";
 
 class ApiService {
   ApiService({FlutterSecureStorage? storage})
@@ -26,6 +27,7 @@ class ApiService {
   static const String _nameKey = "user_name";
   static const String _emailKey = "user_email";
   static const String _photoKey = "user_photo";
+  static const String _photoLocalKey = "user_photo_local";
   static const String _hasAccountKey = "has_local_account";
   static const String _lastLoginEmailKey = "last_login_email";
   static const String _lastLoginAtKey = "last_login_at";
@@ -46,6 +48,8 @@ class ApiService {
   bool _emailLoaded = false;
   String? _cachedPhoto;
   bool _photoLoaded = false;
+  String? _cachedPhotoLocal;
+  bool _photoLocalLoaded = false;
   DateTime? _lastBackendOkAt;
   DateTime? _lastBackendCheckAt;
   bool? _lastBackendOnline;
@@ -102,6 +106,13 @@ class ApiService {
     return _cachedPhoto;
   }
 
+  Future<String?> getSavedProfilePhotoLocal() async {
+    if (_photoLocalLoaded) return _cachedPhotoLocal;
+    _cachedPhotoLocal = await _storage.read(key: _photoLocalKey);
+    _photoLocalLoaded = true;
+    return _cachedPhotoLocal;
+  }
+
   Future<void> saveToken(String token) async {
     _cachedToken = token;
     _tokenLoaded = true;
@@ -132,6 +143,38 @@ class ApiService {
     }
   }
 
+  Future<void> saveProfilePhotoLocal(String? path) async {
+    _cachedPhotoLocal = path;
+    _photoLocalLoaded = true;
+    if (path == null || path.isEmpty) {
+      await _storage.delete(key: _photoLocalKey);
+    } else {
+      await _storage.write(key: _photoLocalKey, value: path);
+    }
+  }
+
+  Future<String?> cacheProfilePhotoLocally(String? url) async {
+    if (url == null || url.isEmpty) {
+      await saveProfilePhotoLocal(null);
+      return null;
+    }
+    try {
+      final response = await _sharedClient
+          .get(Uri.parse(url))
+          .timeout(_timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return await getSavedProfilePhotoLocal();
+      }
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File("${dir.path}/profile_photo.jpg");
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      await saveProfilePhotoLocal(file.path);
+      return file.path;
+    } catch (_) {
+      return await getSavedProfilePhotoLocal();
+    }
+  }
+
   Future<void> clearToken() async {
     _cachedToken = null;
     _tokenLoaded = true;
@@ -157,10 +200,13 @@ class ApiService {
     _emailLoaded = true;
     _cachedPhoto = null;
     _photoLoaded = true;
+    _cachedPhotoLocal = null;
+    _photoLocalLoaded = true;
     await _storage.delete(key: _roleKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _emailKey);
     await _storage.delete(key: _photoKey);
+    await _storage.delete(key: _photoLocalKey);
   }
 
   Future<void> saveLastLoginHistory({

@@ -54,6 +54,11 @@ List<Map<String, dynamic>> _departmentOptionsFromStudents(
       byId[id] = name;
     }
   }
+  if (byId.isEmpty && students.isNotEmpty) {
+    return [
+      {"id": 0, "name": "All Students"},
+    ];
+  }
   final list = byId.entries
       .map((e) => {"id": e.key, "name": e.value})
       .toList()
@@ -147,23 +152,6 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<void> _openClassExplorer() async {
-    final departmentMap = await _fetchDepartmentMap(_api);
-    if (departmentMap.isNotEmpty) {
-      nextStudents = _applyDepartmentNames(nextStudents, departmentMap);
-    }
-    final departmentMap = await _fetchDepartmentMap(_api);
-    if (departmentMap.isNotEmpty) {
-      final studentList = nextStudents.whereType<Map<String, dynamic>>().toList();
-      if (studentList.isNotEmpty) {
-        final merged = _applyDepartmentNames(studentList, departmentMap);
-        nextStudents = merged;
-        nextStudentNames = _parseStudentNames(merged);
-        nextClasswiseStudents = _buildClasswiseAttendance(
-          merged,
-          summaries: nextSummary,
-        );
-      }
-    }
     if (!mounted) {
       return;
     }
@@ -404,6 +392,7 @@ class _StudentMenuDrawer extends StatelessWidget {
     final name = (auth.name ?? "Student").toString();
     final role = (auth.role ?? "STUDENT").toString();
     final photoUrl = auth.profilePhotoUrl;
+    final photoLocal = auth.profilePhotoLocalPath;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     final bg = isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurfaceSoft;
@@ -439,8 +428,11 @@ class _StudentMenuDrawer extends StatelessWidget {
                     CircleAvatar(
                       radius: 30,
                       backgroundColor: fg.withValues(alpha: 0.14),
-                      backgroundImage:
-                          (photoUrl != null && photoUrl.isNotEmpty)
+                      backgroundImage: (photoLocal != null &&
+                              photoLocal.isNotEmpty &&
+                              File(photoLocal).existsSync())
+                          ? FileImage(File(photoLocal))
+                          : (photoUrl != null && photoUrl.isNotEmpty)
                               ? NetworkImage(photoUrl)
                               : null,
                       onBackgroundImageError: (_, __) {},
@@ -4843,6 +4835,25 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
         } catch (_) {}
       }
     }
+    final allStudents = <Map<String, dynamic>>[];
+    try {
+      final res = await _api.studentsList();
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as List<dynamic>;
+        allStudents.addAll(decoded.whereType<Map<String, dynamic>>());
+      }
+    } catch (_) {
+      // Ignore fetch failures.
+    }
+    if (allStudents.isNotEmpty) {
+      final depMap = await _fetchDepartmentMap(_api);
+      if (depMap.isNotEmpty) {
+        final merged = _applyDepartmentNames(allStudents, depMap);
+        allStudents
+          ..clear()
+          ..addAll(merged);
+      }
+    }
     final selectedClasses = <int>{};
     final selectedStudents = <int>{};
     final advertiseMinutesController = TextEditingController(text: "2");
@@ -4858,7 +4869,10 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
             if (selectedClasses.isEmpty) {
               return const [];
             }
-            return _students.where((row) {
+            return allStudents.where((row) {
+              if (selectedClasses.contains(0)) {
+                return true;
+              }
               final depId = row["department_id"];
               if (depId is num) {
                 return selectedClasses.contains(depId.toInt());
@@ -4873,9 +4887,9 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                 selectedClasses.add(id);
               } else {
                 selectedClasses.remove(id);
-                for (final s in _students) {
+                for (final s in allStudents) {
                   final depId = s["department_id"];
-                  if (depId is num && depId.toInt() == id) {
+                  if (id == 0 || (depId is num && depId.toInt() == id)) {
                     final sid = s["id"];
                     if (sid is int) {
                       selectedStudents.remove(sid);
@@ -4923,14 +4937,14 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
             final advertiseMinutes =
                 int.tryParse(advertiseMinutesController.text.trim()) ?? 2;
             final advertiseWindowMs = advertiseMinutes * 60 * 1000;
-            final classOptions = _departmentOptionsFromStudents(_students);
+            final classOptions = _departmentOptionsFromStudents(allStudents);
             final firstClass = classOptions.firstWhere(
               (c) => selectedClasses.contains(c["id"] as int),
               orElse: () => classOptions.first,
             );
             final classroomId = selectedSpaceId ?? (firstClass["id"] as int);
             final title = "Lecture - ${firstClass["name"]}";
-            final selected = _students
+            final selected = allStudents
                 .where((s) {
                   final sid = s["id"];
                   return sid is int && selectedStudents.contains(sid);
@@ -4989,20 +5003,29 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
           }
 
           final students = visibleStudents();
-          final classOptions = _departmentOptionsFromStudents(_students);
+          final classOptions = _departmentOptionsFromStudents(allStudents);
           final allClassesSelected =
               classOptions.isNotEmpty && selectedClasses.length == classOptions.length;
           final allStudentsSelected =
               students.isNotEmpty && selectedStudents.length == students.length;
+          final topInset = MediaQuery.of(context).padding.top;
+          final maxHeight =
+              MediaQuery.of(context).size.height - topInset - 16;
           return SafeArea(
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: SingleChildScrollView(
-                child: Column(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(top: topInset + 8),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxHeight),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(24)),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
@@ -5084,40 +5107,43 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          CheckboxListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            value: allClassesSelected,
-                            onChanged: (value) => setSheetState(() {
-                              if (value == true) {
-                                selectedClasses
-                                  ..clear()
-                                  ..addAll(
-                                    classOptions.map((c) => c["id"] as int),
-                                  );
-                              } else {
-                                selectedClasses.clear();
-                              }
-                            }),
-                            title: const Text("Select all classes"),
-                          ),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: classOptions.map((c) {
-                              final id = c["id"] as int;
-                              return FilterChip(
-                                label: Text(c["name"].toString()),
-                                selected: selectedClasses.contains(id),
-                                onSelected: (value) => toggleClass(id, value),
-                              );
-                            }).toList(),
-                          ),
-                        ],
-                      ),
+                      child: classOptions.isEmpty
+                          ? const Text("No registered students yet.")
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                CheckboxListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  value: allClassesSelected,
+                                  onChanged: (value) => setSheetState(() {
+                                    if (value == true) {
+                                      selectedClasses
+                                        ..clear()
+                                        ..addAll(
+                                          classOptions.map((c) => c["id"] as int),
+                                        );
+                                    } else {
+                                      selectedClasses.clear();
+                                    }
+                                  }),
+                                  title: const Text("Select all classes"),
+                                ),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: classOptions.map((c) {
+                                    final id = c["id"] as int;
+                                    return FilterChip(
+                                      label: Text(c["name"].toString()),
+                                      selected: selectedClasses.contains(id),
+                                      onSelected: (value) =>
+                                          toggleClass(id, value),
+                                    );
+                                  }).toList(),
+                                ),
+                              ],
+                            ),
                     ),
                     const SizedBox(height: 12),
                     _SectionCard(
@@ -5190,7 +5216,8 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                         ),
                       ],
                     ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
