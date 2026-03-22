@@ -245,9 +245,13 @@ class _CompleteRegistrationScreenState extends State<CompleteRegistrationScreen>
                 ),
                 if (_profilePhotoUrl != null) ...[
                   const SizedBox(height: 8),
-                  CircleAvatar(
-                    radius: 34,
-                    backgroundImage: NetworkImage(_profilePhotoUrl!),
+                  ClipOval(
+                    child: Image.network(
+                      _profilePhotoUrl!,
+                      width: 68,
+                      height: 68,
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 ],
                 if (auth.error != null && auth.error!.isNotEmpty) ...[
