@@ -408,78 +408,105 @@ class _StudentMenuDrawer extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final bg = isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurfaceSoft;
     final fg = scheme.onSurface;
+    final accent = scheme.primary;
     return Drawer(
       width: 300,
       backgroundColor: bg,
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 34,
-                          backgroundColor: fg.withValues(alpha: 0.14),
-                          backgroundImage:
-                              (photoUrl != null && photoUrl.isNotEmpty)
-                                  ? NetworkImage(photoUrl)
-                                  : null,
-                          onBackgroundImageError: (_, __) {},
-                          child: (photoUrl == null || photoUrl.isEmpty)
-                              ? Text(
-                                  name.isNotEmpty ? name[0].toUpperCase() : "?",
-                                  style: TextStyle(
-                                    color: fg,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 22,
-                                  ),
-                                )
-                              : null,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                name.toUpperCase(),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: fg,
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                role,
-                                style: TextStyle(color: fg.withValues(alpha: 0.75), fontSize: 22),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: LinearGradient(
+                    colors: [
+                      accent.withValues(alpha: isDark ? 0.30 : 0.18),
+                      accent.withValues(alpha: isDark ? 0.18 : 0.10),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  const SizedBox(width: 40),
-                ],
+                  border: Border.all(
+                    color: accent.withValues(alpha: isDark ? 0.35 : 0.22),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 30,
+                      backgroundColor: fg.withValues(alpha: 0.14),
+                      backgroundImage:
+                          (photoUrl != null && photoUrl.isNotEmpty)
+                              ? NetworkImage(photoUrl)
+                              : null,
+                      onBackgroundImageError: (_, __) {},
+                      child: (photoUrl == null || photoUrl.isEmpty)
+                          ? Text(
+                              name.isNotEmpty ? name[0].toUpperCase() : "?",
+                              style: TextStyle(
+                                color: fg,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 20,
+                              ),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: fg,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            role,
+                            style: TextStyle(
+                              color: fg.withValues(alpha: 0.78),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (auth.email != null && auth.email!.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              auth.email!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: fg.withValues(alpha: 0.6),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               const _DrawerSectionLabel("Main"),
               _DrawerItem(
+                icon: Icons.home_rounded,
                 title: "Home",
                 active: true,
                 onTap: () => Navigator.of(context).pop(),
               ),
               _DrawerItem(
+                icon: Icons.settings_rounded,
                 title: "Settings",
                 onTap: () {
                   Navigator.of(context).pop();
@@ -489,6 +516,7 @@ class _StudentMenuDrawer extends StatelessWidget {
                 },
               ),
               _DrawerItem(
+                icon: Icons.forum_rounded,
                 title: "Cast",
                 onTap: () {
                   Navigator.of(context).pop();
@@ -498,6 +526,7 @@ class _StudentMenuDrawer extends StatelessWidget {
                 },
               ),
               _DrawerItem(
+                icon: Icons.account_circle_rounded,
                 title: "Profile",
                 onTap: () {
                   Navigator.of(context).pop();
@@ -506,9 +535,10 @@ class _StudentMenuDrawer extends StatelessWidget {
                   );
                 },
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               const _DrawerSectionLabel("Services"),
               _DrawerItem(
+                icon: Icons.notifications_rounded,
                 title: "Notifications",
                 onTap: () {
                   Navigator.of(context).pop();
@@ -518,6 +548,7 @@ class _StudentMenuDrawer extends StatelessWidget {
                 },
               ),
               _DrawerItem(
+                icon: Icons.description_rounded,
                 title: "Documentation",
                 onTap: () {
                   Navigator.of(context).pop();
@@ -528,6 +559,7 @@ class _StudentMenuDrawer extends StatelessWidget {
               ),
               if (role == "STUDENT")
                 _DrawerItem(
+                  icon: Icons.train_rounded,
                   title: "Railway Concession",
                   onTap: () {
                     Navigator.of(context).pop();
@@ -536,11 +568,23 @@ class _StudentMenuDrawer extends StatelessWidget {
                     );
                   },
                 ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               const _DrawerSectionLabel("Support"),
-              _DrawerItem(title: "Departments", onTap: () => Navigator.of(context).pop()),
-              _DrawerItem(title: "About", onTap: () => Navigator.of(context).pop()),
-              _DrawerItem(title: "Report a bug", onTap: () => Navigator.of(context).pop()),
+              _DrawerItem(
+                icon: Icons.apartment_rounded,
+                title: "Departments",
+                onTap: () => Navigator.of(context).pop(),
+              ),
+              _DrawerItem(
+                icon: Icons.info_outline_rounded,
+                title: "About",
+                onTap: () => Navigator.of(context).pop(),
+              ),
+              _DrawerItem(
+                icon: Icons.bug_report_rounded,
+                title: "Report a bug",
+                onTap: () => Navigator.of(context).pop(),
+              ),
               const Spacer(),
               SizedBox(
                 width: double.infinity,
@@ -550,11 +594,12 @@ class _StudentMenuDrawer extends StatelessWidget {
                     await context.read<AuthProvider>().logout();
                   },
                   style: FilledButton.styleFrom(
-                    backgroundColor: fg.withValues(alpha: 0.12),
+                    backgroundColor: fg.withValues(alpha: 0.10),
                     foregroundColor: const Color(0xFFFF6464),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
-                  child: const Text("Logout", style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600)),
+                  child: const Text("Logout", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 ),
               ),
             ],
@@ -567,28 +612,40 @@ class _StudentMenuDrawer extends StatelessWidget {
 
 class _DrawerItem extends StatelessWidget {
   const _DrawerItem({
+    required this.icon,
     required this.title,
     required this.onTap,
     this.active = false,
   });
 
+  final IconData icon;
   final String title;
   final VoidCallback onTap;
   final bool active;
 
   @override
   Widget build(BuildContext context) {
-    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final scheme = Theme.of(context).colorScheme;
+    final onSurface = scheme.onSurface;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final highlight = scheme.primary.withValues(alpha: isDark ? 0.18 : 0.12);
     return ListTile(
       dense: true,
       visualDensity: const VisualDensity(horizontal: -1, vertical: -1),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      tileColor: active ? highlight : Colors.transparent,
+      leading: Icon(
+        icon,
+        size: 20,
+        color: active ? scheme.primary : onSurface.withValues(alpha: 0.7),
+      ),
       title: Text(
         title,
         style: TextStyle(
-          color: active ? Theme.of(context).colorScheme.primary : onSurface,
-          fontSize: 18,
-          fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+          color: active ? scheme.primary : onSurface,
+          fontSize: 16,
+          fontWeight: active ? FontWeight.w700 : FontWeight.w600,
         ),
       ),
       onTap: onTap,
