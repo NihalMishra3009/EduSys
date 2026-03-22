@@ -858,6 +858,7 @@ class SmartAttendanceService {
 
       if (state.confirmedState == _PresenceState.outside) {
         if (insideNow) {
+          final strongSignal = scanResult.avgRssi! >= (insideThreshold + 6);
           if (scanResult.hitCount >= _entryConfirmScans) {
             state.entryWindowStart = null;
             state.entryScanCount = _entryConfirmScans;
@@ -870,6 +871,9 @@ class SmartAttendanceService {
             }
           } else {
             state.entryScanCount += 1;
+          }
+          if (strongSignal) {
+            state.entryScanCount = _entryConfirmScans;
           }
           if (state.entryScanCount >= _entryConfirmScans) {
             state.scanIndex += 1;
