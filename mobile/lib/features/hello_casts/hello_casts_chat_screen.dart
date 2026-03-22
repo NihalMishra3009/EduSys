@@ -71,6 +71,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   final AudioPlayer _audioPlayer = AudioPlayer();
   String? _playingUrl;
   bool _audioPlaying = false;
+  Duration _audioPosition = Duration.zero;
+  Duration _audioDuration = Duration.zero;
   final Map<String, String> _voiceCache = {};
   final Map<String, String> _attachmentCache = {};
 
@@ -98,6 +100,26 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         if (_scheduled.isEmpty) return;
         setState(() => _now = DateTime.now());
       });
+    });
+    _audioPlayer.positionStream.listen((pos) {
+      if (!mounted) return;
+      if (_playingUrl == null) return;
+      setState(() => _audioPosition = pos);
+    });
+    _audioPlayer.durationStream.listen((dur) {
+      if (!mounted) return;
+      setState(() => _audioDuration = dur ?? Duration.zero);
+    });
+    _audioPlayer.playerStateStream.listen((state) {
+      if (!mounted) return;
+      setState(() => _audioPlaying = state.playing);
+      if (state.processingState == ProcessingState.completed) {
+        setState(() {
+          _audioPlaying = false;
+          _playingUrl = null;
+          _audioPosition = Duration.zero;
+        });
+      }
     });
   }
 
@@ -911,19 +933,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         await _audioPlayer.setFilePath(localPath);
         if (!mounted) return;
         _playingUrl = url;
+        _audioPosition = Duration.zero;
         await _audioPlayer.play();
-        if (!mounted) return;
-        setState(() => _audioPlaying = true);
-        _audioPlayer.playerStateStream.listen((state) {
-          if (!mounted) return;
-          setState(() => _audioPlaying = state.playing);
-          if (state.processingState == ProcessingState.completed) {
-            setState(() {
-              _audioPlaying = false;
-              _playingUrl = null;
-            });
-          }
-        });
         return;
       }
       if (_audioPlayer.playing) {
@@ -994,6 +1005,36 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       }
     });
     unawaited(_persistMessages());
+  }
+
+  Future<void> _downloadForMessage(Map<String, dynamic> message) async {
+    final raw = message["message"]?.toString() ?? "";
+    final decoded = _safeDecode(raw);
+    final attachUrl = decoded["attachment_url"]?.toString();
+    if (attachUrl == null || attachUrl.isEmpty) {
+      GlassToast.show(context, "No attachment to download",
+          icon: Icons.error_outline);
+      return;
+    }
+    final attachName = decoded["attachment_name"]?.toString();
+    final localPath = await _resolveAttachmentPath(attachUrl, attachName);
+    if (!mounted) return;
+    if (localPath == null) {
+      GlassToast.show(context, "Download failed", icon: Icons.error_outline);
+      return;
+    }
+    setState(() {
+      final index = _messages.indexWhere((m) => _messageKey(m) == _messageKey(message));
+      if (index >= 0) {
+        _messages[index] = {
+          ..._messages[index],
+          "_local_path": localPath,
+        };
+      }
+    });
+    unawaited(_persistMessages());
+    GlassToast.show(context, "Saved offline",
+        icon: Icons.download_done_rounded);
   }
 
   Future<String?> _resolveAttachmentPath(String url, String? name) async {
@@ -1751,6 +1792,44 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     }
   }
 
+  Future<void> _pickAndSendAudio() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ["mp3", "m4a", "wav", "aac", "ogg"],
+    );
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) return;
+    final file = File(path);
+    final size = await file.length();
+    if (!mounted) return;
+    if (size > 50 * 1024 * 1024) {
+      GlassToast.show(context, "File too large (max 50 MB)",
+          icon: Icons.error_outline);
+      return;
+    }
+    GlassToast.show(context, "Uploading...", icon: Icons.upload_rounded);
+    final res = await _api.uploadAttachment(filePath: path, purpose: "cast");
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final url = data["url"]?.toString();
+      if (url == null || url.isEmpty) return;
+      await _send(
+        type: "FILE",
+        attachUrl: url,
+        attachName: result.files.single.name,
+        localPath: path,
+      );
+    } else {
+      GlassToast.show(
+        context,
+        _detail(res.body, fallback: "Upload failed"),
+        icon: Icons.error_outline,
+      );
+    }
+  }
+
   bool _isMe(Map<String, dynamic> msg) =>
       msg["_pending"] == true || msg["sender_name"] == _myName;
 
@@ -1895,8 +1974,11 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                               onOpenLink: _openLink,
                               onOpenPreview: _openAttachmentPreview,
                               onToggleVoice: _toggleVoiceNote,
+                              onDownload: _downloadForMessage,
                               isAudioPlaying: _audioPlaying,
                               playingUrl: _playingUrl,
+                              audioPosition: _audioPosition,
+                              audioDuration: _audioDuration,
                               reactions: reactions[(visible[i]["id"] as num?)?.toInt()],
                             ),
                           );
@@ -1913,6 +1995,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                         onFile: () {
                           setState(() => _showAttachMenu = false);
                           _pickAndSendFile();
+                        },
+                        onAudio: () {
+                          setState(() => _showAttachMenu = false);
+                          _pickAndSendAudio();
                         },
                         onClose: () => setState(() => _showAttachMenu = false),
                       ),
@@ -2107,8 +2193,11 @@ class _MessageBubble extends StatelessWidget {
     required this.onOpenLink,
     required this.onOpenPreview,
     required this.onToggleVoice,
+    required this.onDownload,
     required this.isAudioPlaying,
     required this.playingUrl,
+    required this.audioPosition,
+    required this.audioDuration,
     this.reactions,
   });
   final Map<String, dynamic> msg;
@@ -2120,8 +2209,11 @@ class _MessageBubble extends StatelessWidget {
   final Future<void> Function(String url) onOpenLink;
   final Future<void> Function(String? url, String? name) onOpenPreview;
   final Future<void> Function(String? url) onToggleVoice;
+  final Future<void> Function(Map<String, dynamic> msg) onDownload;
   final bool isAudioPlaying;
   final String? playingUrl;
+  final Duration audioPosition;
+  final Duration audioDuration;
   final Map<String, int>? reactions;
 
   @override
@@ -2136,6 +2228,8 @@ class _MessageBubble extends StatelessWidget {
     final localPath = msg["_local_path"]?.toString();
     final resolvedUrl =
         (localPath != null && localPath.isNotEmpty) ? localPath : attachUrl;
+    final needsDownload =
+        attachUrl != null && attachUrl.isNotEmpty && (localPath == null || localPath.isEmpty);
     final replyTo = decoded["reply_to"];
     final forwardedFrom = decoded["forwarded_from"];
     final senderName = msg["sender_name"]?.toString();
@@ -2268,12 +2362,35 @@ class _MessageBubble extends StatelessWidget {
                             ),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: Container(
-                                height: 3,
-                                decoration: BoxDecoration(
-                                  color: textColor.withValues(alpha: 0.35),
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
+                              child: LayoutBuilder(
+                                builder: (ctx, constraints) {
+                                  final isActive =
+                                      playingUrl == resolvedUrl && isAudioPlaying;
+                                  final totalMs = audioDuration.inMilliseconds;
+                                  final posMs = audioPosition.inMilliseconds;
+                                  final progress = isActive && totalMs > 0
+                                      ? (posMs / totalMs).clamp(0.0, 1.0)
+                                      : 0.0;
+                                  return Stack(
+                                    children: [
+                                      Container(
+                                        height: 3,
+                                        decoration: BoxDecoration(
+                                          color: textColor.withValues(alpha: 0.35),
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                      Container(
+                                        height: 3,
+                                        width: constraints.maxWidth * progress,
+                                        decoration: BoxDecoration(
+                                          color: textColor,
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                },
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -2282,6 +2399,15 @@ class _MessageBubble extends StatelessWidget {
                                   fontSize: 12,
                                   color: textColor,
                                 )),
+                            if (needsDownload) ...[
+                              const SizedBox(width: 4),
+                              IconButton(
+                                icon: const Icon(Icons.download_rounded),
+                                color: textColor,
+                                iconSize: 18,
+                                onPressed: () => onDownload(msg),
+                              ),
+                            ],
                           ],
                         ),
                       )
@@ -2417,6 +2543,16 @@ class _MessageBubble extends StatelessWidget {
                                 ),
                               ),
                             ),
+                          if (needsDownload)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: IconButton(
+                                icon: const Icon(Icons.download_rounded),
+                                color: textColor,
+                                iconSize: 18,
+                                onPressed: () => onDownload(msg),
+                              ),
+                            ),
                         ],
                       )
                     else if (body != null && body.isNotEmpty)
@@ -2491,8 +2627,13 @@ class _MessageBubble extends StatelessWidget {
 }
 
 class _AttachMenu extends StatelessWidget {
-  const _AttachMenu({required this.onFile, required this.onClose});
+  const _AttachMenu({
+    required this.onFile,
+    required this.onAudio,
+    required this.onClose,
+  });
   final VoidCallback onFile;
+  final VoidCallback onAudio;
   final VoidCallback onClose;
 
   @override
@@ -2507,6 +2648,11 @@ class _AttachMenu extends StatelessWidget {
               label: "Document",
               color: Colors.indigo,
               onTap: onFile),
+          _AttachOption(
+              icon: Icons.library_music_rounded,
+              label: "Audio",
+              color: Colors.green,
+              onTap: onAudio),
           _AttachOption(
               icon: Icons.image_rounded,
               label: "Photo",
