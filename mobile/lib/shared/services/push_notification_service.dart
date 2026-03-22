@@ -164,7 +164,10 @@ class PushNotificationService {
     if (response.actionId == _actionSnooze) {
       final alertId = parsed.alertId;
       if (alertId == null) return;
-      final snoozeAt = DateTime.now().add(const Duration(minutes: 10));
+      if (response.id != null) {
+        await _local.cancel(response.id!);
+      }
+      final snoozeAt = DateTime.now().add(const Duration(minutes: 5));
       await scheduleAlertLocal(
         alertId: alertId,
         castId: castId,
@@ -177,6 +180,9 @@ class PushNotificationService {
     if (response.actionId == _actionStop) {
       final alertId = parsed.alertId;
       if (alertId == null) return;
+      if (response.id != null) {
+        await _local.cancel(response.id!);
+      }
       await cancelAlert(alertId);
       return;
     }
@@ -342,6 +348,7 @@ class PushNotificationService {
           _actionSnooze,
           "Snooze",
           showsUserInterface: false,
+          cancelNotification: true,
         ),
         AndroidNotificationAction(
           _actionStop,
@@ -402,6 +409,7 @@ class PushNotificationService {
           _actionSnooze,
           "Snooze",
           showsUserInterface: false,
+          cancelNotification: true,
         ),
         AndroidNotificationAction(
           _actionStop,

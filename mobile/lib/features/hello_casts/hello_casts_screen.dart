@@ -54,8 +54,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   ];
 
   static const _tabs = ["Chats", "Communities", "Alerts"];
-  static const _weekdayLabels = ["M", "T", "W", "T", "F", "S", "S"];
-  static const _weekdayValues = [1, 2, 3, 4, 5, 6, 7];
   static const _demoCasts = [
     {
       "id": -101,
@@ -926,8 +924,8 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     final castId = ValueNotifier<int?>(null);
     final titleCtrl = TextEditingController();
     final messageCtrl = TextEditingController();
-    DateTime? scheduleAt;
-    final selectedDays = <int>{};
+    DateTime? scheduleDate;
+    TimeOfDay? scheduleTime;
 
     final ok = await showModalBottomSheet<bool>(
       context: context,
@@ -989,36 +987,50 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                     onChanged: (v) => setLocal(() => castId.value = v),
                   ),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.tonal(
-                      onPressed: () async {
-                        final d = await showDatePicker(
-                          context: ctx,
-                          initialDate:
-                              scheduleAt ?? DateTime.now().add(const Duration(minutes: 5)),
-                          firstDate: DateTime.now(),
-                          lastDate: DateTime(2100),
-                        );
-                        if (d == null) return;
-                        if (!ctx.mounted) return;
-                        final t = await showTimePicker(
-                          context: ctx,
-                          initialTime: TimeOfDay.fromDateTime(
-                            scheduleAt ?? DateTime.now(),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final d = await showDatePicker(
+                              context: ctx,
+                              initialDate: scheduleDate ?? DateTime.now(),
+                              firstDate: DateTime.now(),
+                              lastDate: DateTime(2100),
+                            );
+                            if (d == null) return;
+                            if (!ctx.mounted) return;
+                            setLocal(() => scheduleDate = d);
+                          },
+                          child: Text(
+                            scheduleDate == null
+                                ? "Set date"
+                                : "${scheduleDate!.day.toString().padLeft(2, "0")}/"
+                                    "${scheduleDate!.month.toString().padLeft(2, "0")}/"
+                                    "${scheduleDate!.year}",
                           ),
-                        );
-                        if (t == null) return;
-                        if (!ctx.mounted) return;
-                        setLocal(() {
-                          scheduleAt = DateTime(d.year, d.month, d.day, t.hour, t.minute);
-                        });
-                      },
-                      child: Text(
-                        _formatScheduleButton(scheduleAt),
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final t = await showTimePicker(
+                              context: ctx,
+                              initialTime: scheduleTime ?? TimeOfDay.now(),
+                            );
+                            if (t == null) return;
+                            if (!ctx.mounted) return;
+                            setLocal(() => scheduleTime = t);
+                          },
+                          child: Text(
+                            scheduleTime == null
+                                ? "Set time"
+                                : scheduleTime!.format(ctx),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -1029,35 +1041,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                   TextField(
                     controller: messageCtrl,
                     decoration: const InputDecoration(labelText: "Note (optional)"),
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    "Repeat on",
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.7),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    children: List.generate(_weekdayLabels.length, (index) {
-                      final day = _weekdayValues[index];
-                      final active = selectedDays.contains(day);
-                      return ChoiceChip(
-                        label: Text(_weekdayLabels[index]),
-                        selected: active,
-                        onSelected: (_) {
-                          setLocal(() {
-                            if (active) {
-                              selectedDays.remove(day);
-                            } else {
-                              selectedDays.add(day);
-                            }
-                          });
-                        },
-                      );
-                    }),
                   ),
                   const SizedBox(height: 18),
                   Row(
@@ -1086,11 +1069,22 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     );
 
     if (!mounted) return;
-    if (ok != true || scheduleAt == null || castId.value == null) return;
+    if (ok != true || castId.value == null) return;
+    if (scheduleDate == null || scheduleTime == null) {
+      GlassToast.show(context, "Select date & time", icon: Icons.info_outline);
+      return;
+    }
+
+    DateTime scheduleAt = DateTime(
+      scheduleDate!.year,
+      scheduleDate!.month,
+      scheduleDate!.day,
+      scheduleTime!.hour,
+      scheduleTime!.minute,
+    );
 
     final now = DateTime.now();
-    final days = selectedDays.toList()..sort();
-    if (days.isEmpty && !scheduleAt!.isAfter(now)) {
+    if (!scheduleAt.isAfter(now)) {
       scheduleAt = now.add(const Duration(minutes: 1));
       GlassToast.show(context, "Time passed. Alert set for now.",
           icon: Icons.info_outline);
@@ -1100,9 +1094,9 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
       castId: castId.value!,
       title: titleCtrl.text.trim(),
       message: messageCtrl.text.trim().isEmpty ? null : messageCtrl.text.trim(),
-      scheduleAt: scheduleAt!,
+      scheduleAt: scheduleAt,
       intervalMinutes: null,
-      daysOfWeek: days.isEmpty ? null : days,
+      daysOfWeek: null,
       active: true,
     );
     if (!mounted) return;
