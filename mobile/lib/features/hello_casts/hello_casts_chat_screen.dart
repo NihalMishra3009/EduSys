@@ -72,6 +72,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   String? _playingUrl;
   bool _audioPlaying = false;
   final Map<String, String> _voiceCache = {};
+  final Map<String, String> _attachmentCache = {};
 
   String get _messagesCacheKey => "cast_messages_${widget.castId}";
   String get _docsCacheKey => "cast_docs_${widget.castId}";
@@ -261,6 +262,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         _loading = false;
       });
       unawaited(_persistMessages());
+      unawaited(_cacheAttachmentsForMessages(filtered));
       _scrollToBottom(immediate: !_initialScrollDone);
       unawaited(_markRead());
     } else if (!silent) {
@@ -459,6 +461,8 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           (message) => message["client_id"]?.toString() == pendingClientId)) {
         return true;
       }
+      // Keep pending until server echoes a real id/client_id.
+      return false;
     }
     final pendingText = pending["message"]?.toString() ?? "";
     final pendingSender = pending["sender_name"]?.toString() ?? "";
@@ -513,6 +517,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         final message = msg["message"];
         if (message is Map<String, dynamic> && mounted) {
           _upsertMessage(message);
+          unawaited(_cacheAttachmentsForMessage(message));
           if ((message["sender_name"]?.toString() ?? "") != _myName) {
             unawaited(_markRead());
           }
@@ -627,6 +632,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       _messages = _sortedMessages(_messages);
     });
     unawaited(_persistMessages());
+    unawaited(_cacheAttachmentsForMessage(incoming));
     if (isMine || _shouldAutoScroll()) {
       _scrollToBottom();
     }
@@ -791,19 +797,21 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
           icon: Icons.error_outline);
       return;
     }
+    final localPath = await _resolveAttachmentPath(url, name);
+    final resolved = localPath ?? url;
     if (_isPdfFile(name, url)) {
-      await _openPdfPreview(url, name);
+      await _openPdfPreview(resolved, name);
       return;
     }
     if (_isVideoFile(name, url)) {
-      await _openVideoPreview(url);
+      await _openVideoPreview(resolved);
       return;
     }
     if (_isImageFile(name, url)) {
-      await _openImagePreview(url);
+      await _openImagePreview(resolved);
       return;
     }
-    await _openGenericFilePreview(url, name);
+    await _openGenericFilePreview(resolved, name);
   }
 
   Future<void> _openImagePreview(String url) async {
@@ -815,7 +823,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
           child: InteractiveViewer(
-            child: Image.network(url, fit: BoxFit.contain),
+            child: url.startsWith("http")
+                ? Image.network(url, fit: BoxFit.contain)
+                : Image.file(File(url), fit: BoxFit.contain),
           ),
         ),
       ),
@@ -846,20 +856,10 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
 
   Future<void> _openPdfPreview(String url, String? name) async {
     try {
-      final dir = await getTemporaryDirectory();
-      final fileName =
-          (name?.isNotEmpty ?? false) ? name! : "doc_${DateTime.now().millisecondsSinceEpoch}.pdf";
-      final target = File("${dir.path}/$fileName");
-      if (!await target.exists()) {
-        final res = await http.get(Uri.parse(url));
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          if (!mounted) return;
-          GlassToast.show(context, "Unable to download file",
-              icon: Icons.error_outline);
-          return;
-        }
-        await target.writeAsBytes(res.bodyBytes);
-      }
+      final target = url.startsWith("http")
+          ? await _downloadTempPdf(url, name)
+          : File(url);
+      if (target == null) return;
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(
@@ -873,6 +873,30 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     }
   }
 
+  Future<File?> _downloadTempPdf(String url, String? name) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final fileName =
+          (name?.isNotEmpty ?? false) ? name! : "doc_${DateTime.now().millisecondsSinceEpoch}.pdf";
+      final target = File("${dir.path}/$fileName");
+      if (!await target.exists()) {
+        final uri = Uri.tryParse(url) ?? Uri.tryParse("https://$url");
+        if (uri == null) return null;
+        final res = await http.get(uri);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          if (!mounted) return null;
+          GlassToast.show(context, "Unable to download file",
+              icon: Icons.error_outline);
+          return null;
+        }
+        await target.writeAsBytes(res.bodyBytes);
+      }
+      return target;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _toggleVoiceNote(String? url) async {
     if (url == null || url.isEmpty) return;
     try {
@@ -880,21 +904,11 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         final localPath = await _resolveVoicePath(url);
         if (!mounted) return;
         if (localPath == null) {
-          try {
-            await _audioPlayer.setAudioSource(AudioSource.uri(Uri.parse(url)));
-          } catch (_) {
-            if (!mounted) return;
-            GlassToast.show(context, "Unable to load voice note",
-                icon: Icons.error_outline);
-            return;
-          }
-        } else {
-          try {
-            await _audioPlayer.setFilePath(localPath);
-          } catch (_) {
-            await _audioPlayer.setAudioSource(AudioSource.uri(Uri.parse(url)));
-          }
+          GlassToast.show(context, "Voice note not available offline",
+              icon: Icons.error_outline);
+          return;
         }
+        await _audioPlayer.setFilePath(localPath);
         if (!mounted) return;
         _playingUrl = url;
         await _audioPlayer.play();
@@ -932,17 +946,81 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       return cached;
     }
     try {
-      final dir = await getTemporaryDirectory();
+      final dir = await getApplicationDocumentsDirectory();
+      final cacheDir = Directory("${dir.path}/casts_cache");
+      if (!cacheDir.existsSync()) {
+        cacheDir.createSync(recursive: true);
+      }
       final fileName = "voice_${url.hashCode}.m4a";
-      final target = File("${dir.path}/$fileName");
+      final target = File("${cacheDir.path}/$fileName");
       if (!await target.exists()) {
-        final res = await http.get(Uri.parse(url));
+        final uri = Uri.tryParse(url) ?? Uri.tryParse("https://$url");
+        if (uri == null) return null;
+        final res = await http.get(uri);
         if (res.statusCode < 200 || res.statusCode >= 300) {
           return null;
         }
         await target.writeAsBytes(res.bodyBytes);
       }
       _voiceCache[url] = target.path;
+      return target.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _cacheAttachmentsForMessages(List<Map<String, dynamic>> messages) async {
+    for (final msg in messages) {
+      await _cacheAttachmentsForMessage(msg);
+    }
+  }
+
+  Future<void> _cacheAttachmentsForMessage(Map<String, dynamic> message) async {
+    final raw = message["message"]?.toString() ?? "";
+    final decoded = _safeDecode(raw);
+    final attachUrl = decoded["attachment_url"]?.toString();
+    if (attachUrl == null || attachUrl.isEmpty) return;
+    final attachName = decoded["attachment_name"]?.toString();
+    final localPath = await _resolveAttachmentPath(attachUrl, attachName);
+    if (!mounted) return;
+    if (localPath == null) return;
+    setState(() {
+      final index = _messages.indexWhere((m) => _messageKey(m) == _messageKey(message));
+      if (index >= 0) {
+        _messages[index] = {
+          ..._messages[index],
+          "_local_path": localPath,
+        };
+      }
+    });
+    unawaited(_persistMessages());
+  }
+
+  Future<String?> _resolveAttachmentPath(String url, String? name) async {
+    final cached = _attachmentCache[url];
+    if (cached != null && File(cached).existsSync()) {
+      return cached;
+    }
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final cacheDir = Directory("${dir.path}/casts_cache");
+      if (!cacheDir.existsSync()) {
+        cacheDir.createSync(recursive: true);
+      }
+      final safeName =
+          (name ?? "file").replaceAll(RegExp(r"[^a-zA-Z0-9._-]"), "_");
+      final fileName = "att_${url.hashCode}_$safeName";
+      final target = File("${cacheDir.path}/$fileName");
+      if (!target.existsSync()) {
+        final uri = Uri.tryParse(url) ?? Uri.tryParse("https://$url");
+        if (uri == null) return null;
+        final res = await http.get(uri);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return null;
+        }
+        await target.writeAsBytes(res.bodyBytes);
+      }
+      _attachmentCache[url] = target.path;
       return target.path;
     } catch (_) {
       return null;
@@ -1101,19 +1179,62 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     final selected = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
-      builder: (ctx) => ListView(
-        children: [
-          const ListTile(
-            title: Text("Forward to"),
-          ),
-          ...casts.map((c) {
-            return ListTile(
-              title: Text(c["name"]?.toString() ?? "Cast"),
-              subtitle: Text(c["cast_type"]?.toString() ?? "Group"),
-              onTap: () => Navigator.pop(ctx, (c["id"] as num).toInt()),
-            );
-          }),
-        ],
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        decoration: BoxDecoration(
+          color: Theme.of(ctx).colorScheme.surface,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: Theme.of(ctx).dividerColor.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Row(
+              children: [
+                const Icon(Icons.forward_rounded),
+                const SizedBox(width: 8),
+                Text(
+                  "Forward to",
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: casts.map((c) {
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(c["name"]?.toString() ?? "Cast"),
+                    subtitle: Text(c["cast_type"]?.toString() ?? "Group"),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => Navigator.pop(ctx, (c["id"] as num).toInt()),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     if (selected == null) return;
@@ -1220,6 +1341,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         attachUrl: url,
         attachName: "voice_note.m4a",
         durationSecs: duration,
+        localPath: filePath,
       );
     } else {
       GlassToast.show(
@@ -1281,9 +1403,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       if (url == null || url.isEmpty) {
         continue;
       }
+      final localPath = msg["_local_path"]?.toString();
+      final resolvedUrl =
+          (localPath != null && localPath.isNotEmpty) ? localPath : url;
       docs.add({
         "name": decoded["attachment_name"]?.toString() ?? "Attachment",
-        "url": url,
+        "url": resolvedUrl,
+        "local_path": localPath,
         "type": decoded["type"]?.toString() ?? "FILE",
         "created_at": msg["created_at"]?.toString(),
         "sender_name": msg["sender_name"]?.toString(),
@@ -1322,6 +1448,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     String? attachName,
     int? durationSecs,
     Map<String, dynamic>? extra,
+    String? localPath,
   }) async {
     final text = body ?? _msgCtrl.text.trim();
     if (text.isEmpty && attachUrl == null && type == "TEXT") return;
@@ -1352,6 +1479,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       "client_id": clientId,
       "_pending": true,
       "_failed": false,
+      if (localPath != null && localPath.isNotEmpty) "_local_path": localPath,
     };
     setState(() => _messages = _sortedMessages([..._messages, opt]));
     if (_replyTo != null) {
@@ -1386,6 +1514,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         "client_id": clientId,
         "_pending": false,
         "_failed": false,
+        if (localPath != null && localPath.isNotEmpty) "_local_path": localPath,
       };
       setState(() {
         final index = _messages.indexWhere(
@@ -1611,6 +1740,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         type: "FILE",
         attachUrl: url,
         attachName: result.files.single.name,
+        localPath: path,
       );
     } else {
       GlassToast.show(
@@ -2003,6 +2133,9 @@ class _MessageBubble extends StatelessWidget {
     final body = decoded["body"]?.toString();
     final attachName = decoded["attachment_name"]?.toString();
     final attachUrl = decoded["attachment_url"]?.toString();
+    final localPath = msg["_local_path"]?.toString();
+    final resolvedUrl =
+        (localPath != null && localPath.isNotEmpty) ? localPath : attachUrl;
     final replyTo = decoded["reply_to"];
     final forwardedFrom = decoded["forwarded_from"];
     final senderName = msg["sender_name"]?.toString();
@@ -2122,12 +2255,12 @@ class _MessageBubble extends StatelessWidget {
                     ],
                     if (type == "VOICE_NOTE")
                       InkWell(
-                        onTap: () => onToggleVoice(attachUrl),
+                        onTap: () => onToggleVoice(resolvedUrl),
                         borderRadius: BorderRadius.circular(10),
                         child: Row(
                           children: [
                             Icon(
-                              playingUrl == attachUrl && isAudioPlaying
+                              playingUrl == resolvedUrl && isAudioPlaying
                                   ? Icons.pause_circle_filled_rounded
                                   : Icons.play_circle_fill_rounded,
                               size: 26,
@@ -2157,32 +2290,50 @@ class _MessageBubble extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (type == "IMAGE" &&
-                              attachUrl != null &&
-                              attachUrl.isNotEmpty)
+                              resolvedUrl != null &&
+                              resolvedUrl.isNotEmpty)
                             InkWell(
-                              onTap: () => onOpenPreview(attachUrl, attachName),
+                              onTap: () => onOpenPreview(resolvedUrl, attachName),
                               borderRadius: BorderRadius.circular(10),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
-                                child: Image.network(
-                                  attachUrl,
-                                  height: 160,
-                                  width: 240,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    height: 120,
-                                    color: textColor.withValues(alpha: 0.08),
-                                    child: Center(
-                                      child: Icon(Icons.image_not_supported_rounded,
-                                          color: textColor),
-                                    ),
-                                  ),
+                                child: resolvedUrl.startsWith("http")
+                                    ? Image.network(
+                                        resolvedUrl,
+                                        height: 160,
+                                        width: 240,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          height: 120,
+                                          color: textColor.withValues(alpha: 0.08),
+                                          child: Center(
+                                            child: Icon(
+                                                Icons.image_not_supported_rounded,
+                                                color: textColor),
+                                          ),
+                                        ),
+                                      )
+                                    : Image.file(
+                                        File(resolvedUrl),
+                                        height: 160,
+                                        width: 240,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          height: 120,
+                                          color: textColor.withValues(alpha: 0.08),
+                                          child: Center(
+                                            child: Icon(
+                                                Icons.image_not_supported_rounded,
+                                                color: textColor),
+                                          ),
+                                        ),
+                                      ),
                                 ),
                               ),
                             )
                           else
                             InkWell(
-                              onTap: () => onOpenPreview(attachUrl, attachName),
+                              onTap: () => onOpenPreview(resolvedUrl, attachName),
                               borderRadius: BorderRadius.circular(10),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
@@ -2193,7 +2344,7 @@ class _MessageBubble extends StatelessWidget {
                                 ),
                                 child: Row(
                                   children: [
-                                    Icon(_fileIcon(attachName, attachUrl),
+                                    Icon(_fileIcon(attachName, resolvedUrl),
                                         size: 18, color: textColor),
                                     const SizedBox(width: 6),
                                     Expanded(
@@ -2213,9 +2364,9 @@ class _MessageBubble extends StatelessWidget {
                                 ),
                               ),
                             ),
-                          if (_isVideoFile(attachName, attachUrl))
+                          if (_isVideoFile(attachName, resolvedUrl))
                             InkWell(
-                              onTap: () => onOpenPreview(attachUrl, attachName),
+                              onTap: () => onOpenPreview(resolvedUrl, attachName),
                               borderRadius: BorderRadius.circular(10),
                               child: Container(
                                 margin: const EdgeInsets.only(top: 6),
@@ -2231,9 +2382,9 @@ class _MessageBubble extends StatelessWidget {
                                 ),
                               ),
                             ),
-                          if (_isPdfFile(attachName, attachUrl))
+                          if (_isPdfFile(attachName, resolvedUrl))
                             InkWell(
-                              onTap: () => onOpenPreview(attachUrl, attachName),
+                              onTap: () => onOpenPreview(resolvedUrl, attachName),
                               borderRadius: BorderRadius.circular(10),
                               child: Container(
                                 margin: const EdgeInsets.only(top: 6),
@@ -2433,11 +2584,13 @@ class _VideoPreviewScreenState extends State<_VideoPreviewScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
-      ..initialize().then((_) {
-        if (!mounted) return;
-        setState(() => _ready = true);
-      });
+    _controller = widget.url.startsWith("http")
+        ? VideoPlayerController.networkUrl(Uri.parse(widget.url))
+        : VideoPlayerController.file(File(widget.url));
+    _controller.initialize().then((_) {
+      if (!mounted) return;
+      setState(() => _ready = true);
+    });
   }
 
   @override
