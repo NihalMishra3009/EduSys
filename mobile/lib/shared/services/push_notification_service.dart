@@ -148,22 +148,6 @@ class PushNotificationService {
     final payload = response.payload ?? "";
     if (payload.isEmpty) return;
     final parsed = _parsePayload(payload);
-    final castId = parsed.castId;
-    if (castId == null) return;
-
-    if (response.actionId == _actionMarkRead) {
-      await _api.markCastRead(castId: castId);
-      await _local.cancel(castId);
-      return;
-    }
-    if (response.actionId == _actionReply) {
-      final replyText = (response.input ?? "").trim();
-      if (replyText.isEmpty) return;
-      await _api.sendCastMessage(castId: castId, message: replyText);
-      await _api.markCastRead(castId: castId);
-      await _local.cancel(castId);
-      return;
-    }
     if (response.actionId == _actionSnooze) {
       final alertId = parsed.alertId;
       if (alertId == null) return;
@@ -173,7 +157,7 @@ class PushNotificationService {
       final snoozeAt = DateTime.now().add(const Duration(minutes: 5));
       await scheduleAlertLocal(
         alertId: alertId,
-        castId: castId,
+        castId: parsed.castId ?? 0,
         title: parsed.title ?? "Alert",
         body: parsed.body ?? "Reminder",
         scheduleAt: snoozeAt,
@@ -187,6 +171,22 @@ class PushNotificationService {
         await _local.cancel(response.id!);
       }
       await cancelAlert(alertId);
+      return;
+    }
+
+    final castId = parsed.castId;
+    if (castId == null) return;
+    if (response.actionId == _actionMarkRead) {
+      await _api.markCastRead(castId: castId);
+      await _local.cancel(castId);
+      return;
+    }
+    if (response.actionId == _actionReply) {
+      final replyText = (response.input ?? "").trim();
+      if (replyText.isEmpty) return;
+      await _api.sendCastMessage(castId: castId, message: replyText);
+      await _api.markCastRead(castId: castId);
+      await _local.cancel(castId);
       return;
     }
 
