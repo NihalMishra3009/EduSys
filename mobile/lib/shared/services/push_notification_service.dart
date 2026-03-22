@@ -39,8 +39,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 @pragma("vm:entry-point")
-void notificationTapBackground(NotificationResponse response) {
-  PushNotificationService.instance.handleNotificationAction(response);
+Future<void> notificationTapBackground(NotificationResponse response) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  await PushNotificationService.instance.ensureInitialized();
+  await PushNotificationService.instance.handleNotificationAction(response);
 }
 
 class PushNotificationService {
