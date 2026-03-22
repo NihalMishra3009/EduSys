@@ -13,19 +13,18 @@ import "package:flutter/rendering.dart";
 import "package:provider/provider.dart";
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await PushNotificationService.instance.initialize();
-  FlutterError.onError = (FlutterErrorDetails details) {
-    CrashLogService.log(
-      "FLUTTER_ERROR",
-      details.exceptionAsString(),
-      stack: details.stack,
-    );
-    FlutterError.presentError(details);
-  };
-
   runZonedGuarded(
-    () {
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      await PushNotificationService.instance.initialize();
+      FlutterError.onError = (FlutterErrorDetails details) {
+        CrashLogService.log(
+          "FLUTTER_ERROR",
+          details.exceptionAsString(),
+          stack: details.stack,
+        );
+        FlutterError.presentError(details);
+      };
       debugPaintBaselinesEnabled = false;
       debugPaintSizeEnabled = false;
       debugPaintPointersEnabled = false;

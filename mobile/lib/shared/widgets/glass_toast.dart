@@ -12,7 +12,10 @@ class GlassToast {
     Duration duration = const Duration(seconds: 2),
     IconData? icon,
   }) {
-    final overlay = Overlay.of(context, rootOverlay: true);
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) {
+      return;
+    }
 
     final entry = OverlayEntry(
       builder: (ctx) => _ToastEntry(
