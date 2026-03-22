@@ -3417,6 +3417,7 @@ class _HomeTabState extends State<_HomeTab> {
   Timer? _alertSyncTimer;
   Timer? _alertTickTimer;
   DateTime _alertNow = DateTime.now();
+  final Set<int> _suppressedActiveLectureIds = {};
 
 
   Future<void> _handleLectureStarted(Map<String, dynamic> started) async {
@@ -3493,6 +3494,9 @@ class _HomeTabState extends State<_HomeTab> {
       "status": "ENDED",
       "end_time": (ended["end_time"] ?? nowUtc).toString(),
     };
+    if (endedId != null) {
+      _suppressedActiveLectureIds.add(endedId);
+    }
     if (mounted) {
       setState(() {
         final nextActive = List<dynamic>.from(_active);
@@ -3677,13 +3681,27 @@ class _HomeTabState extends State<_HomeTab> {
       if (!mounted || res.statusCode < 200 || res.statusCode >= 300) {
         return;
       }
-      final rows = jsonDecode(res.body) as List<dynamic>;
+      final rows = _filterSuppressedActive(jsonDecode(res.body) as List<dynamic>);
       if (mounted) {
         setState(() => _active = rows);
       }
     } catch (_) {
       // Ignore transient failures.
     }
+  }
+
+  List<dynamic> _filterSuppressedActive(List<dynamic> rows) {
+    if (_suppressedActiveLectureIds.isEmpty) {
+      return rows;
+    }
+    return rows.where((row) {
+      if (row is! Map<String, dynamic>) {
+        return true;
+      }
+      final id = (row["id"] as num?)?.toInt();
+      if (id == null) return true;
+      return !_suppressedActiveLectureIds.contains(id);
+    }).toList();
   }
 
   Future<void> _syncRoomsFromApi() async {
@@ -3923,7 +3941,8 @@ class _HomeTabState extends State<_HomeTab> {
       }
     } else {
       if (activeRes.statusCode >= 200 && activeRes.statusCode < 300) {
-        nextActive = jsonDecode(activeRes.body) as List<dynamic>;
+        nextActive = _filterSuppressedActive(
+            jsonDecode(activeRes.body) as List<dynamic>);
         await _api.saveCache("home_active", nextActive);
       }
       if (histRes.statusCode >= 200 && histRes.statusCode < 300) {
