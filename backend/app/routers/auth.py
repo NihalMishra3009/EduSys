@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import hash_password, verify_password, create_access_token
 from app.models.user import User, UserRole
+from app.models.department import Department
 from app.models.pending_registration import PendingRegistration
 from app.models.lecture import Lecture
 from app.models.attendance_checkpoint import AttendanceCheckpoint
