@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
-from app.core.database import Base, SessionLocal, engine, set_db_stats, get_db_stats
+from app.core.database import Base, SessionLocal, engine
 from app.core.security import hash_password
 from app.core.config import settings
 from app import models as _models  # Register metadata for all tables.
@@ -48,13 +48,8 @@ _logger = logging.getLogger("edusys.api")
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):
     start = time.perf_counter()
-    stats = {"db_time_ms": 0.0, "queries": 0}
-    set_db_stats(stats)
     response = await call_next(request)
     elapsed_ms = (time.perf_counter() - start) * 1000
-    db_stats = get_db_stats() or {}
-    response.headers["X-DB-Time-ms"] = f"{db_stats.get('db_time_ms', 0.0):.1f}"
-    response.headers["X-DB-Queries"] = str(db_stats.get("queries", 0))
     _logger.info(
         "%s %s -> %s %.1fms",
         request.method,
@@ -63,7 +58,6 @@ async def timing_middleware(request: Request, call_next):
         elapsed_ms,
     )
     response.headers["X-Response-Time-ms"] = f"{elapsed_ms:.1f}"
-    set_db_stats(None)
     return response
 _media_dir = Path(__file__).resolve().parent.parent / "media"
 _media_dir.mkdir(parents=True, exist_ok=True)
@@ -652,18 +646,6 @@ async def check_turn_health() -> None:
 @app.get("/health")
 def health_check():
     return {"status": "ok", "turn": _turn_health}
-
-
-@app.get("/health/db")
-def health_db():
-    start = time.perf_counter()
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        return {"status": "ok", "db_ms": round(elapsed_ms, 1)}
-    except Exception as exc:
-        return {"status": "error", "detail": str(exc)}
 
 
 @app.get("/calls/turn-health")
