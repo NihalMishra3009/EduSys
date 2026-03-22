@@ -2308,8 +2308,9 @@ class _MessageBubble extends StatelessWidget {
                                           color: textColor.withValues(alpha: 0.08),
                                           child: Center(
                                             child: Icon(
-                                                Icons.image_not_supported_rounded,
-                                                color: textColor),
+                                              Icons.image_not_supported_rounded,
+                                              color: textColor,
+                                            ),
                                           ),
                                         ),
                                       )
@@ -2323,12 +2324,12 @@ class _MessageBubble extends StatelessWidget {
                                           color: textColor.withValues(alpha: 0.08),
                                           child: Center(
                                             child: Icon(
-                                                Icons.image_not_supported_rounded,
-                                                color: textColor),
+                                              Icons.image_not_supported_rounded,
+                                              color: textColor,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                ),
                               ),
                             )
                           else
@@ -2344,8 +2345,11 @@ class _MessageBubble extends StatelessWidget {
                                 ),
                                 child: Row(
                                   children: [
-                                    Icon(_fileIcon(attachName, resolvedUrl),
-                                        size: 18, color: textColor),
+                                    Icon(
+                                      _fileIcon(attachName, resolvedUrl),
+                                      size: 18,
+                                      color: textColor,
+                                    ),
                                     const SizedBox(width: 6),
                                     Expanded(
                                       child: Text(
