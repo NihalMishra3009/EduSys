@@ -476,11 +476,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   DateTime _defaultScheduleBase() =>
       DateTime.now().add(const Duration(minutes: 5));
 
-  DateTime _shiftSchedule(DateTime? base,
-      {int minutes = 0, int hours = 0}) {
-    final start = base ?? _defaultScheduleBase();
-    return start.add(Duration(minutes: minutes, hours: hours));
-  }
 
   DateTime? _parseAlertAt(dynamic raw) {
     final text = raw?.toString();
@@ -557,14 +552,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     }
     const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     return sorted.map((d) => names[d - 1]).join(", ");
-  }
-
-  String _formatScheduleButton(DateTime? scheduleAt) {
-    if (scheduleAt == null) return "Set schedule";
-    final dateLabel = "${scheduleAt.day.toString().padLeft(2, "0")}/"
-        "${scheduleAt.month.toString().padLeft(2, "0")}/"
-        "${scheduleAt.year}";
-    return "$dateLabel • ${_formatClock(scheduleAt)}";
   }
 
   DateTime _nextOccurrenceForDays(DateTime base, List<int> days) {
@@ -1765,48 +1752,6 @@ class _AlertSectionHeader extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _RepeatChip extends StatelessWidget {
-  const _RepeatChip({
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: active
-              ? scheme.primary.withValues(alpha: 0.2)
-              : scheme.surface.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: active
-                ? scheme.primary.withValues(alpha: 0.6)
-                : scheme.onSurface.withValues(alpha: 0.08),
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: active ? scheme.primary : scheme.onSurface,
-          ),
-        ),
       ),
     );
   }

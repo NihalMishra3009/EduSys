@@ -9,7 +9,6 @@ import "package:file_picker/file_picker.dart";
 import "package:flutter/material.dart";
 import "package:flutter/gestures.dart";
 import "package:google_fonts/google_fonts.dart";
-import "hello_casts_widgets.dart";
 import "package:url_launcher/url_launcher.dart";
 import "package:path_provider/path_provider.dart";
 import "package:record/record.dart";
@@ -303,11 +302,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   DateTime _defaultScheduleBase() =>
       DateTime.now().add(const Duration(minutes: 5));
 
-  DateTime _shiftSchedule(DateTime? base,
-      {int minutes = 0, int hours = 0}) {
-    final start = base ?? _defaultScheduleBase();
-    return start.add(Duration(minutes: minutes, hours: hours));
-  }
 
   DateTime? _parseAlertAt(dynamic raw) {
     final text = raw?.toString();
