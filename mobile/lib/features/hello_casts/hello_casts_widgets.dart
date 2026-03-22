@@ -15,7 +15,6 @@ class HelloCastsHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     const accent = Color(0xFF5B4AE3);
     final dark = Theme.of(context).brightness == Brightness.dark;
     return Column(

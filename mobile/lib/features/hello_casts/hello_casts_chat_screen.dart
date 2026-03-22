@@ -10,7 +10,6 @@ import "package:flutter/material.dart";
 import "package:flutter/gestures.dart";
 import "package:google_fonts/google_fonts.dart";
 import "hello_casts_widgets.dart";
-import "hello_casts_call_screen.dart";
 import "package:url_launcher/url_launcher.dart";
 import "package:path_provider/path_provider.dart";
 import "package:record/record.dart";
@@ -20,10 +19,8 @@ import "package:flutter_pdfview/flutter_pdfview.dart";
 import "package:http/http.dart" as http;
 
 const Color _castAccent = Color(0xFF5B4AE3);
-const Color _castAccentDark = Color(0xFF4C43C7);
 const Color _castLightBg = Color(0xFFF6F6FB);
 const Color _castIncomingLight = Color(0xFFE9E6FF);
-const Color _castIncomingDark = Color(0xFF6A5AE8);
 
 
 class HelloCastsChatScreen extends StatefulWidget {
@@ -61,7 +58,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   int _clientMessageCounter = 0;
   String _myName = "Me";
   int? _myUserId;
-  List<Map<String, dynamic>> _directory = [];
   List<Map<String, dynamic>> _members = [];
   final Set<String> _deletedKeys = {};
   bool _initialScrollDone = false;
@@ -91,7 +87,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       _myName = (await _api.getSavedName()) ?? "Me";
       _myUserId = await _api.getUserId();
       await _loadCachedState();
-      unawaited(_loadDirectory());
+      unawaited(_loadMembers());
       unawaited(_loadMessages());
       unawaited(_connectWs());
       _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) {
@@ -283,37 +279,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     }
   }
 
-  Future<void> _loadDirectory() async {
-    final dir = await _api.userDirectory();
-    if (!mounted) return;
-    if (dir.statusCode >= 200 && dir.statusCode < 300) {
-      final rows = (jsonDecode(dir.body) as List)
-          .whereType<Map<String, dynamic>>()
-          .toList();
-      await _api.saveCache("user_directory", rows);
-      setState(() => _directory = rows);
-      return;
-    }
-    final cached = await _api.readCache("user_directory");
-    final cachedRows = (cached as List<dynamic>?)
-            ?.whereType<Map<String, dynamic>>()
-            .toList() ??
-        <Map<String, dynamic>>[];
-    if (cachedRows.isNotEmpty) {
-      setState(() => _directory = cachedRows);
-      return;
-    }
-    final students = await _api.usersStudents();
-    if (!mounted) return;
-    if (students.statusCode >= 200 && students.statusCode < 300) {
-      final rows = (jsonDecode(students.body) as List)
-          .whereType<Map<String, dynamic>>()
-          .toList();
-      await _api.saveCache("user_directory", rows);
-      setState(() => _directory = rows);
-    }
-  }
-
   Future<void> _loadMembers() async {
     final res = await _api.listCastMembers(castId: widget.castId);
     if (!mounted) return;
@@ -379,91 +344,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (hours > 0 && minutes > 0) return "In ${hours}h ${minutes}m";
     if (hours > 0) return "In ${hours}h";
     return "In ${minutes}m";
-  }
-
-  Future<void> _addMembers() async {
-    if (widget.castType.toLowerCase() == "individual") {
-      GlassToast.show(context, "Individual cast can't add members",
-          icon: Icons.info_outline);
-      return;
-    }
-    if (_directory.isEmpty) {
-      await _loadDirectory();
-    }
-    await _loadMembers();
-    if (!mounted) return;
-    final existingIds = _members
-        .map((m) => (m["user_id"] as num?)?.toInt())
-        .whereType<int>()
-        .toSet();
-    final options = _directory
-        .where((u) => u["id"] != null)
-        .where((u) => !existingIds.contains((u["id"] as num).toInt()))
-        .toList(growable: false);
-    if (options.isEmpty) {
-      GlassToast.show(context, "No members to add",
-          icon: Icons.info_outline);
-      return;
-    }
-    final selected = <int>{};
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text("Add members"),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 320),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: options.length,
-              itemBuilder: (_, i) {
-                final u = options[i];
-                final id = (u["id"] as num?)?.toInt() ?? 0;
-                final name = u["name"]?.toString() ?? "User";
-                final isSelected = selected.contains(id);
-                return CheckboxListTile(
-                  value: isSelected,
-                  onChanged: (v) {
-                    setLocal(() {
-                      if (v == true) {
-                        selected.add(id);
-                      } else {
-                        selected.remove(id);
-                      }
-                    });
-                  },
-                  title: Text(name),
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text("Cancel"),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("Add"),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted || ok != true || selected.isEmpty) return;
-    final res = await _api.addCastMembers(
-      castId: widget.castId,
-      memberIds: selected.toList(),
-    );
-    if (!mounted) return;
-    if (res.statusCode >= 200 && res.statusCode < 300) {
-      GlassToast.show(context, "Members added",
-          icon: Icons.check_circle_rounded);
-      await _loadMembers();
-    } else {
-      GlassToast.show(context, _detail(res.body),
-          icon: Icons.error_outline);
-    }
   }
 
   bool _hasMatchingServerMessage(
@@ -793,6 +673,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       return;
     }
     final ok = await canLaunchUrl(uri);
+    if (!mounted) return;
     if (!ok) {
       GlassToast.show(context, "Unable to open attachment",
           icon: Icons.error_outline);
@@ -869,6 +750,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       if (!await target.exists()) {
         final res = await http.get(Uri.parse(url));
         if (res.statusCode < 200 || res.statusCode >= 300) {
+          if (!mounted) return;
           GlassToast.show(context, "Unable to download file",
               icon: Icons.error_outline);
           return;
@@ -882,6 +764,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         ),
       );
     } catch (_) {
+      if (!mounted) return;
       GlassToast.show(context, "Unable to open file",
           icon: Icons.error_outline);
     }
@@ -892,14 +775,17 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     try {
       if (_playingUrl != url) {
         final localPath = await _resolveVoicePath(url);
+        if (!mounted) return;
         if (localPath == null) {
           GlassToast.show(context, "Unable to load voice note",
               icon: Icons.error_outline);
           return;
         }
         await _audioPlayer.setFilePath(localPath);
+        if (!mounted) return;
         _playingUrl = url;
         await _audioPlayer.play();
+        if (!mounted) return;
         setState(() => _audioPlaying = true);
         _audioPlayer.playerStateStream.listen((state) {
           if (!mounted) return;
@@ -921,6 +807,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
         if (mounted) setState(() => _audioPlaying = true);
       }
     } catch (_) {
+      if (!mounted) return;
       GlassToast.show(context, "Unable to play audio",
           icon: Icons.error_outline);
     }
@@ -1009,6 +896,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       return;
     }
     if (!await canLaunchUrl(uri)) {
+      if (!mounted) return;
       GlassToast.show(context, "Unable to open link", icon: Icons.error_outline);
       return;
     }
@@ -1159,6 +1047,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   Future<void> _startRecording() async {
     if (_isRecording) return;
     final ok = await _recorder.hasPermission();
+    if (!mounted) return;
     if (!ok) {
       GlassToast.show(context, "Microphone permission required",
           icon: Icons.error_outline);
@@ -1175,6 +1064,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
       ),
       path: path,
     );
+    if (!mounted) return;
     _recordTimer?.cancel();
     setState(() {
       _isRecording = true;
@@ -1194,6 +1084,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (!_isRecording) return;
     _recordTimer?.cancel();
     final path = await _recorder.stop();
+    if (!mounted) return;
     final duration = _recordSeconds;
     setState(() {
       _isRecording = false;
@@ -1413,26 +1304,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     }
   }
 
-  void _startCall({required bool isVideo}) {
-    if (_ws != null) {
-      try {
-        _ws!.add(jsonEncode({
-          "type": "call_invite",
-          "is_video": isVideo,
-        }));
-      } catch (_) {}
-    }
-    Navigator.push(
-      context,
-      buildHelloCastsCallRoute(
-        castId: widget.castId,
-        callTitle: widget.title,
-        callType: isVideo ? "Video" : "Voice",
-        isVideo: isVideo,
-      ),
-    );
-  }
-
   Future<void> _sendScheduled() async {
     final bodyCtrl = TextEditingController();
     DateTime? scheduledAt;
@@ -1569,6 +1440,7 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (path == null) return;
     final file = File(path);
     final size = await file.length();
+    if (!mounted) return;
     if (size > 50 * 1024 * 1024) {
       GlassToast.show(context, "File too large (max 50 MB)",
           icon: Icons.error_outline);

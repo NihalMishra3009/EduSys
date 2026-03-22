@@ -1393,7 +1393,7 @@ class _ClassExplorerSheetState extends State<_ClassExplorerSheet> {
     _load();
   }
 
-  Future<void> _load({bool silent = false}) async {
+  Future<void> _load() async {
     if (kUseDemoDataEverywhere) {
       if (!mounted) {
         return;
@@ -3634,7 +3634,7 @@ class _HomeTabState extends State<_HomeTab> {
     );
   }
 
-  Future<void> _load({bool silent = false}) async {
+  Future<void> _load() async {
     setState(() => _loading = true);
     final role = context.read<AuthProvider>().role ?? "STUDENT";
     if (kUseDemoDataEverywhere) {

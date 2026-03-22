@@ -20,10 +20,8 @@ class HelloCastsScreen extends StatefulWidget {
 }
 
 const Color _castsAccent = Color(0xFF5B4AE3);
-const Color _castsAccentDark = Color(0xFF4B43C7);
 const Color _castsLightBg = Color(0xFFF6F6FB);
 const Color _castsLightChip = Color(0xFFEAE7FF);
-const Color _castsDarkChip = Color(0xFF5F57DD);
 const Color _castsLightText = Color(0xFF171717);
 
 class _HelloCastsScreenState extends State<HelloCastsScreen> {
@@ -56,8 +54,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
   ];
 
   static const _tabs = ["Chats", "Communities", "Alerts"];
-  static const _filters = ["All", "Community", "Group", "Individual"];
-
   static const _demoCasts = [
     {
       "id": -101,
@@ -354,6 +350,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
             _casts.where((c) => (c["id"] as num?)?.toInt() != castId).toList();
       });
       await _api.saveCache("casts_list", _casts);
+      if (!mounted) return;
       GlassToast.show(context, "Cast deleted", icon: Icons.check_circle_outline);
     } else {
       GlassToast.show(
@@ -848,6 +845,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
           await _api.saveCache("cast_docs_$newId", <Map<String, dynamic>>[]);
         }
       } catch (_) {}
+      if (!mounted) return;
       GlassToast.show(context, "Cast created", icon: Icons.check_circle_rounded);
       _loadData();
     } else {
@@ -996,8 +994,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
         .toList();
     final communities = _filteredCasts("Community");
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final scheme = Theme.of(context).colorScheme;
-    final chipTheme = Theme.of(context).chipTheme;
 
     return Scaffold(
       floatingActionButton: FloatingActionButton(
@@ -1158,91 +1154,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _TabBar extends StatelessWidget {
-  const _TabBar({required this.tabs, required this.index, required this.onChanged});
-  final List<String> tabs;
-  final int index;
-  final ValueChanged<int> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return SizedBox(
-      height: 40,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: tabs.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          final active = i == index;
-          return GestureDetector(
-            onTap: () => onChanged(i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: active
-                    ? const Color(0xFF25D366)
-                    : (dark ? Colors.transparent : Colors.white),
-                borderRadius: BorderRadius.circular(99),
-                border: Border.all(color: const Color(0xFF25D366).withValues(alpha: 0.4)),
-              ),
-              child: Text(
-                tabs[i],
-                style: TextStyle(
-                  color: active
-                      ? Colors.white
-                      : (dark ? const Color(0xFF25D366) : Colors.black87),
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _FilterBar extends StatelessWidget {
-  const _FilterBar({required this.filters, required this.current, required this.onChanged});
-  final List<String> filters;
-  final String current;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final scheme = Theme.of(context).colorScheme;
-    final chipTheme = Theme.of(context).chipTheme;
-    return SizedBox(
-      height: 38,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: filters.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final f = filters[index];
-          final active = f == current;
-          return ChoiceChip(
-            selected: active,
-            label: Text(f),
-            onSelected: (_) => onChanged(f),
-            selectedColor: dark ? (chipTheme.selectedColor ?? scheme.primary.withValues(alpha: 0.24)) : _castsAccent,
-            backgroundColor: dark ? (chipTheme.backgroundColor ?? scheme.surface) : _castsLightChip,
-            labelStyle: TextStyle(
-              color: active
-                  ? (dark ? scheme.onSurface : Colors.white)
-                  : (dark ? scheme.onSurface.withValues(alpha: 0.7) : _castsLightText),
-              fontWeight: FontWeight.w700,
-            ),
-          );
-        },
       ),
     );
   }
