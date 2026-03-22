@@ -1156,7 +1156,13 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                 ),
                 child: const Icon(Icons.delete_rounded, color: Colors.white),
               ),
-              onDismissed: (_) => _deleteAlert(a),
+              onDismissed: (_) {
+                final alertId = (a["id"] as num?)?.toInt();
+                if (alertId != null) {
+                  setState(() => _alerts = _alerts.where((x) => x["id"] != alertId).toList());
+                }
+                _deleteAlert(a);
+              },
               child: _AlertTile(
                 title: title,
                 subtitle: when,
