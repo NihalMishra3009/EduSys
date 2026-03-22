@@ -1,4 +1,5 @@
 import smtplib
+import ssl
 from email.message import EmailMessage
 from socket import timeout as SocketTimeout
 
@@ -44,9 +45,9 @@ def send_otp_email(recipient_email: str, otp_code: str) -> None:
     )
 
     last_error: Exception | None = None
-    for _ in range(2):
+    for attempt in range(2):
         try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=5) as server:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=8) as server:
                 server.ehlo()
                 if settings.smtp_use_tls:
                     server.starttls()
@@ -64,6 +65,29 @@ def send_otp_email(recipient_email: str, otp_code: str) -> None:
                 f"user={(settings.smtp_username or '')[:3]}*** tls={settings.smtp_use_tls} "
                 f"error={type(exc).__name__}: {exc}"
             )
+            # Fallback to implicit TLS on 465 if STARTTLS times out on 587.
+            if attempt == 0 and settings.smtp_use_tls and settings.smtp_port == 587:
+                try:
+                    context = ssl.create_default_context()
+                    with smtplib.SMTP_SSL(
+                        settings.smtp_host,
+                        465,
+                        timeout=8,
+                        context=context,
+                    ) as server:
+                        server.ehlo()
+                        server.login(settings.smtp_username, settings.smtp_password)
+                        refused = server.send_message(message)
+                        if refused and recipient in refused:
+                            raise EmailSendError("SMTP rejected recipient")
+                        return
+                except (smtplib.SMTPException, SocketTimeout, OSError) as ssl_exc:
+                    last_error = ssl_exc
+                    print(
+                        f"SMTP SSL fallback failed host={settings.smtp_host} port=465 "
+                        f"user={(settings.smtp_username or '')[:3]}*** "
+                        f"error={type(ssl_exc).__name__}: {ssl_exc}"
+                    )
             continue
 
     raise EmailSendError("Failed to send OTP email") from last_error
