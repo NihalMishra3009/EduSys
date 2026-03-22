@@ -46,9 +46,11 @@ def send_otp_email(recipient_email: str, otp_code: str) -> None:
     last_error: Exception | None = None
     for _ in range(2):
         try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=12) as server:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=5) as server:
+                server.ehlo()
                 if settings.smtp_use_tls:
                     server.starttls()
+                    server.ehlo()
                 server.login(settings.smtp_username, settings.smtp_password)
                 refused = server.send_message(message)
                 if refused and recipient in refused:
