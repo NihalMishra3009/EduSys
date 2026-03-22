@@ -923,7 +923,12 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     if (url == null || url.isEmpty) return;
     try {
       if (_playingUrl != url) {
-        final localPath = await _resolveVoicePath(url);
+        String? localPath;
+        if (File(url).existsSync()) {
+          localPath = url;
+        } else {
+          localPath = await _resolveAttachmentPath(url, "audio");
+        }
         if (!mounted) return;
         if (localPath == null) {
           GlassToast.show(context, "Voice note not available offline",
@@ -2415,6 +2420,71 @@ class _MessageBubble extends StatelessWidget {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          if (_isAudioFile(attachName, resolvedUrl))
+                            InkWell(
+                              onTap: () => onToggleVoice(resolvedUrl),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    playingUrl == resolvedUrl && isAudioPlaying
+                                        ? Icons.pause_circle_filled_rounded
+                                        : Icons.play_circle_fill_rounded,
+                                    size: 26,
+                                    color: textColor,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: LayoutBuilder(
+                                      builder: (ctx, constraints) {
+                                        final isActive = playingUrl == resolvedUrl &&
+                                            isAudioPlaying;
+                                        final totalMs =
+                                            audioDuration.inMilliseconds;
+                                        final posMs =
+                                            audioPosition.inMilliseconds;
+                                        final progress = isActive && totalMs > 0
+                                            ? (posMs / totalMs).clamp(0.0, 1.0)
+                                            : 0.0;
+                                        return Stack(
+                                          children: [
+                                            Container(
+                                              height: 3,
+                                              decoration: BoxDecoration(
+                                                color: textColor.withValues(
+                                                    alpha: 0.35),
+                                                borderRadius:
+                                                    BorderRadius.circular(2),
+                                              ),
+                                            ),
+                                            Container(
+                                              height: 3,
+                                              width:
+                                                  constraints.maxWidth * progress,
+                                              decoration: BoxDecoration(
+                                                color: textColor,
+                                                borderRadius:
+                                                    BorderRadius.circular(2),
+                                              ),
+                                            ),
+                                          ],
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  if (needsDownload) ...[
+                                    const SizedBox(width: 6),
+                                    IconButton(
+                                      icon: const Icon(Icons.download_rounded),
+                                      color: textColor,
+                                      iconSize: 18,
+                                      onPressed: () => onDownload(msg),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            )
+                          else ...[
                           if (type == "IMAGE" &&
                               resolvedUrl != null &&
                               resolvedUrl.isNotEmpty)
@@ -2553,6 +2623,7 @@ class _MessageBubble extends StatelessWidget {
                                 onPressed: () => onDownload(msg),
                               ),
                             ),
+                          ],
                         ],
                       )
                     else if (body != null && body.isNotEmpty)
@@ -2896,9 +2967,19 @@ bool _isVideoFile(String? name, String? url) {
       target.endsWith(".webm");
 }
 
+bool _isAudioFile(String? name, String? url) {
+  final target = (name ?? url ?? "").toLowerCase();
+  return target.endsWith(".mp3") ||
+      target.endsWith(".m4a") ||
+      target.endsWith(".wav") ||
+      target.endsWith(".aac") ||
+      target.endsWith(".ogg");
+}
+
 IconData _fileIcon(String? name, String? url) {
   if (_isPdfFile(name, url)) return Icons.picture_as_pdf_rounded;
   if (_isVideoFile(name, url)) return Icons.movie_rounded;
+  if (_isAudioFile(name, url)) return Icons.music_note_rounded;
   final target = (name ?? url ?? "").toLowerCase();
   if (target.endsWith(".ppt") || target.endsWith(".pptx")) {
     return Icons.slideshow_rounded;
