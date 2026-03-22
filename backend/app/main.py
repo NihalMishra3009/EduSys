@@ -12,6 +12,7 @@ from jose import JWTError, jwt
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from app.core.database import Base, SessionLocal, engine
 from app.core.security import hash_password
 from app.core.config import settings
@@ -611,6 +612,30 @@ def seed_default_users() -> None:
             db.commit()
     finally:
         db.close()
+
+
+@app.on_event("startup")
+def ensure_db_indexes() -> None:
+    if settings.database_url.startswith("sqlite"):
+        return
+    statements = [
+        "CREATE INDEX IF NOT EXISTS idx_cast_members_user_cast ON cast_members (user_id, cast_id)",
+        "CREATE INDEX IF NOT EXISTS idx_cast_members_cast_user ON cast_members (cast_id, user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_cast_messages_cast_created ON cast_messages (cast_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_casts_updated_at ON casts (updated_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_cast_invites_invitee_status ON cast_invites (invitee_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_assignments_created_at ON assignments (created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_assignments_subject ON assignments (subject)",
+        "CREATE INDEX IF NOT EXISTS idx_assignment_submissions_assignment ON assignment_submissions (assignment_id)",
+        "CREATE INDEX IF NOT EXISTS idx_assignment_submissions_student ON assignment_submissions (student_id)",
+    ]
+    try:
+        with engine.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
+    except Exception:
+        # Index creation is best-effort; avoid breaking startup in case of permission issues.
+        pass
 
 
 @app.on_event("startup")

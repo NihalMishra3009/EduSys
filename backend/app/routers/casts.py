@@ -35,6 +35,22 @@ from app.realtime import casts_list_hub
 from app.services.push_service import send_cast_message_push, send_cast_alert_push
 
 router = APIRouter()
+_casts_cache: dict[int, tuple[list[CastOut], float]] = {}
+_casts_cache_ttl = 8.0
+
+
+def _invalidate_casts_cache(user_ids: list[int]) -> None:
+    for user_id in user_ids:
+        _casts_cache.pop(user_id, None)
+
+
+def _get_cast_member_ids(db: Session, cast_id: int) -> list[int]:
+    return [
+        row[0]
+        for row in db.query(CastMember.user_id)
+        .filter(CastMember.cast_id == cast_id)
+        .all()
+    ]
 
 
 def _dispatch_cast_push(
@@ -113,6 +129,12 @@ def list_casts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    now = datetime.utcnow().timestamp()
+    cached = _casts_cache.get(current_user.id)
+    if cached is not None:
+        payload, expires_at = cached
+        if expires_at > now:
+            return payload
     casts = (
         db.query(Cast)
         .join(CastMember, CastMember.cast_id == Cast.id)
@@ -199,6 +221,7 @@ def list_casts(
                 unread_count=unread_map.get(cast.id, 0),
             )
         )
+    _casts_cache[current_user.id] = (results, now + _casts_cache_ttl)
     return results
 
 
@@ -292,6 +315,7 @@ async def create_cast(
         last_message_at=None,
     )
     member_ids = list(set([current_user.id, *payload.member_ids]))
+    _invalidate_casts_cache(member_ids)
     await casts_list_hub.broadcast_to_users(
         member_ids,
         {
@@ -311,15 +335,15 @@ def list_messages(
 ):
     _ensure_member(db, cast_id, current_user.id)
     query = (
-        db.query(CastMessage)
+        db.query(CastMessage, User)
+        .join(User, User.id == CastMessage.sender_id)
         .filter(CastMessage.cast_id == cast_id)
         .order_by(CastMessage.created_at.desc())
         .limit(limit)
         .all()
     )
     results = []
-    for msg in reversed(query):
-        sender = db.get(User, msg.sender_id)
+    for msg, sender in reversed(query):
         results.append(
             CastMessageOut(
                 id=msg.id,
@@ -360,8 +384,8 @@ def send_message(
         member.last_read_at = datetime.utcnow()
     db.commit()
     db.refresh(item)
-    sender = db.get(User, current_user.id)
-    sender_name = sender.name if sender else "Me"
+    sender_name = current_user.name or "Me"
+    _invalidate_casts_cache(_get_cast_member_ids(db, cast_id))
     threading.Thread(
         target=_dispatch_cast_push,
         kwargs={
@@ -401,6 +425,7 @@ def delete_message(
         raise HTTPException(status_code=403, detail="Not allowed to delete message")
     db.delete(message)
     db.commit()
+    _invalidate_casts_cache(_get_cast_member_ids(db, cast_id))
     return {"ok": True, "message_id": message_id}
 
 
@@ -413,6 +438,7 @@ def mark_read(
     member = _ensure_member(db, cast_id, current_user.id)
     member.last_read_at = datetime.utcnow()
     db.commit()
+    _invalidate_casts_cache([current_user.id])
     return {"detail": "Marked as read"}
 
 
@@ -484,6 +510,7 @@ def add_members(
             )
         )
     db.commit()
+    _invalidate_casts_cache(_get_cast_member_ids(db, cast_id))
     return list_members(cast_id, db, current_user)
 
 
@@ -509,6 +536,7 @@ def remove_member(
         raise HTTPException(status_code=404, detail="Member not found")
     db.delete(target)
     db.commit()
+    _invalidate_casts_cache(_get_cast_member_ids(db, cast_id))
     return {"detail": "Member removed"}
 
 
@@ -540,6 +568,7 @@ async def delete_cast(
     db.commit()
 
     if member_ids:
+        _invalidate_casts_cache(member_ids)
         await casts_list_hub.broadcast_to_users(
             member_ids,
             {"type": "cast_deleted", "cast_id": cast_id},
@@ -666,6 +695,7 @@ def respond_invite(
 
     cast = db.get(Cast, invite.cast_id)
     inviter = db.get(User, invite.inviter_id)
+    _invalidate_casts_cache(_get_cast_member_ids(db, invite.cast_id))
     return CastInviteOut(
         id=invite.id,
         cast_id=invite.cast_id,

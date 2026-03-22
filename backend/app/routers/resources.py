@@ -38,6 +38,8 @@ _share_it_appointments: list[dict] = []
 _share_it_id = 1
 _media_root = Path(__file__).resolve().parent.parent.parent / "media" / "attachments"
 _media_root.mkdir(parents=True, exist_ok=True)
+_assignments_cache: dict[str, tuple[list[AssignmentOut], float]] = {}
+_assignments_cache_ttl = 10.0
 _allowed_upload_extensions = {
     ".pdf",
     ".doc",
@@ -462,6 +464,7 @@ def create_assignment(
     db.add(item)
     db.commit()
     db.refresh(item)
+    _assignments_cache.clear()
     return _assignment_out(db, item)
 
 
@@ -474,11 +477,39 @@ def list_assignments(
     if current_user.role not in (UserRole.PROFESSOR, UserRole.STUDENT, UserRole.ADMIN):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    query = db.query(Assignment)
+    key = (subject or "").strip().upper() or "*"
+    now = datetime.utcnow().timestamp()
+    cached = _assignments_cache.get(key)
+    if cached is not None:
+        payload, expires_at = cached
+        if expires_at > now:
+            return payload
+
+    query = db.query(Assignment, User).join(
+        User, User.id == Assignment.created_by_user_id
+    )
     if subject:
         query = query.filter(Assignment.subject == subject.strip().upper())
     rows = query.order_by(Assignment.created_at.desc()).all()
-    return [_assignment_out(db, row) for row in rows]
+    results: list[AssignmentOut] = []
+    for assignment, creator in rows:
+        results.append(
+            AssignmentOut(
+                id=assignment.id,
+                subject=assignment.subject,
+                title=assignment.title,
+                template_text=assignment.template_text,
+                template_url=assignment.template_url,
+                due_at=assignment.due_at,
+                created_by_user_id=assignment.created_by_user_id,
+                created_by_name=creator.name
+                if creator
+                else f"User #{assignment.created_by_user_id}",
+                created_at=assignment.created_at,
+            )
+        )
+    _assignments_cache[key] = (results, now + _assignments_cache_ttl)
+    return results
 
 
 @router.post("/assignments/{assignment_id}/submit", response_model=AssignmentSubmissionOut)

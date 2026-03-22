@@ -33,6 +33,8 @@ from app.services.email_service import EmailSendError, send_otp_email
 from app.services.google_auth_service import verify_google_access_token, verify_google_id_token
 
 router = APIRouter()
+_me_cache: dict[int, tuple[UserOut, float]] = {}
+_me_cache_ttl = 15.0
 DEFAULT_LOGIN_EMAILS = {"nihalmishra3009@gmail.com", "nihalcr72020@gmail.com"}
 FORCED_EMAIL_ROLE_BINDINGS = {
     "2024ad62f@sigce.edu.in": UserRole.PROFESSOR,
@@ -329,7 +331,15 @@ def reset_binding(
 
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):
-    return current_user
+    now = datetime.utcnow().timestamp()
+    cached = _me_cache.get(current_user.id)
+    if cached is not None:
+        payload, expires_at = cached
+        if expires_at > now:
+            return payload
+    payload = UserOut.model_validate(current_user)
+    _me_cache[current_user.id] = (payload, now + _me_cache_ttl)
+    return payload
 
 
 @router.patch("/profile", response_model=UserOut)
