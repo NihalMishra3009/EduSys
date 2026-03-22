@@ -2,7 +2,6 @@ import "dart:async";
 import "dart:convert";
 import "dart:io";
 
-import "package:edusys_mobile/core/utils/time_format.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/push_notification_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
@@ -313,7 +312,9 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
   DateTime? _parseAlertAt(dynamic raw) {
     final text = raw?.toString();
     if (text == null || text.isEmpty) return null;
-    return TimeFormat.parseToIst(text) ?? DateTime.tryParse(text);
+    final parsed = DateTime.tryParse(text);
+    if (parsed == null) return null;
+    return parsed.isUtc ? parsed.toLocal() : parsed;
   }
 
   Map<String, dynamic>? _nextAlert() {
