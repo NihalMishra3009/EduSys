@@ -16,6 +16,7 @@ import "package:edusys_mobile/features/student/railway/railway_concession_screen
 import "package:edusys_mobile/features/student/profile/profile_screen.dart";
 import "package:edusys_mobile/features/student/attendance/active_lecture_screen.dart";
 import "package:edusys_mobile/features/student/attendance/learned_screen.dart";
+import "package:edusys_mobile/features/common/ble_debug_screen.dart";
 import "package:edusys_mobile/shared/services/api_service.dart";
 import "package:edusys_mobile/shared/services/device_binding_service.dart";
 import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
@@ -12906,6 +12907,17 @@ class _SettingsTabState extends State<_SettingsTab> {
                       ?.color
                       ?.withValues(alpha: 0.72),
                 ),
+              ),
+              const SizedBox(height: 10),
+              AppButton(
+                label: "BLE Debug",
+                icon: Icons.bluetooth_searching_rounded,
+                isPrimary: false,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    AppTransitions.fadeSlide(const BleDebugScreen()),
+                  );
+                },
               ),
             ],
           ),

@@ -34,6 +34,8 @@ class SmartAttendanceService {
       StreamController.broadcast();
   final StreamController<AttendanceMarkEvent> _markController =
       StreamController.broadcast();
+  final ValueNotifier<BleDebugState> bleDebugState =
+      ValueNotifier(BleDebugState.initial());
 
   StreamSubscription<AccelerometerEvent>? _accelSub;
   StreamSubscription? _backgroundMotionSub;
@@ -51,6 +53,17 @@ class SmartAttendanceService {
 
   Stream<SmartAttendanceResult> get attendanceEvents => _eventController.stream;
   Stream<AttendanceMarkEvent> get attendanceMarks => _markController.stream;
+
+  Future<void> refreshBleStatus() async {
+    try {
+      final adapter = await FlutterBluePlus.adapterState.first;
+      final scanning = FlutterBluePlus.isScanningNow;
+      bleDebugState.value = bleDebugState.value.copyWith(
+        adapterState: adapter,
+        scanning: scanning,
+      );
+    } catch (_) {}
+  }
 
   static const String bleServiceUuid = "7c8a2f5e-0d20-4c49-8b31-3f4b8f9c6a55";
   static const int manufacturerId = 0x0001;
@@ -947,10 +960,18 @@ class SmartAttendanceService {
     final results = <int>[];
     StreamSubscription? subscription;
     try {
+      bleDebugState.value =
+          bleDebugState.value.copyWith(scanning: true, lastError: null);
       final adapterState = await FlutterBluePlus.adapterState.first
           .timeout(const Duration(seconds: 5));
+      bleDebugState.value =
+          bleDebugState.value.copyWith(adapterState: adapterState);
       if (adapterState != BluetoothAdapterState.on) {
         CrashLogService.log("BLE_SCAN", "Adapter not on: $adapterState");
+        bleDebugState.value = bleDebugState.value.copyWith(
+          scanning: false,
+          lastError: "Adapter is off",
+        );
         return const _BleScanWindow(avgRssi: null, hitCount: 0);
       }
       if (FlutterBluePlus.isScanningNow) {
@@ -964,6 +985,10 @@ class SmartAttendanceService {
           final payloadSession = payload["sessionToken"]?.toString();
           if (payloadSession != null && payloadSession == sessionToken) {
             results.add(result.rssi);
+            bleDebugState.value = bleDebugState.value.copyWith(
+              lastRssi: result.rssi.toDouble(),
+              lastHitCount: results.length,
+            );
             continue;
           }
           final payloadRoom = payload["roomId"] ?? payload["r"];
@@ -971,6 +996,10 @@ class SmartAttendanceService {
               payloadRoom is num &&
               payloadRoom.toInt() == roomId) {
             results.add(result.rssi);
+            bleDebugState.value = bleDebugState.value.copyWith(
+              lastRssi: result.rssi.toDouble(),
+              lastHitCount: results.length,
+            );
           }
         }
       });
@@ -982,11 +1011,15 @@ class SmartAttendanceService {
       CrashLogService.log("BLE_SCAN", "Done — ${results.length} hits");
     } catch (e, s) {
       CrashLogService.log("BLE_SCAN_ERROR", e.toString(), stack: s);
+      bleDebugState.value =
+          bleDebugState.value.copyWith(lastError: e.toString());
     } finally {
       try {
         await FlutterBluePlus.stopScan();
       } catch (_) {}
       await subscription?.cancel();
+      bleDebugState.value =
+          bleDebugState.value.copyWith(scanning: false);
     }
     if (results.isEmpty) return const _BleScanWindow(avgRssi: null, hitCount: 0);
     final avg = results.reduce((a, b) => a + b) / results.length;
@@ -1121,10 +1154,16 @@ class SmartAttendanceService {
     };
     try {
       CrashLogService.log("BLE_ADV", "Starting roomId=$roomId");
+      bleDebugState.value =
+          bleDebugState.value.copyWith(advertising: true, lastError: null);
       await channel.invokeMethod("startAdvertising", args);
       CrashLogService.log("BLE_ADV", "Started successfully");
     } on PlatformException catch (e) {
       CrashLogService.log("BLE_ADV_ERROR", "${e.code}: ${e.message}");
+      bleDebugState.value = bleDebugState.value.copyWith(
+        advertising: false,
+        lastError: e.message ?? e.code,
+      );
       throw Exception(
         "BLE advertising failed: ${e.message ?? e.code}. "
         "Ensure Bluetooth is on and the device supports BLE advertising.",
@@ -1136,8 +1175,14 @@ class SmartAttendanceService {
     final channel = const MethodChannel(_bleChannelName);
     try {
       await channel.invokeMethod("stopAdvertising");
+      bleDebugState.value =
+          bleDebugState.value.copyWith(advertising: false);
     } on PlatformException catch (e) {
       CrashLogService.log("BLE_ADV_STOP_ERROR", e.toString());
+      bleDebugState.value = bleDebugState.value.copyWith(
+        advertising: false,
+        lastError: e.message ?? e.code,
+      );
     }
   }
 
@@ -1285,4 +1330,49 @@ class AttendanceMarkEvent {
   final int studentId;
   final AttendanceMarkType type;
   final String message;
+}
+
+class BleDebugState {
+  const BleDebugState({
+    required this.adapterState,
+    required this.scanning,
+    required this.advertising,
+    required this.lastRssi,
+    required this.lastHitCount,
+    required this.lastError,
+  });
+
+  factory BleDebugState.initial() => const BleDebugState(
+        adapterState: null,
+        scanning: false,
+        advertising: false,
+        lastRssi: null,
+        lastHitCount: 0,
+        lastError: null,
+      );
+
+  final BluetoothAdapterState? adapterState;
+  final bool scanning;
+  final bool advertising;
+  final double? lastRssi;
+  final int lastHitCount;
+  final String? lastError;
+
+  BleDebugState copyWith({
+    BluetoothAdapterState? adapterState,
+    bool? scanning,
+    bool? advertising,
+    double? lastRssi,
+    int? lastHitCount,
+    String? lastError,
+  }) {
+    return BleDebugState(
+      adapterState: adapterState ?? this.adapterState,
+      scanning: scanning ?? this.scanning,
+      advertising: advertising ?? this.advertising,
+      lastRssi: lastRssi ?? this.lastRssi,
+      lastHitCount: lastHitCount ?? this.lastHitCount,
+      lastError: lastError,
+    );
+  }
 }
