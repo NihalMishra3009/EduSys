@@ -58,6 +58,12 @@ def send_otp_email(recipient_email: str, otp_code: str) -> None:
                 return
         except (smtplib.SMTPException, SocketTimeout, OSError) as exc:
             last_error = exc
+            # Print minimal SMTP error context to logs (no secrets).
+            print(
+                f"SMTP send failed host={settings.smtp_host} port={settings.smtp_port} "
+                f"user={(settings.smtp_username or '')[:3]}*** tls={settings.smtp_use_tls} "
+                f"error={type(exc).__name__}: {exc}"
+            )
             continue
 
     raise EmailSendError("Failed to send OTP email") from last_error
