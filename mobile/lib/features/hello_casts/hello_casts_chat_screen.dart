@@ -299,8 +299,6 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     }
   }
 
-  DateTime _defaultScheduleBase() =>
-      DateTime.now().add(const Duration(minutes: 5));
 
 
   DateTime? _parseAlertAt(dynamic raw) {

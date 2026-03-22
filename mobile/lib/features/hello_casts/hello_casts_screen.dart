@@ -473,8 +473,6 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     return raw;
   }
 
-  DateTime _defaultScheduleBase() =>
-      DateTime.now().add(const Duration(minutes: 5));
 
 
   DateTime? _parseAlertAt(dynamic raw) {
