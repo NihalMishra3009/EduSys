@@ -3486,15 +3486,14 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   Future<void> _handleLectureEnded(Map<String, dynamic> ended) async {
-    if (kUseDemoDataEverywhere) {
-      final endedId = (ended["id"] as num?)?.toInt();
-      final nowUtc = DateTime.now().toUtc().toIso8601String();
-      final endedRow = <String, dynamic>{
-        ...ended,
-        "status": "ENDED",
-        "end_time": (ended["end_time"] ?? nowUtc).toString(),
-      };
-      final prefs = await SharedPreferences.getInstance();
+    final endedId = (ended["id"] as num?)?.toInt();
+    final nowUtc = DateTime.now().toUtc().toIso8601String();
+    final endedRow = <String, dynamic>{
+      ...ended,
+      "status": "ENDED",
+      "end_time": (ended["end_time"] ?? nowUtc).toString(),
+    };
+    if (mounted) {
       setState(() {
         final nextActive = List<dynamic>.from(_active);
         if (endedId != null) {
@@ -3511,6 +3510,9 @@ class _HomeTabState extends State<_HomeTab> {
         _active = nextActive;
         _history = [endedRow, ..._history];
       });
+    }
+    if (kUseDemoDataEverywhere) {
+      final prefs = await SharedPreferences.getInstance();
       await prefs.remove("demo_active_lecture");
       return;
     }
