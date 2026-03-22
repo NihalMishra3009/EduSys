@@ -185,6 +185,12 @@ def complete_registration(payload: CompleteRegistrationRequest, db: Session = De
     if payload.role == UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Admin role cannot be self-created")
 
+    department_id = payload.department_id
+    if department_id is not None:
+        exists = db.query(Department).filter(Department.id == department_id).first()
+        if not exists:
+            department_id = None
+
     user = User(
         name=name,
         email=normalized_email,
@@ -192,7 +198,7 @@ def complete_registration(payload: CompleteRegistrationRequest, db: Session = De
         role=payload.role,
         device_id=pending.device_id,
         sim_serial=pending.sim_serial,
-        department_id=payload.department_id,
+        department_id=department_id,
         profile_photo_url=payload.profile_photo_url,
         is_email_verified=True,
         is_profile_complete=True,
