@@ -1,5 +1,6 @@
 import "package:edusys_mobile/core/constants/app_colors.dart";
 import "package:flutter/material.dart";
+import "package:google_fonts/google_fonts.dart";
 
 class AppTheme {
   static ThemeData lightTheme() {
@@ -17,7 +18,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      fontFamily: "Roboto",
+      fontFamily: GoogleFonts.spaceGrotesk().fontFamily,
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: CupertinoPageTransitionsBuilder(),
@@ -27,15 +28,17 @@ class AppTheme {
       scaffoldBackgroundColor: Colors.transparent,
       canvasColor: AppColors.lightSurface,
       disabledColor: AppColors.lightTextDisabled,
-      textTheme: const TextTheme(
-        titleLarge: TextStyle(
-          color: AppColors.lightTextPrimary,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.2,
+      textTheme: GoogleFonts.spaceGroteskTextTheme(
+        const TextTheme(
+          titleLarge: TextStyle(
+            color: AppColors.lightTextPrimary,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
+          bodyMedium: TextStyle(color: AppColors.lightTextPrimary),
+          bodyLarge: TextStyle(color: AppColors.lightTextPrimary),
+          bodySmall: TextStyle(color: AppColors.lightTextSecondary),
         ),
-        bodyMedium: TextStyle(color: AppColors.lightTextPrimary),
-        bodyLarge: TextStyle(color: AppColors.lightTextPrimary),
-        bodySmall: TextStyle(color: AppColors.lightTextSecondary),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.lightBackground,
@@ -156,7 +159,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      fontFamily: "Roboto",
+      fontFamily: GoogleFonts.spaceGrotesk().fontFamily,
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: CupertinoPageTransitionsBuilder(),
@@ -164,15 +167,17 @@ class AppTheme {
         },
       ),
       scaffoldBackgroundColor: Colors.transparent,
-      textTheme: const TextTheme(
-        titleLarge: TextStyle(
-          color: AppColors.darkTextPrimary,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.2,
+      textTheme: GoogleFonts.spaceGroteskTextTheme(
+        const TextTheme(
+          titleLarge: TextStyle(
+            color: AppColors.darkTextPrimary,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
+          bodyMedium: TextStyle(color: AppColors.darkTextPrimary),
+          bodyLarge: TextStyle(color: AppColors.darkTextPrimary),
+          bodySmall: TextStyle(color: AppColors.darkTextMuted),
         ),
-        bodyMedium: TextStyle(color: AppColors.darkTextPrimary),
-        bodyLarge: TextStyle(color: AppColors.darkTextPrimary),
-        bodySmall: TextStyle(color: AppColors.darkTextMuted),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
