@@ -342,6 +342,7 @@ class _StudentMenuDrawer extends StatelessWidget {
     final auth = context.watch<AuthProvider>();
     final name = (auth.name ?? "Student").toString();
     final role = (auth.role ?? "STUDENT").toString();
+    final photoUrl = auth.profilePhotoUrl;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     final bg = isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurfaceSoft;
@@ -364,11 +365,21 @@ class _StudentMenuDrawer extends StatelessWidget {
                         CircleAvatar(
                           radius: 34,
                           backgroundColor: fg.withValues(alpha: 0.14),
-                          backgroundImage: const NetworkImage(
-                            "https://i.pravatar.cc/200?img=12",
-                          ),
+                          backgroundImage:
+                              (photoUrl != null && photoUrl.isNotEmpty)
+                                  ? NetworkImage(photoUrl)
+                                  : null,
                           onBackgroundImageError: (_, __) {},
-                          child: null,
+                          child: (photoUrl == null || photoUrl.isEmpty)
+                              ? Text(
+                                  name.isNotEmpty ? name[0].toUpperCase() : "?",
+                                  style: TextStyle(
+                                    color: fg,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 22,
+                                  ),
+                                )
+                              : null,
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -10665,8 +10676,10 @@ class _LecturesTabState extends State<_LecturesTab> {
   Future<void> _endLecture() async {
     final id = int.tryParse(_lectureIdController.text.trim());
     if (id == null) return;
-    final advertiseMinutes =
-        int.tryParse(_advertiseMinutesController.text.trim()) ?? 2;
+    final advertiseMinutes = await _promptAdvertiseMinutes();
+    if (advertiseMinutes == null) {
+      return;
+    }
     final advertiseWindowMs = advertiseMinutes * 60 * 1000;
     await _smartAttendance.endProfessorSession(
       lectureId: id,
@@ -10674,6 +10687,47 @@ class _LecturesTabState extends State<_LecturesTab> {
     );
     _show("End window started for $advertiseMinutes min. Finalizing soon.");
     await _load();
+  }
+
+  Future<int?> _promptAdvertiseMinutes() async {
+    final controller = TextEditingController(
+      text: _advertiseMinutesController.text.trim().isEmpty
+          ? "2"
+          : _advertiseMinutesController.text.trim(),
+    );
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("End Lecture Attendance Window"),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: "Minutes for BLE attendance",
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Cancel"),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = int.tryParse(controller.text.trim());
+                if (value == null || value <= 0) {
+                  return;
+                }
+                Navigator.of(context).pop(value);
+              },
+              child: const Text("Start Window"),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    return result;
   }
 
   Future<void> _markPresence(int lectureId) async {

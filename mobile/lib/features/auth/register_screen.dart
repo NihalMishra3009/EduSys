@@ -13,19 +13,53 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  static const Set<String> _publicEmailDomains = {
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "yahoo.co.in",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "icloud.com",
+    "me.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+    "zoho.com",
+    "mail.com",
+    "gmx.com",
+    "yandex.com",
+    "rediffmail.com",
+  };
+
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  bool _obscurePassword = true;
-  String _role = "STUDENT";
 
   @override
   void dispose() {
-    _nameController.dispose();
     _emailController.dispose();
-    _passwordController.dispose();
     super.dispose();
+  }
+
+  String? _validateCollegeEmail(String? value) {
+    final email = (value ?? "").trim().toLowerCase();
+    if (email.isEmpty) {
+      return "Email required";
+    }
+    final validFormat = RegExp(r"^[^\s@]+@[^\s@]+\.[^\s@]+$").hasMatch(email);
+    if (!validFormat) {
+      return "Enter valid email";
+    }
+    final parts = email.split("@");
+    if (parts.length != 2) {
+      return "Enter valid email";
+    }
+    final domain = parts[1];
+    if (_publicEmailDomains.contains(domain) || !domain.contains(".")) {
+      return "Use college email ID";
+    }
+    return null;
   }
 
   Future<void> _submit() async {
@@ -34,10 +68,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
     final auth = context.read<AuthProvider>();
     final result = await auth.register(
-      name: _nameController.text.trim(),
       email: _emailController.text.trim(),
-      password: _passwordController.text.trim(),
-      role: _role,
     );
 
     if (!mounted) {
@@ -118,55 +149,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                         const SizedBox(height: 18),
                         _RegInput(
-                          controller: _nameController,
-                          hint: "Name",
-                          icon: Icons.person_outline,
-                          validator: (value) => value == null || value.trim().length < 2 ? "Enter valid name" : null,
-                        ),
-                        const SizedBox(height: 12),
-                        _RegInput(
                           controller: _emailController,
                           hint: "Email",
                           icon: Icons.email_outlined,
                           keyboardType: TextInputType.emailAddress,
-                          validator: (value) => value == null || value.trim().isEmpty ? "Email required" : null,
-                        ),
-                        const SizedBox(height: 12),
-                        _RegInput(
-                          controller: _passwordController,
-                          hint: "Password",
-                          icon: Icons.lock_outline,
-                          obscure: _obscurePassword,
-                          validator: (value) => value == null || value.trim().length < 8 ? "Minimum 8 characters" : null,
-                          suffix: IconButton(
-                            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                            icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          initialValue: _role,
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: dark ? const Color(0xFF2C2C2E) : const Color(0xFFF8FAFC),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: BorderSide.none,
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: BorderSide(color: theme.colorScheme.primary.withValues(alpha: 0.16)),
-                            ),
-                          ),
-                          items: const [
-                            DropdownMenuItem(value: "STUDENT", child: Text("Student")),
-                            DropdownMenuItem(value: "PROFESSOR", child: Text("Professor")),
-                          ],
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() => _role = value);
-                            }
-                          },
+                          validator: _validateCollegeEmail,
                         ),
                         if (auth.error != null && auth.error!.isNotEmpty) ...[
                           const SizedBox(height: 10),
@@ -243,5 +230,3 @@ class _RegInput extends StatelessWidget {
     );
   }
 }
-
-

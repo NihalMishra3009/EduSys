@@ -1,6 +1,6 @@
 import "dart:async";
 
-import "package:edusys_mobile/app_entry.dart";
+import "package:edusys_mobile/features/auth/complete_registration_screen.dart";
 import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
@@ -70,7 +70,12 @@ class _OtpVerifyScreenState extends State<OtpVerifyScreen> {
     }
     if (ok) {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const AppEntry()),
+        MaterialPageRoute(
+          builder: (_) => CompleteRegistrationScreen(
+            email: widget.email,
+            otpCode: otp,
+          ),
+        ),
         (route) => false,
       );
       return;

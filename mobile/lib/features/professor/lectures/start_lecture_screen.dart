@@ -89,9 +89,11 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
       return;
     }
 
+    final advertiseMinutes = await _promptAdvertiseMinutes();
+    if (advertiseMinutes == null) {
+      return;
+    }
     setState(() => _loading = true);
-    final advertiseMinutes =
-        int.tryParse(_advertiseMinutesController.text.trim()) ?? 2;
     final advertiseWindowMs = advertiseMinutes * 60 * 1000;
     await _smartAttendance.endProfessorSession(
       lectureId: lectureId,
@@ -102,6 +104,47 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
       _success = true;
       _message = "End window started for $advertiseMinutes min.";
     });
+  }
+
+  Future<int?> _promptAdvertiseMinutes() async {
+    final controller = TextEditingController(
+      text: _advertiseMinutesController.text.trim().isEmpty
+          ? "2"
+          : _advertiseMinutesController.text.trim(),
+    );
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("End Lecture Attendance Window"),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: "Minutes for BLE attendance",
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Cancel"),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = int.tryParse(controller.text.trim());
+                if (value == null || value <= 0) {
+                  return;
+                }
+                Navigator.of(context).pop(value);
+              },
+              child: const Text("Start Window"),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    return result;
   }
 
   String _parseMessage(String body, {required String fallback}) {

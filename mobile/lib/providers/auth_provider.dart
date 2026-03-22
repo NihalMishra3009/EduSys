@@ -38,6 +38,7 @@ class AuthProvider extends ChangeNotifier {
   String? _role;
   String? _name;
   String? _email;
+  String? _profilePhotoUrl;
   String? _error;
   bool _preferRegisterForNewUser = false;
 
@@ -47,6 +48,7 @@ class AuthProvider extends ChangeNotifier {
   String? get role => _role;
   String? get name => _name;
   String? get email => _email;
+  String? get profilePhotoUrl => _profilePhotoUrl;
   String? get error => _error;
   bool get preferRegisterForNewUser => _preferRegisterForNewUser;
 
@@ -58,6 +60,7 @@ class AuthProvider extends ChangeNotifier {
       _role = await _apiService.getSavedRole();
       _name = await _apiService.getSavedName();
       _email = await _apiService.getSavedEmail();
+      _profilePhotoUrl = await _apiService.getSavedProfilePhoto();
       final hasKnownAccount = await _apiService.hasKnownAccount();
       _preferRegisterForNewUser = !hasKnownAccount && _token == null;
 
@@ -77,10 +80,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<RegistrationResult> register({
-    required String name,
     required String email,
-    required String password,
-    required String role,
   }) async {
     _setLoading(true);
     _error = null;
@@ -92,10 +92,7 @@ class AuthProvider extends ChangeNotifier {
       final simSerial = await _deviceBindingService.getSimSerial();
 
       final response = await _apiService.register(
-        name: name,
         email: email,
-        password: password,
-        role: role,
         deviceId: deviceId,
         simSerial: simSerial,
       );
@@ -137,26 +134,6 @@ class AuthProvider extends ChangeNotifier {
         _error = _extractError(response.body);
         return false;
       }
-
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      _token = (json["access_token"] ?? json["token"]) as String?;
-      if (_token == null) {
-        _error = "Token missing in response";
-        return false;
-      }
-      await _apiService.saveToken(_token!);
-      await _apiService.markKnownAccount();
-
-      final loginUser = json["user"] as Map<String, dynamic>?;
-      _role = (loginUser?["role"] ?? json["role"])?.toString().toUpperCase();
-      _name = loginUser?["name"]?.toString();
-      _email = loginUser?["email"]?.toString();
-      if (_role != null && _name != null && _email != null) {
-        await _apiService.saveUserContext(role: _role!, name: _name!, email: _email!);
-      }
-      _preferRegisterForNewUser = false;
-      await PushNotificationService.instance.syncAfterLogin();
-      notifyListeners();
       return true;
     } catch (e) {
       _error = "OTP verification failed: $e";
@@ -181,6 +158,43 @@ class AuthProvider extends ChangeNotifier {
       return false;
     } catch (e) {
       _error = "Resend OTP failed: $e";
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<bool> completeRegistration({
+    required String email,
+    required String otpCode,
+    required String name,
+    required String password,
+    required String role,
+    required int departmentId,
+    required String profilePhotoUrl,
+  }) async {
+    _setLoading(true);
+    _error = null;
+    try {
+      final response = await _apiService.completeRegistration(
+        email: email,
+        otpCode: otpCode,
+        name: name,
+        password: password,
+        role: role,
+        departmentId: departmentId,
+        profilePhotoUrl: profilePhotoUrl,
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _error = _extractError(response.body);
+        return false;
+      }
+      await _apiService.markKnownAccount();
+      _preferRegisterForNewUser = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _error = "Unable to complete registration: $e";
       return false;
     } finally {
       _setLoading(false);
@@ -231,11 +245,13 @@ class AuthProvider extends ChangeNotifier {
       final roleFromLogin = (loginUser?["role"] ?? json["role"]) as String?;
       final nameFromLogin = loginUser?["name"] as String?;
       final emailFromLogin = loginUser?["email"] as String?;
+      final photoFromLogin = loginUser?["profile_photo_url"] as String?;
 
       if (roleFromLogin != null && roleFromLogin.isNotEmpty) {
         _role = roleFromLogin.toUpperCase();
         _name = nameFromLogin;
         _email = emailFromLogin;
+        _profilePhotoUrl = photoFromLogin;
         _preferRegisterForNewUser = false;
         await _apiService.markKnownAccount();
 
@@ -244,6 +260,7 @@ class AuthProvider extends ChangeNotifier {
             role: _role!,
             name: _name!,
             email: _email!,
+            profilePhotoUrl: _profilePhotoUrl,
           );
         }
 
@@ -282,6 +299,7 @@ class AuthProvider extends ChangeNotifier {
     _role = null;
     _name = null;
     _email = null;
+    _profilePhotoUrl = null;
     if (clearError) {
       _error = null;
     }
@@ -314,12 +332,14 @@ class AuthProvider extends ChangeNotifier {
       _name = (json["name"] as String?)?.trim();
       _email = json["email"] as String?;
       _role = (json["role"] as String?)?.toUpperCase() ?? _role;
+      _profilePhotoUrl = json["profile_photo_url"] as String? ?? _profilePhotoUrl;
 
       if (_role != null && _name != null && _email != null) {
         await _apiService.saveUserContext(
           role: _role!,
           name: _name!,
           email: _email!,
+          profilePhotoUrl: _profilePhotoUrl,
         );
       }
 
@@ -385,12 +405,14 @@ class AuthProvider extends ChangeNotifier {
         _role = (json["role"] as String?)?.toUpperCase();
         _name = json["name"] as String?;
         _email = json["email"] as String?;
+        _profilePhotoUrl = json["profile_photo_url"] as String?;
 
         if (_role != null && _name != null && _email != null) {
           await _apiService.saveUserContext(
             role: _role!,
             name: _name!,
             email: _email!,
+            profilePhotoUrl: _profilePhotoUrl,
           );
           _preferRegisterForNewUser = false;
           await _apiService.markKnownAccount();

@@ -7,6 +7,7 @@ import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:flutter/material.dart";
 import "dart:ui";
 import "package:provider/provider.dart";
+import "package:edusys_mobile/features/auth/register_screen.dart";
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -212,6 +213,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ),
                               ),
+                              const SizedBox(height: 12),
+                              TextButton(
+                                onPressed: auth.isLoading
+                                    ? null
+                                    : () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(builder: (_) => const RegisterScreen()),
+                                        );
+                                      },
+                                child: const Text("New here? Create account"),
+                              ),
                             ],
                           ),
                         ),
@@ -321,6 +333,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                       child: Text(auth.isLoading ? "Please wait..." : "Login"),
                                     ),
                                   ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextButton(
+                                  onPressed: auth.isLoading
+                                      ? null
+                                      : () {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(builder: (_) => const RegisterScreen()),
+                                          );
+                                        },
+                                  child: const Text("New here? Create account"),
                                 ),
                               ],
                             ),

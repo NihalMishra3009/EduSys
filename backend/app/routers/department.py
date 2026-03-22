@@ -34,7 +34,7 @@ def create_department(
 
 
 @router.get("", response_model=list[DepartmentOut])
-def list_departments(db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
+def list_departments(db: Session = Depends(get_db)):
     return db.query(Department).order_by(Department.name.asc()).all()
 
 

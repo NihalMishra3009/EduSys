@@ -11,6 +11,7 @@ class UserOut(BaseModel):
     email: EmailStr
     role: UserRole
     department_id: int | None = None
+    profile_photo_url: str | None = None
     is_blocked: bool
     created_at: datetime
     last_login_at: datetime | None = None
@@ -25,6 +26,7 @@ class UserDirectoryOut(BaseModel):
     email: EmailStr
     role: UserRole
     department_id: int | None = None
+    profile_photo_url: str | None = None
 
     class Config:
         from_attributes = True

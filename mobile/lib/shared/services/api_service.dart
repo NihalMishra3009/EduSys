@@ -25,6 +25,7 @@ class ApiService {
   static const String _roleKey = "user_role";
   static const String _nameKey = "user_name";
   static const String _emailKey = "user_email";
+  static const String _photoKey = "user_photo";
   static const String _hasAccountKey = "has_local_account";
   static const String _lastLoginEmailKey = "last_login_email";
   static const String _lastLoginAtKey = "last_login_at";
@@ -43,6 +44,8 @@ class ApiService {
   bool _nameLoaded = false;
   String? _cachedEmail;
   bool _emailLoaded = false;
+  String? _cachedPhoto;
+  bool _photoLoaded = false;
   DateTime? _lastBackendOkAt;
   DateTime? _lastBackendCheckAt;
   bool? _lastBackendOnline;
@@ -92,6 +95,13 @@ class ApiService {
     return _cachedEmail;
   }
 
+  Future<String?> getSavedProfilePhoto() async {
+    if (_photoLoaded) return _cachedPhoto;
+    _cachedPhoto = await _storage.read(key: _photoKey);
+    _photoLoaded = true;
+    return _cachedPhoto;
+  }
+
   Future<void> saveToken(String token) async {
     _cachedToken = token;
     _tokenLoaded = true;
@@ -102,6 +112,7 @@ class ApiService {
     required String role,
     required String name,
     required String email,
+    String? profilePhotoUrl,
   }) async {
     _cachedRole = role;
     _cachedName = name;
@@ -109,9 +120,16 @@ class ApiService {
     _roleLoaded = true;
     _nameLoaded = true;
     _emailLoaded = true;
+    _cachedPhoto = profilePhotoUrl;
+    _photoLoaded = true;
     await _storage.write(key: _roleKey, value: role);
     await _storage.write(key: _nameKey, value: name);
     await _storage.write(key: _emailKey, value: email);
+    if (profilePhotoUrl == null || profilePhotoUrl.isEmpty) {
+      await _storage.delete(key: _photoKey);
+    } else {
+      await _storage.write(key: _photoKey, value: profilePhotoUrl);
+    }
   }
 
   Future<void> clearToken() async {
@@ -137,9 +155,12 @@ class ApiService {
     _roleLoaded = true;
     _nameLoaded = true;
     _emailLoaded = true;
+    _cachedPhoto = null;
+    _photoLoaded = true;
     await _storage.delete(key: _roleKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _emailKey);
+    await _storage.delete(key: _photoKey);
   }
 
   Future<void> saveLastLoginHistory({
@@ -477,19 +498,13 @@ class ApiService {
   }
 
   Future<http.Response> register({
-    required String name,
     required String email,
-    required String password,
-    required String role,
     required String deviceId,
     required String simSerial,
   }) async {
     final headers = await _headers();
     final body = jsonEncode({
-      "name": name,
       "email": email,
-      "password": password,
-      "role": role,
       "device_id": deviceId,
       "sim_serial": simSerial,
     });
@@ -519,6 +534,31 @@ class ApiService {
     final body = jsonEncode({"email": email});
     return _sendWithFallback(
       path: "/auth/resend-otp",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> completeRegistration({
+    required String email,
+    required String otpCode,
+    required String name,
+    required String password,
+    required String role,
+    required int departmentId,
+    required String profilePhotoUrl,
+  }) async {
+    final headers = await _headers();
+    final body = jsonEncode({
+      "email": email,
+      "otp_code": otpCode,
+      "name": name,
+      "password": password,
+      "role": role,
+      "department_id": departmentId,
+      "profile_photo_url": profilePhotoUrl,
+    });
+    return _sendWithFallback(
+      path: "/auth/complete-registration",
       sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
@@ -569,6 +609,14 @@ class ApiService {
     final headers = await _headers(auth: true);
     return _sendWithFallback(
       path: "/auth/me",
+      sender: (uri) => _sharedClient.get(uri, headers: headers),
+    );
+  }
+
+  Future<http.Response> listDepartments() async {
+    final headers = await _headers(auth: true);
+    return _sendWithFallback(
+      path: "/departments",
       sender: (uri) => _sharedClient.get(uri, headers: headers),
     );
   }
@@ -756,6 +804,8 @@ class ApiService {
     double? rssi,
     double? pressure,
     bool floorSkipped = false,
+    bool forced = false,
+    String? reason,
   }) async {
     final headers = await _headers(auth: true);
     final body = jsonEncode({
@@ -769,6 +819,8 @@ class ApiService {
       "rssi": rssi,
       "pressure": pressure,
       "floor_skipped": floorSkipped,
+      "forced": forced,
+      if (reason != null) "reason": reason,
     });
     return _sendWithFallback(
       path: "/attendance/scan",

@@ -18,6 +18,7 @@ from app.schemas.auth import (
     RegisterResponse,
     LoginRequest,
     VerifyOtpRequest,
+    VerifyOtpResponse,
     ResendOtpRequest,
     GoogleLoginRequest,
     TokenResponse,
@@ -26,6 +27,7 @@ from app.schemas.auth import (
     UpdateProfileRequest,
     ChangePasswordRequest,
     DeleteAccountRequest,
+    CompleteRegistrationRequest,
 )
 from app.schemas.user import UserOut
 from app.services.audit_service import write_audit_log
@@ -74,21 +76,24 @@ def _is_college_email(email: str) -> bool:
 @router.post("/register", response_model=RegisterResponse)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     normalized_email = payload.email.lower()
+    if not _is_college_email(normalized_email):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Use your college email ID to register")
     if db.query(User).filter(User.email == normalized_email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
     otp_code = f"{random.randint(100000, 999999)}"
 
     user = User(
-        name=payload.name,
+        name=normalized_email.split("@", 1)[0].replace(".", " ").title(),
         email=normalized_email,
-        password_hash=hash_password(payload.password),
-        role=payload.role,
+        password_hash=hash_password(secrets.token_urlsafe(16)),
+        role=UserRole.STUDENT,
         device_id=payload.device_id,
         sim_serial=payload.sim_serial,
         otp_code=otp_code,
         otp_expires_at=datetime.utcnow() + timedelta(minutes=10),
         is_email_verified=False,
+        is_profile_complete=False,
     )
     db.add(user)
     try:
@@ -105,7 +110,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/verify-otp", response_model=TokenResponse)
+@router.post("/verify-otp", response_model=VerifyOtpResponse)
 def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
     normalized_email = payload.email.lower()
     user = db.query(User).filter(User.email == normalized_email).first()
@@ -113,6 +118,8 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     if user.is_blocked:
         raise HTTPException(status_code=403, detail="User is blocked")
+    if user.is_profile_complete:
+        raise HTTPException(status_code=400, detail="Registration already completed")
     if user.is_email_verified:
         raise HTTPException(status_code=400, detail="Email already verified")
     if not user.otp_code or not user.otp_expires_at:
@@ -123,23 +130,45 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
     user.is_email_verified = True
-    user.otp_code = None
-    user.otp_expires_at = None
-    user.last_login_at = datetime.utcnow()
     db.commit()
 
-    token = create_access_token(str(user.id))
-    return TokenResponse(
-        access_token=token,
-        token=token,
-        role=user.role,
-        user=LoginUserOut(
-            id=user.id,
-            name=user.name,
-            email=user.email,
-            role=user.role,
-        ),
-    )
+    return VerifyOtpResponse(detail="OTP verified", email=user.email)
+
+
+@router.post("/complete-registration")
+def complete_registration(payload: CompleteRegistrationRequest, db: Session = Depends(get_db)):
+    normalized_email = payload.email.lower()
+    user = db.query(User).filter(User.email == normalized_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.is_blocked:
+        raise HTTPException(status_code=403, detail="User is blocked")
+    if not user.is_email_verified:
+        raise HTTPException(status_code=400, detail="Verify OTP before completing registration")
+    if not user.otp_code or not user.otp_expires_at:
+        raise HTTPException(status_code=400, detail="OTP is not generated")
+    if user.otp_expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="OTP expired")
+    if payload.otp_code.strip() != user.otp_code:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    name = payload.name.strip()
+    if len(name) < 2:
+        raise HTTPException(status_code=400, detail="Name must be at least 2 characters")
+    if len(payload.password.strip()) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if payload.role == UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Admin role cannot be self-created")
+
+    user.name = name
+    user.password_hash = hash_password(payload.password)
+    user.role = payload.role
+    user.department_id = payload.department_id
+    user.profile_photo_url = payload.profile_photo_url
+    user.is_profile_complete = True
+    user.otp_code = None
+    user.otp_expires_at = None
+    db.commit()
+    return {"detail": "Registration completed. Please login."}
 
 
 @router.post("/resend-otp")
@@ -175,20 +204,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
     user = db.query(User).filter(User.email == normalized_email).first()
     if not user:
-        # Dev-friendly behavior: auto-provision first login for institutional emails.
-        user = User(
-            name=normalized_email.split("@", 1)[0].replace(".", " ").title(),
-            email=normalized_email,
-            password_hash=hash_password(payload.password or secrets.token_urlsafe(12)),
-            role=requested_role,
-            device_id=payload.device_id,
-            sim_serial=payload.sim_serial,
-            is_email_verified=True,
-            last_login_at=datetime.utcnow(),
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found. Please register first.")
 
     if user.is_blocked:
         write_audit_log(
@@ -201,6 +217,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is blocked")
     if not user.is_email_verified:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Verify OTP before login")
+    if not user.is_profile_complete:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Complete registration before login")
 
     forced_role = FORCED_EMAIL_ROLE_BINDINGS.get(normalized_email)
     if forced_role is not None and user.role != forced_role:
@@ -249,6 +267,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             name=user.name,
             email=user.email,
             role=user.role,
+            profile_photo_url=user.profile_photo_url,
         ),
     )
 
@@ -287,6 +306,8 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
             device_id=payload.device_id,
             sim_serial=payload.sim_serial,
             is_email_verified=True,
+            is_profile_complete=True,
+            profile_photo_url=google_data.get("picture"),
         )
         db.add(user)
 
@@ -304,6 +325,7 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
             name=user.name,
             email=user.email,
             role=user.role,
+            profile_photo_url=user.profile_photo_url,
         ),
     )
 
