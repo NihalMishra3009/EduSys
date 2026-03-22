@@ -3,6 +3,8 @@ import "dart:io";
 import "dart:ui";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/core/utils/app_navigator.dart";
+import "package:edusys_mobile/features/hello_casts/hello_casts_alarm_screen.dart";
 import "package:firebase_core/firebase_core.dart";
 import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/widgets.dart";
@@ -81,6 +83,11 @@ class PushNotificationService {
     FirebaseMessaging.onMessage.listen((message) {
       showNotificationForRemoteMessage(message);
     });
+    final launchDetails = await _local.getNotificationAppLaunchDetails();
+    final response = launchDetails?.notificationResponse;
+    if (response != null) {
+      handleNotificationAction(response);
+    }
     _initialized = true;
   }
 
@@ -169,6 +176,11 @@ class PushNotificationService {
       final alertId = parsed.alertId;
       if (alertId == null) return;
       await cancelAlert(alertId);
+      return;
+    }
+
+    if (parsed.type == _payloadTypeCastAlert && parsed.alertId != null) {
+      _openAlarmScreen(parsed);
     }
   }
 
@@ -309,6 +321,7 @@ class PushNotificationService {
       priority: Priority.high,
       category: AndroidNotificationCategory.alarm,
       fullScreenIntent: true,
+      playSound: true,
       actions: const [
         AndroidNotificationAction(
           _actionSnooze,
@@ -365,6 +378,7 @@ class PushNotificationService {
       priority: Priority.high,
       category: AndroidNotificationCategory.alarm,
       fullScreenIntent: true,
+      playSound: true,
       actions: const [
         AndroidNotificationAction(
           _actionSnooze,
@@ -424,6 +438,23 @@ class PushNotificationService {
       if (body != null) _payloadBodyKey: body,
     });
   }
+
+  void _openAlarmScreen(_NotificationPayload payload) {
+    final nav = AppNavigator.key.currentState;
+    final ctx = AppNavigator.key.currentContext;
+    if (nav == null || ctx == null) return;
+    nav.push(
+      PageRouteBuilder(
+        opaque: false,
+        pageBuilder: (_, __, ___) => HelloCastsAlarmScreen(
+          castId: payload.castId ?? -1,
+          alertId: payload.alertId ?? -1,
+          title: payload.title ?? "Alert",
+          body: payload.body ?? "Reminder",
+        ),
+      ),
+    );
+  }
 }
 
 class _NotificationPayload {
@@ -432,12 +463,14 @@ class _NotificationPayload {
     this.alertId,
     this.title,
     this.body,
+    this.type,
   });
 
   final int? castId;
   final int? alertId;
   final String? title;
   final String? body;
+  final String? type;
 
   factory _NotificationPayload.fromMap(Map<String, dynamic> map) {
     return _NotificationPayload(
@@ -445,6 +478,7 @@ class _NotificationPayload {
       alertId: int.tryParse(map[_payloadAlertIdKey]?.toString() ?? ""),
       title: map[_payloadTitleKey]?.toString(),
       body: map[_payloadBodyKey]?.toString(),
+      type: map[_payloadTypeKey]?.toString(),
     );
   }
 }

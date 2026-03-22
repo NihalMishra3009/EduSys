@@ -347,6 +347,115 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     return "In ${minutes}m";
   }
 
+  String _formatClock(DateTime time) {
+    final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+    final minute = time.minute.toString().padLeft(2, "0");
+    final period = time.hour >= 12 ? "PM" : "AM";
+    return "$hour:$minute $period";
+  }
+
+  void _showAlertDetails(Map<String, dynamic> alert) {
+    final title = alert["title"]?.toString() ?? "Alert";
+    final message = alert["message"]?.toString() ?? "";
+    final scheduleAt = _parseAlertAt(alert["schedule_at"]);
+    final when = scheduleAt == null ? "Unknown time" : _formatCountdown(scheduleAt);
+    final interval = (alert["interval_minutes"] as num?)?.toInt();
+    final repeat = switch (interval) {
+      120 => "Every 2 hours",
+      1440 => "Daily",
+      10080 => "Weekly",
+      _ => "Once",
+    };
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+          decoration: BoxDecoration(
+            color: Theme.of(ctx).colorScheme.surface,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF9A3D).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.alarm_rounded,
+                        color: Color(0xFFFF9A3D)),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    title,
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(when, style: const TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Text("Repeat: $repeat",
+                  style: TextStyle(
+                      color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.7))),
+              if (message.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(message),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text("Close"),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _deleteAlertFromChat(alert);
+                      },
+                      child: const Text("Delete"),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteAlertFromChat(Map<String, dynamic> alert) async {
+    final alertId = (alert["id"] as num?)?.toInt();
+    if (alertId == null) return;
+    final res = await _api.deleteCastAlert(alertId: alertId);
+    if (!mounted) return;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      setState(() => _scheduled = _scheduled.where((a) => a["id"] != alertId).toList());
+      await PushNotificationService.instance.cancelAlert(alertId);
+    } else {
+      GlassToast.show(context, "Unable to delete alert",
+          icon: Icons.error_outline);
+    }
+  }
+
   bool _hasMatchingServerMessage(
     List<Map<String, dynamic>> remoteMessages,
     Map<String, dynamic> pending,
@@ -1379,6 +1488,13 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
     );
     if (ok != true || scheduledAt == null || !mounted) return;
 
+    final now = DateTime.now();
+    if (!scheduledAt!.isAfter(now)) {
+      scheduledAt = now.add(const Duration(minutes: 1));
+      GlassToast.show(context, "Time passed. Alert set for now.",
+          icon: Icons.info_outline);
+    }
+
     final intervalMinutes = switch (repeat) {
       "EVERY_2H" => 120,
       "DAILY" => 1440,
@@ -1584,12 +1700,20 @@ class _HelloCastsChatScreenState extends State<HelloCastsChatScreen>
                         child: Text(
                           _nextAlert() == null
                               ? "${_scheduled.length} scheduled alert${_scheduled.length > 1 ? "s" : ""}"
-                              : "${_formatCountdown(_parseAlertAt(_nextAlert()!["schedule_at"]) ?? _now)} â€¢ ${_nextAlert()!["title"] ?? "Alert"}",
+                              : "${_formatCountdown(_parseAlertAt(_nextAlert()!["schedule_at"]) ?? _now)} - ${_formatClock(_parseAlertAt(_nextAlert()!["schedule_at"]) ?? _now)} - ${_nextAlert()!["title"] ?? "Alert"}",
                           style: const TextStyle(
                               fontSize: 12, fontWeight: FontWeight.w600),
                         ),
                       ),
-                      TextButton(onPressed: () {}, child: const Text("View")),
+                      TextButton(
+                        onPressed: () {
+                          final next = _nextAlert();
+                          if (next != null) {
+                            _showAlertDetails(next);
+                          }
+                        },
+                        child: const Text("View"),
+                      ),
                     ],
                   ),
                 ),

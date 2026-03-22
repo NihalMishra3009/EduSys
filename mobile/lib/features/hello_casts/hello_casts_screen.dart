@@ -1033,6 +1033,13 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     if (!mounted) return;
     if (ok != true || scheduleAt == null || castId.value == null) return;
 
+    final now = DateTime.now();
+    if (!scheduleAt!.isAfter(now)) {
+      scheduleAt = now.add(const Duration(minutes: 1));
+      GlassToast.show(context, "Time passed. Alert set for now.",
+          icon: Icons.info_outline);
+    }
+
     final intervalMinutes = switch (repeat) {
       "EVERY_2H" => 120,
       "DAILY" => 1440,
