@@ -8,9 +8,11 @@ import "package:edusys_mobile/core/utils/app_navigator.dart";
 import "package:edusys_mobile/core/utils/session_guard.dart";
 import "package:edusys_mobile/shared/services/crash_log_service.dart";
 import "package:edusys_mobile/shared/widgets/glass_toast.dart";
+import "package:edusys_mobile/providers/auth_provider.dart";
 import "package:flutter/material.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:http/http.dart" as http;
+import "package:provider/provider.dart";
 
 class ApiService {
   ApiService({FlutterSecureStorage? storage})
@@ -438,13 +440,23 @@ class ApiService {
   }
 
   Future<void> _handleUnauthorized() async {
-    await clearToken();
-    await clearUserContext();
     if (!SessionGuard.beginRedirect()) {
       return;
     }
-    final nav = AppNavigator.key.currentState;
     final ctx = AppNavigator.key.currentContext;
+    if (ctx != null) {
+      try {
+        final auth = Provider.of<AuthProvider>(ctx, listen: false);
+        await auth.logout(clearError: false);
+      } catch (_) {
+        await clearToken();
+        await clearUserContext();
+      }
+    } else {
+      await clearToken();
+      await clearUserContext();
+    }
+    final nav = AppNavigator.key.currentState;
     nav?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AppEntry()),
       (route) => false,
