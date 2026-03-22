@@ -563,6 +563,34 @@ class ApiService {
     );
   }
 
+  Future<http.Response> uploadProfilePhoto({
+    required String email,
+    required String otpCode,
+    required String filePath,
+  }) async {
+    final baseUrl = await getBaseUrl();
+    final uri = Uri.parse("$baseUrl/auth/upload-profile-photo");
+    try {
+      final request = http.MultipartRequest("POST", uri);
+      request.fields["email"] = email;
+      request.fields["otp_code"] = otpCode;
+      request.files.add(await http.MultipartFile.fromPath("file", filePath));
+      final streamed = await request.send().timeout(_timeout);
+      final response = await http.Response.fromStream(streamed);
+      return _handleResponse(response, handleUnauthorized: false);
+    } on TimeoutException {
+      return http.Response(
+          jsonEncode({"detail": "Upload timed out. Please retry."}), 504);
+    } on SocketException {
+      return http.Response(
+          jsonEncode(
+              {"detail": "No internet connection or backend unreachable."}),
+          503);
+    } on http.ClientException {
+      return http.Response(jsonEncode({"detail": "Backend unreachable."}), 503);
+    }
+  }
+
   Future<http.Response> login({
     required String email,
     required String password,

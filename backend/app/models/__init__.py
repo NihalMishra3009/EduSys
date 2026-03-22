@@ -16,6 +16,7 @@ from app.models.lecture_session import LectureSession
 from app.models.scan_event import ScanEvent
 from app.models.cast import Cast, CastAlert, CastMember, CastMemberRole, CastMessage, CastType, CastInvite, CastInviteStatus
 from app.models.connected import ConnectedRoom, ConnectedSchedule
+from app.models.pending_registration import PendingRegistration
 
 __all__ = [
     "Base",
@@ -49,6 +50,7 @@ __all__ = [
     "CastInviteStatus",
     "ConnectedRoom",
     "ConnectedSchedule",
+    "PendingRegistration",
 ]
 
 from app.models.learned import LearnedSubject, LearnedSubjectMember, LearnedPost, LearnedSubmission, LearnedSyllabus

@@ -2,7 +2,9 @@ from datetime import datetime
 from datetime import timedelta
 import random
 import secrets
-from fastapi import APIRouter, Depends, HTTPException, status
+from pathlib import Path
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Form
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -10,6 +12,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import hash_password, verify_password, create_access_token
 from app.models.user import User, UserRole
+from app.models.pending_registration import PendingRegistration
 from app.models.lecture import Lecture
 from app.models.attendance_checkpoint import AttendanceCheckpoint
 from app.models.attendance_record import AttendanceRecord
@@ -62,6 +65,33 @@ PUBLIC_EMAIL_DOMAINS = {
     "rediffmail.com",
 }
 
+_media_root = Path(__file__).resolve().parent.parent.parent / "media" / "attachments" / "profile"
+_media_root.mkdir(parents=True, exist_ok=True)
+_max_upload_size_bytes = 5 * 1024 * 1024
+
+
+def _save_profile_photo(file: UploadFile) -> tuple[str, int]:
+    original = (file.filename or "profile").strip()
+    ext = Path(original).suffix.lower()
+    if ext not in {".png", ".jpg", ".jpeg"}:
+        raise HTTPException(status_code=400, detail="Unsupported image type")
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    destination = _media_root / unique_name
+    total = 0
+    with destination.open("wb") as out_file:
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _max_upload_size_bytes:
+                out_file.close()
+                if destination.exists():
+                    destination.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="File too large (max 5 MB)")
+            out_file.write(chunk)
+    return unique_name, total
+
 def _is_college_email(email: str) -> bool:
     normalized = email.strip().lower()
     if "@" not in normalized:
@@ -78,43 +108,33 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     normalized_email = payload.email.lower()
     if not _is_college_email(normalized_email):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Use your college email ID to register")
-    existing = db.query(User).filter(User.email == normalized_email).first()
-    if existing:
-        if existing.is_profile_complete:
-            raise HTTPException(status_code=400, detail="Email already registered")
-        # Re-send OTP for incomplete registrations.
-        otp_code = f"{random.randint(100000, 999999)}"
-        existing.otp_code = otp_code
-        existing.otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
-        existing.device_id = payload.device_id
-        existing.sim_serial = payload.sim_serial
-        try:
-            send_otp_email(normalized_email, otp_code)
-            db.commit()
-        except EmailSendError as exc:
-            db.rollback()
-            raise HTTPException(status_code=503, detail=str(exc))
-        return RegisterResponse(
-            detail="OTP resent to your email. Verify to complete registration.",
-            email=normalized_email,
-            otp_dev_code=otp_code if settings.dev_show_otp_in_response else None,
-        )
+    existing_user = db.query(User).filter(User.email == normalized_email).first()
+    if existing_user and existing_user.is_profile_complete:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if existing_user and not existing_user.is_profile_complete:
+        db.delete(existing_user)
+        db.commit()
 
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == normalized_email).first()
     otp_code = f"{random.randint(100000, 999999)}"
+    if pending:
+        pending.otp_code = otp_code
+        pending.otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
+        pending.is_verified = False
+        pending.verified_at = None
+        pending.device_id = payload.device_id
+        pending.sim_serial = payload.sim_serial
+    else:
+        pending = PendingRegistration(
+            email=normalized_email,
+            otp_code=otp_code,
+            otp_expires_at=datetime.utcnow() + timedelta(minutes=10),
+            is_verified=False,
+            device_id=payload.device_id,
+            sim_serial=payload.sim_serial,
+        )
+        db.add(pending)
 
-    user = User(
-        name=normalized_email.split("@", 1)[0].replace(".", " ").title(),
-        email=normalized_email,
-        password_hash=hash_password(secrets.token_urlsafe(16)),
-        role=UserRole.STUDENT,
-        device_id=payload.device_id,
-        sim_serial=payload.sim_serial,
-        otp_code=otp_code,
-        otp_expires_at=datetime.utcnow() + timedelta(minutes=10),
-        is_email_verified=False,
-        is_profile_complete=False,
-    )
-    db.add(user)
     try:
         send_otp_email(normalized_email, otp_code)
         db.commit()
@@ -123,7 +143,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=503, detail=str(exc))
 
     return RegisterResponse(
-        detail="Registration successful. Verify OTP sent to email before login.",
+        detail="OTP sent to your email. Verify to continue.",
         email=normalized_email,
         otp_dev_code=otp_code if settings.dev_show_otp_in_response else None,
     )
@@ -132,43 +152,30 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 @router.post("/verify-otp", response_model=VerifyOtpResponse)
 def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
     normalized_email = payload.email.lower()
-    user = db.query(User).filter(User.email == normalized_email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.is_blocked:
-        raise HTTPException(status_code=403, detail="User is blocked")
-    if user.is_profile_complete:
-        raise HTTPException(status_code=400, detail="Registration already completed")
-    if user.is_email_verified:
-        raise HTTPException(status_code=400, detail="Email already verified")
-    if not user.otp_code or not user.otp_expires_at:
-        raise HTTPException(status_code=400, detail="OTP is not generated")
-    if user.otp_expires_at < datetime.utcnow():
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == normalized_email).first()
+    if not pending:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if pending.otp_expires_at < datetime.utcnow():
         raise HTTPException(status_code=400, detail="OTP expired")
-    if payload.otp_code.strip() != user.otp_code:
+    if payload.otp_code.strip() != pending.otp_code:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    user.is_email_verified = True
+    pending.is_verified = True
+    pending.verified_at = datetime.utcnow()
     db.commit()
 
-    return VerifyOtpResponse(detail="OTP verified", email=user.email)
+    return VerifyOtpResponse(detail="OTP verified", email=pending.email)
 
 
 @router.post("/complete-registration")
 def complete_registration(payload: CompleteRegistrationRequest, db: Session = Depends(get_db)):
     normalized_email = payload.email.lower()
-    user = db.query(User).filter(User.email == normalized_email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.is_blocked:
-        raise HTTPException(status_code=403, detail="User is blocked")
-    if not user.is_email_verified:
-        raise HTTPException(status_code=400, detail="Verify OTP before completing registration")
-    if not user.otp_code or not user.otp_expires_at:
-        raise HTTPException(status_code=400, detail="OTP is not generated")
-    if user.otp_expires_at < datetime.utcnow():
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == normalized_email).first()
+    if not pending:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if pending.otp_expires_at < datetime.utcnow():
         raise HTTPException(status_code=400, detail="OTP expired")
-    if payload.otp_code.strip() != user.otp_code:
+    if payload.otp_code.strip() != pending.otp_code and not pending.is_verified:
         raise HTTPException(status_code=400, detail="Invalid OTP")
     name = payload.name.strip()
     if len(name) < 2:
@@ -178,30 +185,64 @@ def complete_registration(payload: CompleteRegistrationRequest, db: Session = De
     if payload.role == UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Admin role cannot be self-created")
 
-    user.name = name
-    user.password_hash = hash_password(payload.password)
-    user.role = payload.role
-    user.department_id = payload.department_id
-    user.profile_photo_url = payload.profile_photo_url
-    user.is_profile_complete = True
-    user.otp_code = None
-    user.otp_expires_at = None
+    user = User(
+        name=name,
+        email=normalized_email,
+        password_hash=hash_password(payload.password),
+        role=payload.role,
+        device_id=pending.device_id,
+        sim_serial=pending.sim_serial,
+        department_id=payload.department_id,
+        profile_photo_url=payload.profile_photo_url,
+        is_email_verified=True,
+        is_profile_complete=True,
+    )
+    db.add(user)
+    db.delete(pending)
     db.commit()
     return {"detail": "Registration completed. Please login."}
+
+
+@router.post("/upload-profile-photo")
+def upload_profile_photo(
+    request: Request,
+    email: str = Form(...),
+    otp_code: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    normalized_email = email.strip().lower()
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == normalized_email).first()
+    if not pending:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if pending.otp_expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="OTP expired")
+    if otp_code.strip() != pending.otp_code and not pending.is_verified:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    filename, size_bytes = _save_profile_photo(file)
+    relative_path = f"/media/attachments/profile/{filename}"
+    public_url = f"{str(request.base_url).rstrip('/')}{relative_path}"
+    return {
+        "url": public_url,
+        "relative_url": relative_path,
+        "filename": file.filename or "profile",
+        "size_bytes": size_bytes,
+    }
 
 
 @router.post("/resend-otp")
 def resend_otp(payload: ResendOtpRequest, db: Session = Depends(get_db)):
     normalized_email = payload.email.lower()
-    user = db.query(User).filter(User.email == normalized_email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.is_email_verified:
+    pending = db.query(PendingRegistration).filter(PendingRegistration.email == normalized_email).first()
+    if not pending:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if pending.is_verified:
         raise HTTPException(status_code=400, detail="Email already verified")
 
     otp_code = f"{random.randint(100000, 999999)}"
-    user.otp_code = otp_code
-    user.otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
+    pending.otp_code = otp_code
+    pending.otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
 
     try:
         send_otp_email(normalized_email, otp_code)

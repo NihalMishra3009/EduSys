@@ -84,9 +84,10 @@ class _CompleteRegistrationScreenState extends State<CompleteRegistrationScreen>
       }
       final api = ApiService();
       await api.setBaseUrl(ApiConfig.baseUrl);
-      final response = await api.uploadAttachment(
+      final response = await api.uploadProfilePhoto(
+        email: widget.email,
+        otpCode: widget.otpCode,
         filePath: filePath,
-        purpose: "profile",
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         GlassToast.show(context, "Profile photo upload failed", icon: Icons.error_outline);
