@@ -773,6 +773,7 @@ class SmartAttendanceService {
             forced: true,
             reason: "LECTURE_END_WINDOW",
           );
+          await _api.suppressActiveLectureId(lectureId);
           _markController.add(AttendanceMarkEvent(
             lectureId: lectureId,
             studentId: studentId,
@@ -812,6 +813,7 @@ class SmartAttendanceService {
               scanIndex: state.scanIndex,
               rssi: scanResult.avgRssi,
             );
+            await _api.suppressActiveLectureId(lectureId);
             _markController.add(AttendanceMarkEvent(
               lectureId: lectureId,
               studentId: studentId,

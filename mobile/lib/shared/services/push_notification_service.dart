@@ -117,6 +117,9 @@ class PushNotificationService {
       final sessionToken = (data["session_token"] ?? "").toString();
       final advertiseUntil = int.tryParse(data["advertise_until"] ?? "");
       final phase = (data["phase"] ?? "").toString();
+      if (lectureId != null && phase == "end") {
+        await _api.suppressActiveLectureId(lectureId);
+      }
       if (lectureId != null && roomId != null && sessionToken.isNotEmpty) {
         await SmartAttendanceService().triggerAttendanceWindowScan(
           lectureId: lectureId,

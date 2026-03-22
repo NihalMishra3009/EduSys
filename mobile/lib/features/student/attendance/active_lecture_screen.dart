@@ -55,22 +55,30 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     }
 
     final response = await _api.listActiveLectures();
-    setState(() {
-      _loading = false;
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        _lectures = jsonDecode(response.body) as List<dynamic>;
+    if (!mounted) return;
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final raw = jsonDecode(response.body) as List<dynamic>;
+      final filtered = await _api.filterSuppressedActiveLectures(raw);
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _lectures = filtered;
         final roomIds = _lectures
             .map((e) => (e["classroom_id"] as num?)?.toInt())
             .whereType<int>()
             .toList();
         _smartAttendance.setActiveRoomIds(roomIds);
-      } else {
-        if (!silent) {
-          _message = _extractMessage(response.body, fallback: "Unable to load active lectures");
-        }
-        _success = false;
-        _smartAttendance.setActiveRoomIds(const []);
+      });
+      return;
+    }
+    setState(() {
+      _loading = false;
+      if (!silent) {
+        _message = _extractMessage(response.body,
+            fallback: "Unable to load active lectures");
       }
+      _success = false;
+      _smartAttendance.setActiveRoomIds(const []);
     });
   }
 

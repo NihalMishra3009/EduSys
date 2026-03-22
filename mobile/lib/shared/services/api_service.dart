@@ -31,6 +31,7 @@ class ApiService {
   static const String _hasAccountKey = "has_local_account";
   static const String _lastLoginEmailKey = "last_login_email";
   static const String _lastLoginAtKey = "last_login_at";
+  static const String _suppressedActiveKey = "suppressed_active_lectures";
   static const String _cachePrefix = "cache_";
   static const Duration _timeout = Duration(seconds: 12);
   static const Duration _backendCheckTtl = Duration(seconds: 20);
@@ -111,6 +112,58 @@ class ApiService {
     _cachedPhotoLocal = await _storage.read(key: _photoLocalKey);
     _photoLocalLoaded = true;
     return _cachedPhotoLocal;
+  }
+
+  Future<Map<int, int>> _loadSuppressedActiveLectures() async {
+    final raw = await _storage.read(key: _suppressedActiveKey);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final cleaned = <int, int>{};
+      decoded.forEach((key, value) {
+        final id = int.tryParse(key);
+        final expiry = value is num ? value.toInt() : int.tryParse("$value");
+        if (id != null && expiry != null && expiry > now) {
+          cleaned[id] = expiry;
+        }
+      });
+      if (cleaned.length != decoded.length) {
+        await _saveSuppressedActiveLectures(cleaned);
+      }
+      return cleaned;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _saveSuppressedActiveLectures(Map<int, int> map) async {
+    final payload =
+        map.map((key, value) => MapEntry(key.toString(), value));
+    await _storage.write(
+        key: _suppressedActiveKey, value: jsonEncode(payload));
+  }
+
+  Future<void> suppressActiveLectureId(
+    int lectureId, {
+    Duration ttl = const Duration(minutes: 30),
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final map = await _loadSuppressedActiveLectures();
+    map[lectureId] = now + ttl.inMilliseconds;
+    await _saveSuppressedActiveLectures(map);
+  }
+
+  Future<List<dynamic>> filterSuppressedActiveLectures(
+      List<dynamic> rows) async {
+    final map = await _loadSuppressedActiveLectures();
+    if (map.isEmpty) return rows;
+    return rows.where((row) {
+      if (row is! Map<String, dynamic>) return true;
+      final id = (row["id"] as num?)?.toInt();
+      if (id == null) return true;
+      return !map.containsKey(id);
+    }).toList();
   }
 
   Future<void> saveToken(String token) async {

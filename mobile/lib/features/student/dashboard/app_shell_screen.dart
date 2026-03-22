@@ -3681,13 +3681,20 @@ class _HomeTabState extends State<_HomeTab> {
       if (!mounted || res.statusCode < 200 || res.statusCode >= 300) {
         return;
       }
-      final rows = _filterSuppressedActive(jsonDecode(res.body) as List<dynamic>);
+      final rows = await _filterSuppressedActiveAsync(
+          jsonDecode(res.body) as List<dynamic>);
       if (mounted) {
         setState(() => _active = rows);
       }
     } catch (_) {
       // Ignore transient failures.
     }
+  }
+
+  Future<List<dynamic>> _filterSuppressedActiveAsync(List<dynamic> rows) async {
+    var filtered = _filterSuppressedActive(rows);
+    filtered = await _api.filterSuppressedActiveLectures(filtered);
+    return filtered;
   }
 
   List<dynamic> _filterSuppressedActive(List<dynamic> rows) {
@@ -3941,7 +3948,7 @@ class _HomeTabState extends State<_HomeTab> {
       }
     } else {
       if (activeRes.statusCode >= 200 && activeRes.statusCode < 300) {
-        nextActive = _filterSuppressedActive(
+        nextActive = await _filterSuppressedActiveAsync(
             jsonDecode(activeRes.body) as List<dynamic>);
         await _api.saveCache("home_active", nextActive);
       }
