@@ -27,6 +27,7 @@ import "package:edusys_mobile/shared/widgets/glass_toast.dart";
 import "package:edusys_mobile/shared/widgets/loading_skeleton.dart";
 import "package:edusys_mobile/shared/widgets/section_title.dart";
 import "package:edusys_mobile/shared/widgets/status_badge.dart";
+import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:provider/provider.dart";
