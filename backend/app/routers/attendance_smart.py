@@ -18,7 +18,10 @@ from app.schemas.attendance_smart import (
     SessionOut,
     ScanEventIn,
     FinalizeRequest,
+    SessionWindowRequest,
+    SessionRescanRequest,
 )
+from app.services.push_service import send_attendance_push
 
 router = APIRouter()
 
@@ -90,6 +93,11 @@ def start_session(
     lecture = db.get(Lecture, payload.lecture_id)
     if lecture is None:
         raise HTTPException(status_code=404, detail="Lecture not found")
+    now_ms = int(datetime.utcnow().timestamp() * 1000)
+    window_ms = payload.advertise_window_ms if payload.advertise_window_ms > 0 else 120000
+    if window_ms < 15000:
+        window_ms = 15000
+    advertise_until = now_ms + window_ms
     session = LectureSession(
         session_token=payload.session_token,
         lecture_id=payload.lecture_id,
@@ -99,10 +107,28 @@ def start_session(
         scheduled_duration_ms=payload.scheduled_duration_ms,
         min_attendance_percent=payload.min_attendance_percent,
         actual_start=int(datetime.utcnow().timestamp() * 1000),
+        advertise_window_ms=window_ms,
+        advertise_start=now_ms,
+        advertise_until=advertise_until,
+        selected_student_ids=payload.selected_student_ids,
         status="active",
     )
     db.merge(session)
     db.commit()
+    if payload.selected_student_ids:
+        send_attendance_push(
+            db,
+            user_ids=payload.selected_student_ids,
+            data={
+                "type": "attendance_window",
+                "phase": "start",
+                "lecture_id": str(payload.lecture_id),
+                "room_id": str(payload.room_id),
+                "session_token": payload.session_token,
+                "advertise_until": str(advertise_until),
+                "advertise_window_ms": str(window_ms),
+            },
+        )
     return session
 
 
@@ -126,6 +152,106 @@ def end_session(
     return session
 
 
+@router.post("/sessions/announce-end", response_model=SessionOut)
+def announce_end_window(
+    payload: SessionWindowRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.PROFESSOR:
+        raise HTTPException(status_code=403, detail="Only professor can announce end window")
+    session = db.get(LectureSession, payload.session_token)
+    if not session or session.lecture_id != payload.lecture_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.professor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only owning professor can announce end window")
+    now_ms = int(datetime.utcnow().timestamp() * 1000)
+    window_ms = payload.advertise_window_ms or session.advertise_window_ms or 120000
+    session.advertise_window_ms = window_ms
+    session.advertise_start = now_ms
+    session.advertise_until = now_ms + window_ms
+    session.status = "ending"
+    db.commit()
+    if session.selected_student_ids:
+        send_attendance_push(
+            db,
+            user_ids=session.selected_student_ids or [],
+            data={
+                "type": "attendance_window",
+                "phase": "end",
+                "lecture_id": str(session.lecture_id),
+                "room_id": str(session.room_id),
+                "session_token": session.session_token,
+                "advertise_until": str(session.advertise_until or 0),
+                "advertise_window_ms": str(window_ms),
+            },
+        )
+    db.refresh(session)
+    return session
+
+
+@router.post("/sessions/request")
+def request_rescan(
+    payload: SessionRescanRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.STUDENT:
+        raise HTTPException(status_code=403, detail="Only student can request attendance")
+    session = (
+        db.query(LectureSession)
+        .filter(
+            LectureSession.lecture_id == payload.lecture_id,
+            LectureSession.status.in_(["active", "ending"]),
+        )
+        .order_by(LectureSession.actual_start.desc())
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="No active session found")
+    selected = session.selected_student_ids or []
+    if selected and current_user.id not in selected:
+        raise HTTPException(status_code=403, detail="Not included in this lecture")
+    now_ms = int(datetime.utcnow().timestamp() * 1000)
+    window_ms = session.advertise_window_ms or 120000
+    session.advertise_start = now_ms
+    session.advertise_until = now_ms + window_ms
+    db.commit()
+    send_attendance_push(
+        db,
+        user_ids=[session.professor_id],
+        data={
+            "type": "attendance_prof_request",
+            "lecture_id": str(session.lecture_id),
+            "room_id": str(session.room_id),
+            "session_token": session.session_token,
+            "advertise_window_ms": str(window_ms),
+            "requester_id": str(current_user.id),
+        },
+    )
+    send_attendance_push(
+        db,
+        user_ids=[current_user.id],
+        data={
+            "type": "attendance_window",
+            "phase": "rescan",
+            "lecture_id": str(session.lecture_id),
+            "room_id": str(session.room_id),
+            "session_token": session.session_token,
+            "advertise_until": str(session.advertise_until or 0),
+            "advertise_window_ms": str(window_ms),
+        },
+    )
+    return {
+        "status": "ok",
+        "lecture_id": session.lecture_id,
+        "room_id": session.room_id,
+        "session_token": session.session_token,
+        "advertise_until": session.advertise_until,
+        "advertise_window_ms": window_ms,
+    }
+
+
 @router.get("/sessions/active", response_model=SessionOut | None)
 def get_active_session(
     lecture_id: int | None = None,
@@ -135,7 +261,7 @@ def get_active_session(
 ):
     if current_user.role not in (UserRole.PROFESSOR, UserRole.STUDENT, UserRole.ADMIN):
         raise HTTPException(status_code=403, detail="Unauthorized")
-    query = db.query(LectureSession).filter(LectureSession.status == "active")
+    query = db.query(LectureSession).filter(LectureSession.status.in_(["active", "ending"]))
     if lecture_id is not None:
         query = query.filter(LectureSession.lecture_id == lecture_id)
     if room_id is not None:
@@ -154,7 +280,7 @@ def log_scan_event(
     if payload.student_id != current_user.id:
         raise HTTPException(status_code=403, detail="Student mismatch")
     session = db.get(LectureSession, payload.session_token)
-    if not session or session.status != "active":
+    if not session or session.status not in ("active", "ending"):
         lecture = db.get(Lecture, payload.lecture_id)
         if not lecture or lecture.status != "ACTIVE":
             raise HTTPException(status_code=400, detail="Session not active")
@@ -171,6 +297,14 @@ def log_scan_event(
         )
         db.merge(session)
         db.commit()
+    now_ms = int(datetime.utcnow().timestamp() * 1000)
+    if session.advertise_until:
+        grace_ms = 30000
+        if now_ms > (session.advertise_until + grace_ms):
+            raise HTTPException(status_code=400, detail="Attendance window closed")
+    selected = session.selected_student_ids or []
+    if selected and current_user.id not in selected:
+        raise HTTPException(status_code=403, detail="Not included in this lecture")
     existing = db.get(ScanEvent, payload.scan_id)
     if existing:
         return {"status": "ok"}

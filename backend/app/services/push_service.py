@@ -174,6 +174,50 @@ def send_cast_alert_push(
     _deactivate_invalid_tokens(db, unique_tokens, response.text)
 
 
+def send_attendance_push(
+    db: Session,
+    *,
+    user_ids: list[int],
+    data: dict,
+) -> None:
+    server_key = (settings.fcm_server_key or "").strip()
+    if not server_key:
+        return
+
+    if not user_ids:
+        return
+
+    unique_tokens = _collect_user_tokens_by_ids(db, user_ids)
+    if not unique_tokens:
+        return
+
+    payload = {
+        "registration_ids": unique_tokens,
+        "priority": "high",
+        "content_available": True,
+        "data": data,
+    }
+
+    headers = {
+        "Authorization": f"key={server_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = httpx.post(
+            "https://fcm.googleapis.com/fcm/send",
+            headers=headers,
+            json=payload,
+            timeout=8.0,
+        )
+    except Exception:
+        return
+
+    if response.status_code < 200 or response.status_code >= 300:
+        return
+
+    _deactivate_invalid_tokens(db, unique_tokens, response.text)
+
+
 def _collect_cast_tokens(
     db: Session,
     cast_id: int,
@@ -191,6 +235,28 @@ def _collect_cast_tokens(
     token_rows = (
         db.query(DevicePushToken)
         .filter(DevicePushToken.user_id.in_(member_user_ids), DevicePushToken.active.is_(True))
+        .all()
+    )
+    if not token_rows:
+        return []
+
+    unique_tokens: list[str] = []
+    seen: set[str] = set()
+    for row in token_rows:
+        token = (row.token or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        unique_tokens.append(token)
+    return unique_tokens
+
+
+def _collect_user_tokens_by_ids(db: Session, user_ids: list[int]) -> list[str]:
+    if not user_ids:
+        return []
+    token_rows = (
+        db.query(DevicePushToken)
+        .filter(DevicePushToken.user_id.in_(user_ids), DevicePushToken.active.is_(True))
         .all()
     )
     if not token_rows:

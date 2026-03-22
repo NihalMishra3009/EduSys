@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, BigInteger
+from sqlalchemy import Column, Integer, String, BigInteger, JSON
 from app.core.database import Base
 
 
@@ -14,4 +14,8 @@ class LectureSession(Base):
     min_attendance_percent = Column(Integer, nullable=True)
     actual_start = Column(BigInteger, nullable=True)
     actual_end = Column(BigInteger, nullable=True)
+    advertise_window_ms = Column(BigInteger, nullable=True)
+    advertise_start = Column(BigInteger, nullable=True)
+    advertise_until = Column(BigInteger, nullable=True)
+    selected_student_ids = Column(JSON, nullable=True)
     status = Column(String(16), nullable=False, default="active")

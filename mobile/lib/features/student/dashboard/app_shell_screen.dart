@@ -4707,6 +4707,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
     }
     final selectedClasses = <int>{};
     final selectedStudents = <int>{};
+    final advertiseMinutesController = TextEditingController(text: "2");
     int? selectedSpaceId;
     if (!mounted) return;
     await showModalBottomSheet<void>(
@@ -4775,6 +4776,9 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                 return fallback;
               }
             }
+            final advertiseMinutes =
+                int.tryParse(advertiseMinutesController.text.trim()) ?? 2;
+            final advertiseWindowMs = advertiseMinutes * 60 * 1000;
             final firstClass = _demoProfessorClasses
                 .firstWhere((c) => selectedClasses.contains(c["id"] as int));
             final classroomId = selectedSpaceId ?? (firstClass["id"] as int);
@@ -4804,6 +4808,9 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                     roomId: classroomId,
                     scheduledDurationMs: durationMs,
                     minAttendancePercent: 75,
+                    advertiseWindowMs: advertiseWindowMs,
+                    selectedStudentIds:
+                        selected.map((e) => (e["id"] as int?) ?? 0).where((e) => e > 0).toList(),
                     scheduledStart: payload["scheduled_start"] as int?,
                   );
                 } catch (_) {
@@ -4852,6 +4859,15 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                     const SizedBox(height: 8),
                     const Text("Select space"),
                     const SizedBox(height: 6),
+                    TextField(
+                      controller: advertiseMinutesController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "BLE advertise minutes (X)",
+                        hintText: "e.g., 2",
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     if (createdSpaces.isEmpty)
                       const Text("No spaces created yet.")
                     else
@@ -4985,15 +5001,16 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
     if (kUseDemoDataEverywhere) {
       ok = true;
     } else {
-      final res = await _api.endLecture(lectureId!);
-      ok = res.statusCode >= 200 && res.statusCode < 300;
-      if (!ok) {
-        try {
-          final map = jsonDecode(res.body) as Map<String, dynamic>;
-          errorDetail = map["detail"]?.toString();
-        } catch (_) {
-          errorDetail = null;
-        }
+      try {
+        final advertiseWindowMs = _smartAttendance.currentAdvertiseWindowMs;
+        await _smartAttendance.endProfessorSession(
+          lectureId: lectureId!,
+          advertiseWindowMs: advertiseWindowMs,
+        );
+        ok = true;
+      } catch (e) {
+        ok = false;
+        errorDetail = e.toString();
       }
     }
 
@@ -5014,7 +5031,11 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
       if (!mounted) {
         return;
       }
-      GlassToast.show(context, "Lecture ended.", icon: Icons.check_circle_outline);
+      GlassToast.show(
+        context,
+        "End window started. Attendance will finalize shortly.",
+        icon: Icons.check_circle_outline,
+      );
     } else {
       GlassToast.show(
         context,
@@ -5595,6 +5616,7 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                                 scheduledDurationMs:
                                     firstDurationMs ?? 3600000,
                                 minAttendancePercent: 75,
+                                advertiseWindowMs: 120000,
                                 scheduledStart: firstScheduledStart,
                               );
                             } catch (_) {
@@ -10534,6 +10556,8 @@ class _LecturesTabState extends State<_LecturesTab> {
   final SmartAttendanceService _smartAttendance = SmartAttendanceService();
   final TextEditingController _classroomController = TextEditingController();
   final TextEditingController _lectureIdController = TextEditingController();
+  final TextEditingController _advertiseMinutesController =
+      TextEditingController(text: "2");
 
   bool _loading = false;
   bool _offline = false;
@@ -10558,6 +10582,7 @@ class _LecturesTabState extends State<_LecturesTab> {
     _syncTimer?.cancel();
     _classroomController.dispose();
     _lectureIdController.dispose();
+    _advertiseMinutesController.dispose();
     super.dispose();
   }
 
@@ -10610,12 +10635,16 @@ class _LecturesTabState extends State<_LecturesTab> {
             ((payload["scheduled_duration_ms"] as num?)?.toInt() ?? 60) *
                 60 *
                 1000;
+        final advertiseMinutes =
+            int.tryParse(_advertiseMinutesController.text.trim()) ?? 2;
+        final advertiseWindowMs = advertiseMinutes * 60 * 1000;
         try {
           await _smartAttendance.startProfessorSession(
             lectureId: lectureId,
             roomId: id,
             scheduledDurationMs: durationMs,
             minAttendancePercent: 75,
+            advertiseWindowMs: advertiseWindowMs,
             scheduledStart: payload["scheduled_start"] as int?,
           );
         } catch (_) {
@@ -10636,11 +10665,14 @@ class _LecturesTabState extends State<_LecturesTab> {
   Future<void> _endLecture() async {
     final id = int.tryParse(_lectureIdController.text.trim());
     if (id == null) return;
-    final res = await _api.endLecture(id);
-    _show(_detail(res.body, "Lecture end request sent"));
-    if (res.statusCode >= 200 && res.statusCode < 300) {
-      await _smartAttendance.endProfessorSession(lectureId: id);
-    }
+    final advertiseMinutes =
+        int.tryParse(_advertiseMinutesController.text.trim()) ?? 2;
+    final advertiseWindowMs = advertiseMinutes * 60 * 1000;
+    await _smartAttendance.endProfessorSession(
+      lectureId: id,
+      advertiseWindowMs: advertiseWindowMs,
+    );
+    _show("End window started for $advertiseMinutes min. Finalizing soon.");
     await _load();
   }
 
@@ -10696,6 +10728,13 @@ class _LecturesTabState extends State<_LecturesTab> {
                   controller: _classroomController,
                   decoration:
                       const InputDecoration(labelText: "Classroom ID"),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _advertiseMinutesController,
+                  decoration:
+                      const InputDecoration(labelText: "BLE advertise minutes (X)"),
                   keyboardType: TextInputType.number,
                 ),
                 const SizedBox(height: 10),

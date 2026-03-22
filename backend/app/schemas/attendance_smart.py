@@ -19,6 +19,8 @@ class SessionStartRequest(BaseModel):
     session_token: str
     scheduled_duration_ms: int
     min_attendance_percent: int
+    advertise_window_ms: int
+    selected_student_ids: list[int] | None = None
     scheduled_start: int | None = None
 
 
@@ -37,7 +39,22 @@ class SessionOut(BaseModel):
     min_attendance_percent: int | None = None
     actual_start: int | None = None
     actual_end: int | None = None
+    advertise_window_ms: int | None = None
+    advertise_start: int | None = None
+    advertise_until: int | None = None
+    selected_student_ids: list[int] | None = None
     status: str
+
+
+class SessionWindowRequest(BaseModel):
+    lecture_id: int
+    session_token: str
+    advertise_window_ms: int | None = None
+    phase: str | None = None
+
+
+class SessionRescanRequest(BaseModel):
+    lecture_id: int
 
 
 class ScanEventIn(BaseModel):

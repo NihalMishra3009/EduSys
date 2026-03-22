@@ -6,6 +6,8 @@ from fastapi import File, UploadFile, Request
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.attendance_checkpoint import AttendanceCheckpoint
+from app.models.scan_event import ScanEvent
+from app.models.lecture_session import LectureSession
 from app.models.lecture import Lecture, LectureStatus
 from app.models.user import User, UserRole
 from app.models.assignment import Assignment
@@ -612,17 +614,25 @@ def list_students(db: Session = Depends(get_db), current_user: User = Depends(ge
 def nearby_students(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role not in (UserRole.PROFESSOR, UserRole.ADMIN):
         raise HTTPException(status_code=403, detail="Only professor/admin")
-    if not _geofence_enabled:
-        return {"enabled": False, "students": []}
-
     active_lecture_ids = [
         lecture_id
         for (lecture_id,) in db.query(Lecture.id).filter(Lecture.status == LectureStatus.ACTIVE).all()
     ]
     if not active_lecture_ids:
-        return {"enabled": True, "students": []}
+        return {"enabled": _geofence_enabled, "students": []}
 
     cutoff = datetime.utcnow() - timedelta(minutes=10)
+    cutoff_ms = int(cutoff.timestamp() * 1000)
+    scan_rows = (
+        db.query(ScanEvent, User, LectureSession)
+        .join(User, User.id == ScanEvent.student_id)
+        .join(LectureSession, LectureSession.session_token == ScanEvent.session_token)
+        .filter(ScanEvent.lecture_id.in_(active_lecture_ids))
+        .filter(ScanEvent.timestamp >= cutoff_ms)
+        .filter(User.role == UserRole.STUDENT)
+        .order_by(ScanEvent.timestamp.desc())
+        .all()
+    )
     checkpoints = (
         db.query(AttendanceCheckpoint, User)
         .join(User, User.id == AttendanceCheckpoint.student_id)
@@ -634,6 +644,23 @@ def nearby_students(db: Session = Depends(get_db), current_user: User = Depends(
     )
 
     unique_students: dict[int, dict] = {}
+    for scan, student, session in scan_rows:
+        if student.id in unique_students:
+            continue
+        if scan.type != "ENTRY":
+            continue
+        unique_students[student.id] = {
+            "student_id": student.id,
+            "student_name": student.name,
+            "email": student.email,
+            "device_id": student.device_id,
+            "sim_serial": student.sim_serial,
+            "last_seen_at": datetime.utcfromtimestamp(scan.timestamp / 1000.0).isoformat(),
+            "lecture_id": scan.lecture_id,
+            "room_id": session.room_id if session else None,
+            "source": "BLE",
+        }
+
     for checkpoint, student in checkpoints:
         if student.id in unique_students:
             continue
@@ -647,6 +674,7 @@ def nearby_students(db: Session = Depends(get_db), current_user: User = Depends(
             "lecture_id": checkpoint.lecture_id,
             "latitude": checkpoint.latitude,
             "longitude": checkpoint.longitude,
+            "source": "GPS",
         }
 
-    return {"enabled": True, "students": list(unique_students.values())}
+    return {"enabled": _geofence_enabled, "students": list(unique_students.values())}

@@ -105,6 +105,50 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
     }
   }
 
+  Future<void> _requestAttendance(int lectureId, int classroomId) async {
+    setState(() {
+      _loading = true;
+      _message = "";
+    });
+    try {
+      final res = await _api.requestAttendanceRescan(lectureId: lectureId);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        final sessionToken = decoded["session_token"]?.toString();
+        final advertiseUntil = decoded["advertise_until"];
+        if (sessionToken != null && sessionToken.isNotEmpty) {
+          await _smartAttendance.triggerAttendanceWindowScan(
+            lectureId: lectureId,
+            roomId: classroomId,
+            sessionToken: sessionToken,
+            advertiseUntilMs: advertiseUntil is num ? advertiseUntil.toInt() : null,
+          );
+        }
+        if (!mounted) return;
+        setState(() {
+          _success = true;
+          _message = "Attendance window requested. Keep Bluetooth on.";
+        });
+      } else {
+        if (!mounted) return;
+        setState(() {
+          _success = false;
+          _message = _extractMessage(res.body, fallback: "Unable to request attendance");
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _success = false;
+        _message = "Unable to request attendance. Please retry.";
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
   void _toggleAutoCheckpoint(int lectureId, int classroomId) {
     final timer = _autoTimers[lectureId];
     if (timer != null) {
@@ -194,8 +238,8 @@ class _ActiveLectureScreenState extends State<ActiveLectureScreen> {
                               children: [
                                 FilledButton(
                                   onPressed:
-                                      _loading ? null : () => _sendCheckpoint(id, classroomId),
-                                  child: const Text("Checkpoint"),
+                                      _loading ? null : () => _requestAttendance(id, classroomId),
+                                  child: const Text("Mark Attendance"),
                                 ),
                                 const SizedBox(height: 8),
                                 OutlinedButton(

@@ -40,6 +40,10 @@ class SmartAttendanceService {
   String? _currentSessionToken;
   bool _backgroundEnabled = false;
   Timer? _autoScanTimer;
+  Timer? _advertiseStopTimer;
+  int? _currentRoomId;
+  int? _currentLectureId;
+  int _currentAdvertiseWindowMs = 120000;
 
   static const String bleServiceUuid = "7c8a2f5e-0d20-4c49-8b31-3f4b8f9c6a55";
   static const int manufacturerId = 0x0001;
@@ -119,6 +123,7 @@ class SmartAttendanceService {
   }
 
   bool get backgroundTrackingEnabled => _backgroundEnabled;
+  int get currentAdvertiseWindowMs => _currentAdvertiseWindowMs;
 
   Future<bool> setBackgroundTrackingEnabled(bool enabled) async {
     _backgroundEnabled = enabled;
@@ -193,6 +198,8 @@ class SmartAttendanceService {
     required int roomId,
     required int scheduledDurationMs,
     required int minAttendancePercent,
+    required int advertiseWindowMs,
+    List<int>? selectedStudentIds,
     int? scheduledStart,
   }) async {
     CrashLogService.log("PROFESSOR", "Starting session lectureId=$lectureId roomId=$roomId");
@@ -205,11 +212,16 @@ class SmartAttendanceService {
     }
     final token = _uuid.v4();
     _currentSessionToken = token;
+    _currentRoomId = roomId;
+    _currentLectureId = lectureId;
+    _currentAdvertiseWindowMs = advertiseWindowMs;
     await WakelockPlus.enable();
-    await _startBleAdvertising(
+    await _startAdvertisingWindow(
       sessionToken: token,
       lectureId: lectureId,
       roomId: roomId,
+      windowMs: advertiseWindowMs,
+      finalizeAfterWindow: false,
     );
     await _api.startAttendanceSession(
       lectureId: lectureId,
@@ -218,22 +230,81 @@ class SmartAttendanceService {
       scheduledStart: scheduledStart,
       scheduledDurationMs: scheduledDurationMs,
       minAttendancePercent: minAttendancePercent,
+      advertiseWindowMs: advertiseWindowMs,
+      selectedStudentIds: selectedStudentIds,
     );
     CrashLogService.log("PROFESSOR", "Session started token=$token");
   }
 
-  Future<void> endProfessorSession({required int lectureId}) async {
+  Future<void> endProfessorSession({
+    required int lectureId,
+    required int advertiseWindowMs,
+  }) async {
     final token = _currentSessionToken;
-    if (token == null) return;
-    await _stopBleAdvertising();
-    await WakelockPlus.disable();
-    await _api.endAttendanceSession(
+    final roomId = _currentRoomId;
+    if (token == null || roomId == null) return;
+    _currentAdvertiseWindowMs = advertiseWindowMs;
+    await _api.announceAttendanceEndWindow(
       lectureId: lectureId,
       sessionToken: token,
-      endTime: DateTime.now().millisecondsSinceEpoch,
+      advertiseWindowMs: advertiseWindowMs,
     );
-    _currentSessionToken = null;
-    CrashLogService.log("PROFESSOR", "Session ended lectureId=$lectureId");
+    await _startAdvertisingWindow(
+      sessionToken: token,
+      lectureId: lectureId,
+      roomId: roomId,
+      windowMs: advertiseWindowMs,
+      finalizeAfterWindow: true,
+    );
+    CrashLogService.log("PROFESSOR", "End window started lectureId=$lectureId");
+  }
+
+  Future<void> handleProfessorRescanRequest({
+    required int lectureId,
+    required int roomId,
+    required String sessionToken,
+    required int advertiseWindowMs,
+  }) async {
+    final ok = await _requestProfessorPermissions();
+    if (!ok) return;
+    _currentSessionToken ??= sessionToken;
+    _currentRoomId ??= roomId;
+    _currentLectureId ??= lectureId;
+    _currentAdvertiseWindowMs = advertiseWindowMs;
+    await _startAdvertisingWindow(
+      sessionToken: sessionToken,
+      lectureId: lectureId,
+      roomId: roomId,
+      windowMs: advertiseWindowMs,
+      finalizeAfterWindow: false,
+    );
+  }
+
+  Future<void> triggerAttendanceWindowScan({
+    required int lectureId,
+    required int roomId,
+    required String sessionToken,
+    int? advertiseUntilMs,
+    String? phase,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    Duration? windowOverride;
+    if (advertiseUntilMs != null && advertiseUntilMs > nowMs) {
+      final remainingMs = advertiseUntilMs - nowMs;
+      final cappedMs = math.min(remainingMs, _scanWindow.inMilliseconds);
+      windowOverride = Duration(milliseconds: cappedMs);
+    }
+    await _runAttendanceScan(
+      lectureId: lectureId,
+      roomId: roomId,
+      session: {
+        "session_token": sessionToken,
+        "lecture_id": lectureId,
+        "room_id": roomId,
+      },
+      scanWindowOverride: windowOverride,
+      forceExitIfInside: phase == "end",
+    );
   }
 
   Future<SmartAttendanceResult> manualScan({
@@ -524,6 +595,8 @@ class SmartAttendanceService {
     required int lectureId,
     required int roomId,
     Map<String, dynamic>? session,
+    Duration? scanWindowOverride,
+    bool forceExitIfInside = false,
   }) async {
     if (_scanning) {
       return const SmartAttendanceResult(
@@ -588,7 +661,11 @@ class SmartAttendanceService {
       );
 
       CrashLogService.log("SCAN", "BLE window starting token=$sessionToken");
-      final scanResult = await _scanBleWindow(sessionToken, roomId: roomId);
+      final scanResult = await _scanBleWindow(
+        sessionToken,
+        roomId: roomId,
+        window: scanWindowOverride,
+      );
 
       if (scanResult.avgRssi == null) {
         CrashLogService.log("SCAN", "BLE window no results");
@@ -636,6 +713,36 @@ class SmartAttendanceService {
       );
 
       if (state.confirmedState == _PresenceState.inside) {
+        if (forceExitIfInside && insideNow) {
+          state.scanIndex += 1;
+          final studentId = await _getCurrentUserId();
+          if (studentId == null) {
+            CrashLogService.log("SCAN", "Could not resolve student ID");
+            return const SmartAttendanceResult(
+                success: false, message: "Unable to resolve student profile");
+          }
+          await _api.logAttendanceScan(
+            scanId: _uuid.v4(),
+            studentId: studentId,
+            lectureId: lectureId,
+            sessionToken: sessionToken,
+            type: "EXIT",
+            timestamp: now.millisecondsSinceEpoch,
+            scanIndex: state.scanIndex,
+            rssi: scanResult.avgRssi,
+            forced: true,
+            reason: "LECTURE_END_WINDOW",
+          );
+          state.confirmedState = _PresenceState.outside;
+          state.weakSince = null;
+          state.entryWindowStart = null;
+          state.entryScanCount = 0;
+          CrashLogService.log("SCAN", "Forced exit recorded scanIndex=${state.scanIndex}");
+          return SmartAttendanceResult(
+            success: true,
+            message: "Exit recorded (scan ${state.scanIndex})",
+          );
+        }
         if (outsideNow) {
           state.weakSince ??= now;
           final motionOk = _lastMotionAt != null &&
@@ -771,8 +878,12 @@ class SmartAttendanceService {
     return null;
   }
 
-  Future<_BleScanWindow> _scanBleWindow(String sessionToken,
-      {int? roomId}) async {
+  Future<_BleScanWindow> _scanBleWindow(
+    String sessionToken, {
+    int? roomId,
+    Duration? window,
+  }) async {
+    final scanWindow = window ?? _scanWindow;
     final results = <int>[];
     StreamSubscription? subscription;
     try {
@@ -804,10 +915,10 @@ class SmartAttendanceService {
         }
       });
       await FlutterBluePlus.startScan(
-        timeout: _scanWindow,
+        timeout: scanWindow,
         androidUsesFineLocation: false,
       );
-      await Future.delayed(_scanWindow);
+      await Future.delayed(scanWindow);
       CrashLogService.log("BLE_SCAN", "Done — ${results.length} hits");
     } catch (e, s) {
       CrashLogService.log("BLE_SCAN_ERROR", e.toString(), stack: s);
@@ -968,6 +1079,39 @@ class SmartAttendanceService {
     } on PlatformException catch (e) {
       CrashLogService.log("BLE_ADV_STOP_ERROR", e.toString());
     }
+  }
+
+  Future<void> _startAdvertisingWindow({
+    required String sessionToken,
+    required int lectureId,
+    required int roomId,
+    required int windowMs,
+    required bool finalizeAfterWindow,
+  }) async {
+    _advertiseStopTimer?.cancel();
+    _advertiseStopTimer = null;
+    await _startBleAdvertising(
+      sessionToken: sessionToken,
+      lectureId: lectureId,
+      roomId: roomId,
+    );
+    _advertiseStopTimer = Timer(Duration(milliseconds: windowMs), () async {
+      await _stopBleAdvertising();
+      if (finalizeAfterWindow) {
+        await WakelockPlus.disable();
+        try {
+          await _api.endLecture(lectureId);
+        } catch (_) {}
+        await _api.endAttendanceSession(
+          lectureId: lectureId,
+          sessionToken: sessionToken,
+          endTime: DateTime.now().millisecondsSinceEpoch,
+        );
+        _currentSessionToken = null;
+        _currentRoomId = null;
+        _currentLectureId = null;
+      }
+    });
   }
 }
 

@@ -3,6 +3,7 @@ import "dart:io";
 import "dart:ui";
 
 import "package:edusys_mobile/shared/services/api_service.dart";
+import "package:edusys_mobile/shared/services/smart_attendance_service.dart";
 import "package:edusys_mobile/core/utils/app_navigator.dart";
 import "package:edusys_mobile/features/hello_casts/hello_casts_alarm_screen.dart";
 import "package:firebase_core/firebase_core.dart";
@@ -110,6 +111,38 @@ class PushNotificationService {
   Future<void> showNotificationForRemoteMessage(RemoteMessage message) async {
     final data = message.data;
     final type = data[_payloadTypeKey];
+    if (type == "attendance_window") {
+      final lectureId = int.tryParse(data["lecture_id"] ?? "");
+      final roomId = int.tryParse(data["room_id"] ?? "");
+      final sessionToken = (data["session_token"] ?? "").toString();
+      final advertiseUntil = int.tryParse(data["advertise_until"] ?? "");
+      final phase = (data["phase"] ?? "").toString();
+      if (lectureId != null && roomId != null && sessionToken.isNotEmpty) {
+        await SmartAttendanceService().triggerAttendanceWindowScan(
+          lectureId: lectureId,
+          roomId: roomId,
+          sessionToken: sessionToken,
+          advertiseUntilMs: advertiseUntil,
+          phase: phase,
+        );
+      }
+      return;
+    }
+    if (type == "attendance_prof_request") {
+      final lectureId = int.tryParse(data["lecture_id"] ?? "");
+      final roomId = int.tryParse(data["room_id"] ?? "");
+      final sessionToken = (data["session_token"] ?? "").toString();
+      final windowMs = int.tryParse(data["advertise_window_ms"] ?? "");
+      if (lectureId != null && roomId != null && sessionToken.isNotEmpty) {
+        await SmartAttendanceService().handleProfessorRescanRequest(
+          lectureId: lectureId,
+          roomId: roomId,
+          sessionToken: sessionToken,
+          advertiseWindowMs: windowMs ?? 120000,
+        );
+      }
+      return;
+    }
     if (type == _payloadTypeCastMessage) {
       final castId = int.tryParse(data[_payloadCastIdKey] ?? "");
       if (castId == null) return;

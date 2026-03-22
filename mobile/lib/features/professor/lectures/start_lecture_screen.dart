@@ -17,6 +17,7 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
   final _classroomController = TextEditingController();
   final _lectureIdController = TextEditingController();
   final _thresholdController = TextEditingController(text: "75");
+  final _advertiseMinutesController = TextEditingController(text: "2");
 
   bool _loading = false;
   String _message = "";
@@ -27,6 +28,7 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
     _classroomController.dispose();
     _lectureIdController.dispose();
     _thresholdController.dispose();
+    _advertiseMinutesController.dispose();
     super.dispose();
   }
 
@@ -42,6 +44,9 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
 
     setState(() => _loading = true);
     final threshold = double.tryParse(_thresholdController.text.trim());
+    final advertiseMinutes =
+        int.tryParse(_advertiseMinutesController.text.trim()) ?? 2;
+    final advertiseWindowMs = advertiseMinutes * 60 * 1000;
     final response = await _api.startLecture(
       classroomId,
       requiredPresencePercent: threshold,
@@ -68,6 +73,7 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
         roomId: classroomId,
         scheduledDurationMs: durationMs!,
         minAttendancePercent: ((threshold ?? 75).round()),
+        advertiseWindowMs: advertiseWindowMs,
         scheduledStart: scheduledStart,
       );
     }
@@ -84,15 +90,18 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
     }
 
     setState(() => _loading = true);
-    final response = await _api.endLecture(lectureId);
+    final advertiseMinutes =
+        int.tryParse(_advertiseMinutesController.text.trim()) ?? 2;
+    final advertiseWindowMs = advertiseMinutes * 60 * 1000;
+    await _smartAttendance.endProfessorSession(
+      lectureId: lectureId,
+      advertiseWindowMs: advertiseWindowMs,
+    );
     setState(() {
       _loading = false;
-      _success = response.statusCode >= 200 && response.statusCode < 300;
-      _message = _parseMessage(response.body, fallback: "Lecture end request completed");
+      _success = true;
+      _message = "End window started for $advertiseMinutes min.";
     });
-    if (_success) {
-      await _smartAttendance.endProfessorSession(lectureId: lectureId);
-    }
   }
 
   String _parseMessage(String body, {required String fallback}) {
@@ -145,6 +154,15 @@ class _StartLectureScreenState extends State<StartLectureScreen> {
                     decoration: const InputDecoration(
                       labelText: "Presence Threshold (%)",
                       prefixIcon: Icon(Icons.percent_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _advertiseMinutesController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "BLE advertise minutes (X)",
+                      prefixIcon: Icon(Icons.bluetooth_audio_rounded),
                     ),
                   ),
                   const SizedBox(height: 12),

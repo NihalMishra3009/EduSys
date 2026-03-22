@@ -279,6 +279,7 @@ class ApiService {
   Future<http.Response> _sendWithFallback({
     required String path,
     required Future<http.Response> Function(Uri uri) sender,
+    bool handleUnauthorized = true,
   }) async {
     final primaryBase = await getBaseUrl();
     final startedAt = DateTime.now();
@@ -289,7 +290,7 @@ class ApiService {
           startedAt: startedAt,
           statusCode: response.statusCode,
           base: primaryBase);
-      return _handleResponse(response);
+      return _handleResponse(response, handleUnauthorized: handleUnauthorized);
     } on TimeoutException {
       final fallbackBase = ApiConfig.baseUrl;
       if (fallbackBase != primaryBase) {
@@ -302,7 +303,7 @@ class ApiService {
               startedAt: startedAt,
               statusCode: response.statusCode,
               base: fallbackBase);
-          return _handleResponse(response);
+          return _handleResponse(response, handleUnauthorized: handleUnauthorized);
         } on TimeoutException {
           _logTiming(
               path: path,
@@ -360,7 +361,7 @@ class ApiService {
             startedAt: startedAt,
             statusCode: response.statusCode,
             base: fallbackBase);
-        return _handleResponse(response);
+        return _handleResponse(response, handleUnauthorized: handleUnauthorized);
       } on TimeoutException {
         _logTiming(
             path: path,
@@ -432,8 +433,8 @@ class ApiService {
     }
   }
 
-  http.Response _handleResponse(http.Response response) {
-    if (response.statusCode == 401) {
+  http.Response _handleResponse(http.Response response, {bool handleUnauthorized = true}) {
+    if (handleUnauthorized && response.statusCode == 401) {
       _handleUnauthorized();
     }
     return response;
@@ -688,6 +689,8 @@ class ApiService {
     required String sessionToken,
     required int scheduledDurationMs,
     required int minAttendancePercent,
+    required int advertiseWindowMs,
+    List<int>? selectedStudentIds,
     int? scheduledStart,
   }) async {
     final headers = await _headers(auth: true);
@@ -698,6 +701,8 @@ class ApiService {
       "scheduled_start": scheduledStart,
       "scheduled_duration_ms": scheduledDurationMs,
       "min_attendance_percent": minAttendancePercent,
+      "advertise_window_ms": advertiseWindowMs,
+      if (selectedStudentIds != null) "selected_student_ids": selectedStudentIds,
     });
     return _sendWithFallback(
       path: "/attendance/sessions/start",
@@ -1576,6 +1581,36 @@ class ApiService {
     return _sendWithFallback(
       path: "/notifications/push-token",
       sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+      handleUnauthorized: false,
+    );
+  }
+
+  Future<http.Response> announceAttendanceEndWindow({
+    required int lectureId,
+    required String sessionToken,
+    required int advertiseWindowMs,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({
+      "lecture_id": lectureId,
+      "session_token": sessionToken,
+      "advertise_window_ms": advertiseWindowMs,
+      "phase": "end",
+    });
+    return _sendWithFallback(
+      path: "/attendance/sessions/announce-end",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
+    );
+  }
+
+  Future<http.Response> requestAttendanceRescan({
+    required int lectureId,
+  }) async {
+    final headers = await _headers(auth: true);
+    final body = jsonEncode({"lecture_id": lectureId});
+    return _sendWithFallback(
+      path: "/attendance/sessions/request",
+      sender: (uri) => _sharedClient.post(uri, headers: headers, body: body),
     );
   }
 
@@ -1591,6 +1626,7 @@ class ApiService {
     return _sendWithFallback(
       path: "/notifications/push-token",
       sender: (uri) => _sharedClient.delete(uri, headers: headers, body: body),
+      handleUnauthorized: false,
     );
   }
 
