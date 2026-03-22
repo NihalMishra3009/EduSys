@@ -1090,6 +1090,101 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
     }
   }
 
+  void _showAlertDetails(Map<String, dynamic> alert) {
+    final castId = (alert["cast_id"] as num?)?.toInt() ?? -1;
+    final castName = _castNameById(castId);
+    final title = alert["title"]?.toString() ?? "Alert";
+    final message = alert["message"]?.toString() ?? "";
+    final scheduleAt = _parseAlertAt(alert["schedule_at"]);
+    final when = scheduleAt != null ? _formatAlertWhen(alert) : "Unknown time";
+    final interval = (alert["interval_minutes"] as num?)?.toInt();
+    final repeat = switch (interval) {
+      120 => "Every 2 hours",
+      1440 => "Daily",
+      10080 => "Weekly",
+      _ => "Once",
+    };
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+          decoration: BoxDecoration(
+            color: Theme.of(ctx).colorScheme.surface,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF9A3D).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.alarm_rounded,
+                        color: Color(0xFFFF9A3D)),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    title,
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(castName,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.7))),
+              const SizedBox(height: 8),
+              Text(when, style: const TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Text("Repeat: $repeat",
+                  style: TextStyle(
+                      color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.7))),
+              if (message.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(message),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text("Close"),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _deleteAlert(alert);
+                      },
+                      child: const Text("Delete"),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _scheduleLocalAlerts(List<Map<String, dynamic>> alerts) async {
     for (final alert in alerts) {
       final alertId = (alert["id"] as num?)?.toInt();
@@ -1167,6 +1262,7 @@ class _HelloCastsScreenState extends State<HelloCastsScreen> {
                 title: title,
                 subtitle: when,
                 castName: _castNameById(castId),
+                onView: () => _showAlertDetails(a),
               ),
             );
           },
@@ -1527,10 +1623,12 @@ class _AlertTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.castName,
+    required this.onView,
   });
   final String title;
   final String subtitle;
   final String castName;
+  final VoidCallback onView;
 
   @override
   Widget build(BuildContext context) {
@@ -1565,8 +1663,11 @@ class _AlertTile extends StatelessWidget {
           ),
         ],
       ),
-      trailing: Icon(Icons.chevron_left_rounded,
-          color: scheme.onSurface.withValues(alpha: 0.5)),
+      trailing: TextButton(
+        onPressed: onView,
+        child: const Text("View"),
+      ),
+      onTap: onView,
     );
   }
 }

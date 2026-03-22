@@ -1,3 +1,4 @@
+import "dart:convert";
 import "dart:io";
 import "dart:ui";
 
@@ -14,7 +15,12 @@ const String _castChannelName = "Cast messages";
 const String _castChannelDescription = "Notifications for cast chat messages";
 const String _actionMarkRead = "cast_mark_read";
 const String _actionReply = "cast_reply";
+const String _actionSnooze = "cast_alert_snooze";
+const String _actionStop = "cast_alert_stop";
 const String _payloadCastIdKey = "cast_id";
+const String _payloadAlertIdKey = "alert_id";
+const String _payloadTitleKey = "title";
+const String _payloadBodyKey = "body";
 const String _payloadTypeKey = "type";
 const String _payloadTypeCastMessage = "cast_message";
 const String _payloadTypeCastAlert = "cast_alert";
@@ -129,7 +135,8 @@ class PushNotificationService {
   Future<void> handleNotificationAction(NotificationResponse response) async {
     final payload = response.payload ?? "";
     if (payload.isEmpty) return;
-    final castId = int.tryParse(payload);
+    final parsed = _parsePayload(payload);
+    final castId = parsed.castId;
     if (castId == null) return;
 
     if (response.actionId == _actionMarkRead) {
@@ -143,6 +150,25 @@ class PushNotificationService {
       await _api.sendCastMessage(castId: castId, message: replyText);
       await _api.markCastRead(castId: castId);
       await _local.cancel(castId);
+      return;
+    }
+    if (response.actionId == _actionSnooze) {
+      final alertId = parsed.alertId;
+      if (alertId == null) return;
+      final snoozeAt = DateTime.now().add(const Duration(minutes: 10));
+      await scheduleAlertLocal(
+        alertId: alertId,
+        castId: castId,
+        title: parsed.title ?? "Alert",
+        body: parsed.body ?? "Reminder",
+        scheduleAt: snoozeAt,
+      );
+      return;
+    }
+    if (response.actionId == _actionStop) {
+      final alertId = parsed.alertId;
+      if (alertId == null) return;
+      await cancelAlert(alertId);
     }
   }
 
@@ -247,7 +273,12 @@ class PushNotificationService {
         android: androidDetails,
         iOS: iosDetails,
       ),
-      payload: castId.toString(),
+      payload: _encodePayload(
+        type: _payloadTypeCastMessage,
+        castId: castId,
+        title: title,
+        body: body,
+      ),
     );
   }
 
@@ -277,6 +308,20 @@ class PushNotificationService {
       importance: Importance.max,
       priority: Priority.high,
       category: AndroidNotificationCategory.alarm,
+      fullScreenIntent: true,
+      actions: const [
+        AndroidNotificationAction(
+          _actionSnooze,
+          "Snooze",
+          showsUserInterface: false,
+        ),
+        AndroidNotificationAction(
+          _actionStop,
+          "Stop",
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+      ],
     );
     const iosDetails = DarwinNotificationDetails(
       interruptionLevel: InterruptionLevel.timeSensitive,
@@ -289,7 +334,13 @@ class PushNotificationService {
       body,
       tz.TZDateTime.from(target, tz.local),
       NotificationDetails(android: androidDetails, iOS: iosDetails),
-      payload: castId.toString(),
+      payload: _encodePayload(
+        type: _payloadTypeCastAlert,
+        castId: castId,
+        alertId: alertId,
+        title: title,
+        body: body,
+      ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
@@ -313,6 +364,20 @@ class PushNotificationService {
       importance: Importance.max,
       priority: Priority.high,
       category: AndroidNotificationCategory.alarm,
+      fullScreenIntent: true,
+      actions: const [
+        AndroidNotificationAction(
+          _actionSnooze,
+          "Snooze",
+          showsUserInterface: false,
+        ),
+        AndroidNotificationAction(
+          _actionStop,
+          "Stop",
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+      ],
     );
     const iosDetails = DarwinNotificationDetails(
       interruptionLevel: InterruptionLevel.timeSensitive,
@@ -323,7 +388,63 @@ class PushNotificationService {
       title,
       body,
       NotificationDetails(android: androidDetails, iOS: iosDetails),
-      payload: castId.toString(),
+      payload: _encodePayload(
+        type: _payloadTypeCastAlert,
+        castId: castId,
+        alertId: alertId,
+        title: title,
+        body: body,
+      ),
+    );
+  }
+
+  _NotificationPayload _parsePayload(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return _NotificationPayload.fromMap(decoded);
+      }
+    } catch (_) {}
+    final castId = int.tryParse(raw);
+    return _NotificationPayload(castId: castId);
+  }
+
+  String _encodePayload({
+    required String type,
+    required int castId,
+    int? alertId,
+    String? title,
+    String? body,
+  }) {
+    return jsonEncode({
+      _payloadTypeKey: type,
+      _payloadCastIdKey: castId,
+      if (alertId != null) _payloadAlertIdKey: alertId,
+      if (title != null) _payloadTitleKey: title,
+      if (body != null) _payloadBodyKey: body,
+    });
+  }
+}
+
+class _NotificationPayload {
+  const _NotificationPayload({
+    required this.castId,
+    this.alertId,
+    this.title,
+    this.body,
+  });
+
+  final int? castId;
+  final int? alertId;
+  final String? title;
+  final String? body;
+
+  factory _NotificationPayload.fromMap(Map<String, dynamic> map) {
+    return _NotificationPayload(
+      castId: int.tryParse(map[_payloadCastIdKey]?.toString() ?? ""),
+      alertId: int.tryParse(map[_payloadAlertIdKey]?.toString() ?? ""),
+      title: map[_payloadTitleKey]?.toString(),
+      body: map[_payloadBodyKey]?.toString(),
     );
   }
 }
