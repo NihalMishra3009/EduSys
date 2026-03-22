@@ -30,6 +30,10 @@ class SmartAttendanceService {
   final Map<int, Map<String, dynamic>> _roomConfigCache = {};
   final Map<String, _SessionState> _sessionStates = {};
   final List<int> _activeRoomIds = [];
+  final StreamController<SmartAttendanceResult> _eventController =
+      StreamController.broadcast();
+  final StreamController<AttendanceMarkEvent> _markController =
+      StreamController.broadcast();
 
   StreamSubscription<AccelerometerEvent>? _accelSub;
   StreamSubscription? _backgroundMotionSub;
@@ -44,6 +48,9 @@ class SmartAttendanceService {
   int? _currentRoomId;
   int? _currentLectureId;
   int _currentAdvertiseWindowMs = 120000;
+
+  Stream<SmartAttendanceResult> get attendanceEvents => _eventController.stream;
+  Stream<AttendanceMarkEvent> get attendanceMarks => _markController.stream;
 
   static const String bleServiceUuid = "7c8a2f5e-0d20-4c49-8b31-3f4b8f9c6a55";
   static const int manufacturerId = 0x0001;
@@ -240,6 +247,16 @@ class SmartAttendanceService {
     required int lectureId,
     required int advertiseWindowMs,
   }) async {
+    await openEndWindow(
+      lectureId: lectureId,
+      advertiseWindowMs: advertiseWindowMs,
+    );
+  }
+
+  Future<void> openEndWindow({
+    required int lectureId,
+    required int advertiseWindowMs,
+  }) async {
     final token = _currentSessionToken;
     final roomId = _currentRoomId;
     if (token == null || roomId == null) return;
@@ -254,9 +271,32 @@ class SmartAttendanceService {
       lectureId: lectureId,
       roomId: roomId,
       windowMs: advertiseWindowMs,
-      finalizeAfterWindow: true,
+      finalizeAfterWindow: false,
     );
-    CrashLogService.log("PROFESSOR", "End window started lectureId=$lectureId");
+    CrashLogService.log("PROFESSOR", "End window opened lectureId=$lectureId");
+  }
+
+  Future<void> closeEndWindow({
+    required int lectureId,
+  }) async {
+    final token = _currentSessionToken;
+    if (token == null) return;
+    _advertiseStopTimer?.cancel();
+    _advertiseStopTimer = null;
+    await _stopBleAdvertising();
+    await WakelockPlus.disable();
+    try {
+      await _api.endLecture(lectureId);
+    } catch (_) {}
+    await _api.endAttendanceSession(
+      lectureId: lectureId,
+      sessionToken: token,
+      endTime: DateTime.now().millisecondsSinceEpoch,
+    );
+    _currentSessionToken = null;
+    _currentRoomId = null;
+    _currentLectureId = null;
+    CrashLogService.log("PROFESSOR", "End window closed lectureId=$lectureId");
   }
 
   Future<void> handleProfessorRescanRequest({
@@ -733,6 +773,12 @@ class SmartAttendanceService {
             forced: true,
             reason: "LECTURE_END_WINDOW",
           );
+          _markController.add(AttendanceMarkEvent(
+            lectureId: lectureId,
+            studentId: studentId,
+            type: AttendanceMarkType.exit,
+            message: "Exit recorded (end window)",
+          ));
           state.confirmedState = _PresenceState.outside;
           state.weakSince = null;
           state.entryWindowStart = null;
@@ -766,6 +812,12 @@ class SmartAttendanceService {
               scanIndex: state.scanIndex,
               rssi: scanResult.avgRssi,
             );
+            _markController.add(AttendanceMarkEvent(
+              lectureId: lectureId,
+              studentId: studentId,
+              type: AttendanceMarkType.exit,
+              message: "Exit recorded",
+            ));
             state.confirmedState = _PresenceState.outside;
             state.weakSince = null;
             state.entryWindowStart = null;
@@ -822,6 +874,12 @@ class SmartAttendanceService {
               scanIndex: state.scanIndex,
               rssi: scanResult.avgRssi,
             );
+            _markController.add(AttendanceMarkEvent(
+              lectureId: lectureId,
+              studentId: studentId,
+              type: AttendanceMarkType.entry,
+              message: "Attendance marked",
+            ));
             state.confirmedState = _PresenceState.inside;
             state.entryWindowStart = null;
             state.entryScanCount = 0;
@@ -1208,5 +1266,21 @@ enum _PresenceState { inside, outside }
 class SmartAttendanceResult {
   const SmartAttendanceResult({required this.success, required this.message});
   final bool success;
+  final String message;
+}
+
+enum AttendanceMarkType { entry, exit }
+
+class AttendanceMarkEvent {
+  const AttendanceMarkEvent({
+    required this.lectureId,
+    required this.studentId,
+    required this.type,
+    required this.message,
+  });
+
+  final int lectureId;
+  final int studentId;
+  final AttendanceMarkType type;
   final String message;
 }

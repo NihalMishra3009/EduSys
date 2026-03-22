@@ -126,6 +126,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _index = 0;
+  StreamSubscription<AttendanceMarkEvent>? _attendanceMarkSub;
   static const List<String> _tabTitles = [
     "Home",
     "LearnEd",
@@ -137,10 +138,34 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _attendanceMarkSub?.cancel();
+      _attendanceMarkSub = SmartAttendanceService()
+          .attendanceMarks
+          .listen((AttendanceMarkEvent event) {
+        if (!mounted) return;
+        final role = context.read<AuthProvider>().role ?? "STUDENT";
+        if (role != "STUDENT" && role != "PROFESSOR") {
+          return;
+        }
+        final label = event.type == AttendanceMarkType.entry
+            ? "Attendance marked"
+            : "Attendance marked absent";
+        GlassToast.show(
+          context,
+          label,
+          icon: event.type == AttendanceMarkType.entry
+              ? Icons.check_circle_outline
+              : Icons.info_outline,
+        );
+      });
+    });
   }
 
   @override
   void dispose() {
+    _attendanceMarkSub?.cancel();
     super.dispose();
   }
 
@@ -4740,8 +4765,11 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
   final ApiService _api = ApiService();
   final SmartAttendanceService _smartAttendance = SmartAttendanceService();
   bool _endingLecture = false;
+  bool _endPortalOpen = false;
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
+  int? _lastPresentCount;
+  int? _lastActiveLectureId;
 
   @override
   void initState() {
@@ -4752,6 +4780,39 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
       }
       setState(() => _now = DateTime.now());
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfessorDashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final activeLectureId =
+        _activeLectureId(widget.active.isEmpty ? null : widget.active.first);
+    final presentStudents = _studentsPresentForActiveLecture(activeLectureId);
+    final currentCount = presentStudents.length;
+    if (_lastActiveLectureId != activeLectureId) {
+      _lastActiveLectureId = activeLectureId;
+      _lastPresentCount = currentCount;
+      return;
+    }
+    if (_lastPresentCount != null && currentCount != _lastPresentCount) {
+      final diff = currentCount - _lastPresentCount!;
+      if (mounted) {
+        if (diff > 0) {
+          GlassToast.show(
+            context,
+            "Attendance marked (+$diff)",
+            icon: Icons.check_circle_outline,
+          );
+        } else {
+          GlassToast.show(
+            context,
+            "Attendance marked absent (${diff.abs()})",
+            icon: Icons.info_outline,
+          );
+        }
+      }
+      _lastPresentCount = currentCount;
+    }
   }
 
   @override
@@ -5026,8 +5087,8 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                   ),
                   child: SingleChildScrollView(
                     child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                     Row(
                       children: [
                         const Expanded(child: SectionTitle("Start Lecture")),
@@ -5216,7 +5277,8 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
                         ),
                       ],
                     ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -5243,57 +5305,162 @@ class _ProfessorDashboardState extends State<_ProfessorDashboard> {
       return;
     }
 
-    setState(() => _endingLecture = true);
-    var ok = false;
-    String? errorDetail;
-    if (kUseDemoDataEverywhere) {
-      ok = true;
-    } else {
-      try {
-        final advertiseWindowMs = _smartAttendance.currentAdvertiseWindowMs;
-        await _smartAttendance.endProfessorSession(
-          lectureId: lectureId!,
-          advertiseWindowMs: advertiseWindowMs,
+    final advertiseMinutesController = TextEditingController(
+      text: (_smartAttendance.currentAdvertiseWindowMs ~/ 60000).toString(),
+    );
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Padding(
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: AppCard(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SectionTitle("End Lecture"),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: advertiseMinutesController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "End attendance window (minutes)",
+                      prefixIcon: Icon(Icons.timer_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppButton(
+                          label: _endPortalOpen
+                              ? "Reopen End Window"
+                              : "Open End Window",
+                          icon: Icons.campaign_rounded,
+                          onPressed: () async {
+                            if (_endingLecture) return;
+                            setState(() => _endingLecture = true);
+                            var ok = false;
+                            String? errorDetail;
+                            if (kUseDemoDataEverywhere) {
+                              ok = true;
+                            } else {
+                              try {
+                                final advertiseMinutes = int.tryParse(
+                                        advertiseMinutesController.text.trim()) ??
+                                    (_smartAttendance.currentAdvertiseWindowMs ~/
+                                        60000);
+                                final advertiseWindowMs =
+                                    advertiseMinutes * 60 * 1000;
+                                await _smartAttendance.openEndWindow(
+                                  lectureId: lectureId!,
+                                  advertiseWindowMs: advertiseWindowMs,
+                                );
+                                ok = true;
+                                _endPortalOpen = true;
+                              } catch (e) {
+                                ok = false;
+                                errorDetail = e.toString();
+                              }
+                            }
+                            if (mounted) {
+                              setState(() => _endingLecture = false);
+                            }
+                            if (!context.mounted) return;
+                            if (ok) {
+                              GlassToast.show(
+                                context,
+                                "End window opened. Students can mark exit.",
+                                icon: Icons.check_circle_outline,
+                              );
+                            } else {
+                              GlassToast.show(
+                                context,
+                                errorDetail ?? "Unable to open end window.",
+                                icon: Icons.error_outline,
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppButton(
+                          label: "Close Portal",
+                          icon: Icons.stop_circle_rounded,
+                          isPrimary: false,
+                          onPressed: () async {
+                            if (_endingLecture) return;
+                            setState(() => _endingLecture = true);
+                            var ok = false;
+                            String? errorDetail;
+                            if (kUseDemoDataEverywhere) {
+                              ok = true;
+                            } else {
+                              try {
+                                await _smartAttendance.closeEndWindow(
+                                    lectureId: lectureId!);
+                                ok = true;
+                                _endPortalOpen = false;
+                              } catch (e) {
+                                ok = false;
+                                errorDetail = e.toString();
+                              }
+                            }
+                            if (!mounted) {
+                              return;
+                            }
+                            if (ok) {
+                              final endedPayload = <String, dynamic>{
+                                ...lectureMap,
+                                if (lectureId != null) "id": lectureId,
+                                "status": "ENDED",
+                                "end_time":
+                                    DateTime.now().toUtc().toIso8601String(),
+                              };
+                              if (widget.onLectureEnded != null) {
+                                await widget.onLectureEnded!(endedPayload);
+                              }
+                              if (!mounted) {
+                                return;
+                              }
+                              GlassToast.show(
+                                context,
+                                "Lecture ended and portal closed.",
+                                icon: Icons.check_circle_outline,
+                              );
+                              Navigator.of(context).pop();
+                            } else {
+                              GlassToast.show(
+                                context,
+                                errorDetail ?? "Unable to close portal.",
+                                icon: Icons.error_outline,
+                              );
+                            }
+                            if (mounted) {
+                              setState(() => _endingLecture = false);
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
         );
-        ok = true;
-      } catch (e) {
-        ok = false;
-        errorDetail = e.toString();
-      }
-    }
-
-    if (!mounted) {
-      return;
-    }
-
-    if (ok) {
-      final endedPayload = <String, dynamic>{
-        ...lectureMap,
-        if (lectureId != null) "id": lectureId,
-        "status": "ENDED",
-        "end_time": DateTime.now().toUtc().toIso8601String(),
-      };
-      if (widget.onLectureEnded != null) {
-        await widget.onLectureEnded!(endedPayload);
-      }
-      if (!mounted) {
-        return;
-      }
-      GlassToast.show(
-        context,
-        "End window started. Attendance will finalize shortly.",
-        icon: Icons.check_circle_outline,
-      );
-    } else {
-      GlassToast.show(
-        context,
-        errorDetail ?? "Unable to end lecture.",
-        icon: Icons.error_outline,
-      );
-    }
-    if (mounted) {
-      setState(() => _endingLecture = false);
-    }
+      },
+    );
   }
 
   @override
