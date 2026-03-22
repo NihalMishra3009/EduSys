@@ -129,12 +129,14 @@ class PushNotificationService {
       if (scheduleAt == null) return;
       final title = (data["title"] ?? "Alert").toString();
       final body = (data["body"] ?? title).toString();
+      final days = _parseDaysOfWeek(data["days_of_week"]);
       await scheduleAlertLocal(
         alertId: alertId,
         castId: castId,
         title: title,
         body: body,
         scheduleAt: scheduleAt,
+        daysOfWeek: days,
       );
     }
   }
@@ -300,9 +302,22 @@ class PushNotificationService {
     required String title,
     required String body,
     required DateTime scheduleAt,
+    List<int>? daysOfWeek,
   }) async {
     final target = scheduleAt.toLocal();
     final now = DateTime.now();
+    final cleanDays = _normalizeDays(daysOfWeek);
+    if (cleanDays != null && cleanDays.isNotEmpty) {
+      await _scheduleWeeklyAlerts(
+        alertId: alertId,
+        castId: castId,
+        title: title,
+        body: body,
+        baseTime: target,
+        daysOfWeek: cleanDays,
+      );
+      return;
+    }
     if (!target.isAfter(now)) {
       await _showAlertNow(
         alertId: alertId,
@@ -362,6 +377,9 @@ class PushNotificationService {
 
   Future<void> cancelAlert(int alertId) async {
     await _local.cancel(alertId);
+    for (var day = 1; day <= 7; day += 1) {
+      await _local.cancel(_weeklyAlertId(alertId, day));
+    }
   }
 
   Future<void> _showAlertNow({
@@ -410,6 +428,110 @@ class PushNotificationService {
         body: body,
       ),
     );
+  }
+
+  List<int>? _parseDaysOfWeek(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is List) {
+      return raw.map((e) => int.tryParse(e.toString()) ?? 0).where((e) => e > 0).toList();
+    }
+    if (raw is String) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) return null;
+      return trimmed
+          .split(",")
+          .map((e) => int.tryParse(e.trim()) ?? 0)
+          .where((e) => e > 0)
+          .toList();
+    }
+    return null;
+  }
+
+  List<int>? _normalizeDays(List<int>? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    final cleaned = raw.where((d) => d >= 1 && d <= 7).toSet().toList()..sort();
+    if (cleaned.isEmpty) return null;
+    return cleaned;
+  }
+
+  int _weeklyAlertId(int alertId, int dayOfWeek) => (alertId * 10) + dayOfWeek;
+
+  tz.TZDateTime _nextInstanceOfWeekdayTime(DateTime base, int dayOfWeek) {
+    final baseLocal = tz.TZDateTime.from(base, tz.local);
+    var scheduled = tz.TZDateTime(
+      tz.local,
+      baseLocal.year,
+      baseLocal.month,
+      baseLocal.day,
+      baseLocal.hour,
+      baseLocal.minute,
+    );
+    final diff = (dayOfWeek - scheduled.weekday + 7) % 7;
+    scheduled = scheduled.add(Duration(days: diff));
+    final now = tz.TZDateTime.now(tz.local);
+    if (scheduled.isBefore(now)) {
+      scheduled = scheduled.add(const Duration(days: 7));
+    }
+    return scheduled;
+  }
+
+  Future<void> _scheduleWeeklyAlerts({
+    required int alertId,
+    required int castId,
+    required String title,
+    required String body,
+    required DateTime baseTime,
+    required List<int> daysOfWeek,
+  }) async {
+    final androidDetails = AndroidNotificationDetails(
+      _alertChannelId,
+      _alertChannelName,
+      channelDescription: _alertChannelDescription,
+      importance: Importance.max,
+      priority: Priority.high,
+      category: AndroidNotificationCategory.alarm,
+      fullScreenIntent: true,
+      playSound: true,
+      actions: const [
+        AndroidNotificationAction(
+          _actionSnooze,
+          "Snooze",
+          showsUserInterface: false,
+        ),
+        AndroidNotificationAction(
+          _actionStop,
+          "Stop",
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+      ],
+    );
+    const iosDetails = DarwinNotificationDetails(
+      interruptionLevel: InterruptionLevel.timeSensitive,
+      categoryIdentifier: "cast_alert",
+    );
+
+    for (final day in daysOfWeek) {
+      final when = _nextInstanceOfWeekdayTime(baseTime, day);
+      await _local.zonedSchedule(
+        _weeklyAlertId(alertId, day),
+        title,
+        body,
+        when,
+        NotificationDetails(android: androidDetails, iOS: iosDetails),
+        payload: _encodePayload(
+          type: _payloadTypeCastAlert,
+          castId: castId,
+          alertId: alertId,
+          title: title,
+          body: body,
+        ),
+        matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    }
   }
 
   _NotificationPayload _parsePayload(String raw) {

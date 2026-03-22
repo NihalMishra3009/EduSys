@@ -65,6 +65,7 @@ class CastAlert(Base):
     message = Column(Text, nullable=True)
     schedule_at = Column(DateTime, nullable=False)
     interval_minutes = Column(Integer, nullable=True)
+    days_of_week = Column(String(20), nullable=True)
     active = Column(Boolean, nullable=False, default=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

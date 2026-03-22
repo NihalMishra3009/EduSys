@@ -124,6 +124,7 @@ def send_cast_alert_push(
     title: str,
     message: str | None,
     schedule_at: datetime,
+    days_of_week: str | None,
 ) -> None:
     server_key = (settings.fcm_server_key or "").strip()
     if not server_key:
@@ -149,6 +150,7 @@ def send_cast_alert_push(
             "title": title,
             "body": body,
             "schedule_at": schedule_at.isoformat(),
+            "days_of_week": days_of_week or "",
         },
     }
 

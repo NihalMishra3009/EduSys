@@ -64,6 +64,7 @@ def _dispatch_cast_alert_push(
     title: str,
     message: str | None,
     schedule_at: datetime,
+    days_of_week: str | None,
 ) -> None:
     db = SessionLocal()
     try:
@@ -74,6 +75,7 @@ def _dispatch_cast_alert_push(
             title=title,
             message=message,
             schedule_at=schedule_at,
+            days_of_week=days_of_week,
         )
     finally:
         db.close()
@@ -95,6 +97,15 @@ def _ensure_admin(db: Session, cast_id: int, user_id: int) -> CastMember:
     if member.role != CastMemberRole.ADMIN:
         raise HTTPException(status_code=403, detail="Only cast admins can manage members")
     return member
+
+
+def _normalize_days(days: list[int] | None) -> str | None:
+    if not days:
+        return None
+    cleaned = sorted({int(d) for d in days if 1 <= int(d) <= 7})
+    if not cleaned:
+        return None
+    return ",".join(str(d) for d in cleaned)
 
 
 @router.get("", response_model=list[CastOut])
@@ -704,6 +715,7 @@ def create_alert(
         message=payload.message.strip() if payload.message else None,
         schedule_at=payload.schedule_at,
         interval_minutes=payload.interval_minutes,
+        days_of_week=_normalize_days(payload.days_of_week),
         active=payload.active,
         created_by=current_user.id,
         created_at=datetime.utcnow(),
@@ -719,6 +731,7 @@ def create_alert(
             "title": item.title,
             "message": item.message,
             "schedule_at": item.schedule_at,
+            "days_of_week": item.days_of_week,
         },
         daemon=True,
     ).start()

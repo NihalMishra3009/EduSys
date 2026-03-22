@@ -1486,6 +1486,7 @@ class ApiService {
     String? message,
     required DateTime scheduleAt,
     int? intervalMinutes,
+    List<int>? daysOfWeek,
     bool active = true,
   }) async {
     final headers = await _headers(auth: true);
@@ -1495,6 +1496,7 @@ class ApiService {
       "message": message,
       "schedule_at": scheduleAt.toIso8601String(),
       "interval_minutes": intervalMinutes,
+      "days_of_week": daysOfWeek,
       "active": active,
     });
     return _sendWithFallback(

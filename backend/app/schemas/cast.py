@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class CastCreateRequest(BaseModel):
@@ -43,6 +43,7 @@ class CastAlertCreateRequest(BaseModel):
     message: str | None = None
     schedule_at: datetime
     interval_minutes: int | None = None
+    days_of_week: list[int] | None = None
     active: bool = True
 
 
@@ -53,11 +54,23 @@ class CastAlertOut(BaseModel):
     message: str | None
     schedule_at: datetime
     interval_minutes: int | None
+    days_of_week: list[int] | None = None
     active: bool
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+    @validator("days_of_week", pre=True)
+    def _parse_days(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return [int(v) for v in value]
+        if isinstance(value, str):
+            parts = [p.strip() for p in value.split(",") if p.strip()]
+            return [int(p) for p in parts]
+        return value
 
 
 class CastMemberOut(BaseModel):
