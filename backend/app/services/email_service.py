@@ -56,10 +56,23 @@ def _send_via_brevo(recipient: str, otp_code: str) -> None:
 
 def send_otp_email(recipient_email: str, otp_code: str) -> None:
     recipient = recipient_email.strip().lower()
-    # Prefer Brevo API if configured to avoid SMTP egress blocks.
+    # Prefer Brevo API if configured to avoid SMTP egress blocks, but fall back
+    # to SMTP when Brevo has transient issues (5xx/timeouts).
+    brevo_error: EmailSendError | None = None
     if settings.brevo_api_key:
-        _send_via_brevo(recipient, otp_code)
-        return
+        try:
+            _send_via_brevo(recipient, otp_code)
+            return
+        except EmailSendError as exc:
+            message = str(exc)
+            brevo_error = exc
+            # Only fall back on likely-transient Brevo failures. For 4xx, surface
+            # the error so configuration issues are obvious.
+            if not (
+                message.startswith("Brevo API error 5")
+                or message.startswith("Brevo API request failed")
+            ):
+                raise
 
     _validate_smtp_config()
     message = EmailMessage()
@@ -125,5 +138,10 @@ def send_otp_email(recipient_email: str, otp_code: str) -> None:
                         f"error={type(ssl_exc).__name__}: {ssl_exc}"
                     )
             continue
+
+    if brevo_error is not None:
+        raise EmailSendError(
+            f"Failed to send OTP email (Brevo fallback also failed). Brevo: {brevo_error}"
+        ) from last_error
 
     raise EmailSendError("Failed to send OTP email") from last_error
