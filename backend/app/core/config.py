@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_sender_email: str | None = Field(default=None, alias="SMTP_SENDER_EMAIL")
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
+    smtp_fallback_enabled: bool = Field(default=False, alias="SMTP_FALLBACK_ENABLED")
     brevo_api_key: str | None = Field(default=None, alias="BREVO_API_KEY")
     brevo_sender_name: str | None = Field(default="EduSys", alias="BREVO_SENDER_NAME")
     dev_show_otp_in_response: bool = Field(default=False, alias="DEV_SHOW_OTP_IN_RESPONSE")
