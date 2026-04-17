@@ -9115,7 +9115,8 @@ class _InAppMeetingScreenState extends State<_InAppMeetingScreen> {
   @override
   void initState() {
     super.initState();
-    _isHost = widget.isHost;
+    final upperRole = widget.role.trim().toUpperCase();
+    _isHost = widget.isHost || upperRole == "PROFESSOR" || upperRole == "ADMIN";
     _peerId = "p${DateTime.now().microsecondsSinceEpoch}";
     _participants[_peerId] = _MeetingParticipant(
       peerId: _peerId,
