@@ -245,9 +245,8 @@ class _CompleteRegistrationScreenState extends State<CompleteRegistrationScreen>
                 ),
                 if (_profilePhotoUrl != null) ...[
                   const SizedBox(height: 8),
-                  SizedBox(
-                    width: 72,
-                    height: 72,
+                  SizedBox.square(
+                    dimension: 72,
                     child: ClipOval(
                       child: Image.network(
                         _profilePhotoUrl!,
