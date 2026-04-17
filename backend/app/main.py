@@ -718,8 +718,14 @@ async def meeting_signaling(websocket: WebSocket, room_id: str):
         return
     requested_peer_id = websocket.query_params.get("peer_id", "").strip()
     display_name = websocket.query_params.get("display_name", "").strip() or user.name or requested_peer_id or "Participant"
-    role = websocket.query_params.get("role", "").strip() or (user.role or "")
+    user_role = getattr(user, "role", None)
+    default_role = user_role.value if hasattr(user_role, "value") else (user_role or "")
+    role = websocket.query_params.get("role", "").strip() or str(default_role)
     is_host = websocket.query_params.get("host", "0").strip() in ("1", "true", "True")
+    # Professors/admins should always be able to host, even after reconnect,
+    # so they don't get stuck waiting for their own approval.
+    if user_role in (UserRole.PROFESSOR, UserRole.ADMIN) or str(default_role).upper() in {"PROFESSOR", "ADMIN"}:
+        is_host = True
     peer_id = requested_peer_id or f"peer-{id(websocket)}"
     room_key = room_id.strip().lower() or "default-room"
     is_cast_room = room_key.startswith("cast-")
