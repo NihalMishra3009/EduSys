@@ -30,9 +30,20 @@ jobs:
           java-version: "17"
 
       - name: Set up Flutter
-        run: |
-          git clone https://github.com/flutter/flutter.git --branch stable --depth 1 "$RUNNER_TEMP/flutter"
-          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('mobile/android/**/gradle-wrapper.properties', 'mobile/android/**/*.gradle*', 'mobile/android/**/build.gradle.kts') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Verify required release settings
         env:
